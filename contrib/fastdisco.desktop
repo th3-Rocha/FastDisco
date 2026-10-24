@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=FastDisco
+GenericName=Discord client
+Comment=Discord, native and fast
+Exec=fastdisco
+Icon=fastdisco
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=discord;chat;voice;
+StartupWMClass=fastdisco
+SingleMainWindow=true

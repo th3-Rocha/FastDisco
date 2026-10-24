@@ -137,6 +137,8 @@ pub struct App {
     pub quit_requested: bool,
     pub window_open: bool,
     pub stats: crate::stats::Stats,
+    /// What later launches asked of this copy: "show", "reload-themes".
+    pub requests: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>,
     /// The unread count last put in the window title.
     title_count: u32,
     pub settings_page: Option<SettingsPage>,
@@ -184,6 +186,7 @@ impl App {
             quit_requested: false,
             window_open: false,
             stats: crate::stats::Stats::start(),
+            requests: Default::default(),
             title_count: 0,
             settings_page: None,
             profile_form: None,
@@ -288,6 +291,15 @@ impl App {
         if self.themes.poll() {
             self.apply_palette();
         }
+    }
+
+    /// Requests from later launches: show the window, reload the themes.
+    pub fn take_requests(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut *self.requests.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    pub fn reload_themes(&mut self) {
+        self.scan_themes();
     }
 
     /// "(3) FastDisco" while direct messages or mentions wait, as Discord.

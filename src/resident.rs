@@ -100,6 +100,17 @@ fn draw(size: usize, unread: bool) -> Vec<u8> {
 impl App {
     /// Tray clicks and menu entries; `window` says whether one is open.
     pub fn tray_events(&mut self, ctx: Option<&egui::Context>) {
+        for request in self.take_requests() {
+            match (request, ctx) {
+                ("show", Some(ctx)) => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+                ("show", None) => self.wants_show = true,
+                ("reload-themes", _) => self.reload_themes(),
+                _ => {}
+            }
+        }
         let events = self.tray.as_ref().map(Tray::events).unwrap_or_default();
         for event in events {
             match event {

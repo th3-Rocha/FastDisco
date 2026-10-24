@@ -97,11 +97,51 @@ fn options() -> eframe::NativeOptions {
     }
 }
 
+const SLOT: &str = "io.github.th3_rocha.FastDisco";
+
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("fastdisco=info"))
         .init();
+    let slot = fastframe_instance::Slot::new(SLOT);
+    // `fastdisco reload-themes`, from Omarchy's theme hook: tell the
+    // running copy and leave.
+    if std::env::args().nth(1).as_deref() == Some("reload-themes") {
+        let _ = slot.send("reload-themes");
+        return Ok(());
+    }
+    // `fastdisco write-icon <file.png> [size]`: the app icon, for packaging.
+    if std::env::args().nth(1).as_deref() == Some("write-icon") {
+        let path = std::env::args()
+            .nth(2)
+            .ok_or_else(|| anyhow::anyhow!("write-icon <file.png> [size]"))?;
+        let size: u32 = std::env::args()
+            .nth(3)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(256);
+        let pixels = resident::icon(size as usize);
+        image::save_buffer(&path, &pixels, size, size, image::ExtendedColorType::Rgba8)?;
+        return Ok(());
+    }
     let waker = fastframe_shell::Waker::default();
+    let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
+    let queue = requests.clone();
+    let wake = waker.clone();
+    let _guard = match slot.claim("show", move |request| {
+        let known = match request {
+            "show" => "show",
+            "reload-themes" => "reload-themes",
+            _ => return None,
+        };
+        queue.lock().unwrap_or_else(|e| e.into_inner()).push(known);
+        wake.wake();
+        Some("ok".to_owned())
+    }) {
+        fastframe_instance::Claim::First(guard) => guard,
+        // Another copy runs and has been asked to show its window.
+        _ => return Ok(()),
+    };
     let mut app = App::new(&waker);
+    app.requests = requests;
     app.start_themes();
     fastframe_shell::Shell::new(app, &waker)
         .idle(fastframe_tray::idle)

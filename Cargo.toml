@@ -35,6 +35,8 @@ fastframe-file = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # the window on demand (Wayland cannot hide one).
 fastframe-shell = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 fastframe-tray = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+# One running copy: a second launch brings the window of the first.
+fastframe-instance = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Desktop notifications for direct messages and mentions.
 fastframe-notifications = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Starting at login, through the desktop's own autostart.
