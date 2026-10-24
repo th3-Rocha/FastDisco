@@ -54,6 +54,38 @@ fn setup(ctx: &egui::Context) {
         rendering.apply_to_visuals(&mut style.visuals);
         style.visuals.selection.bg_fill = theme::Palette::dark().accent;
         style.visuals.text_cursor.stroke.color = theme::Palette::dark().text;
+        // Discord's tooltips and menus: near-black, rounded, no border,
+        // shown at once.
+        let floating = egui::Color32::from_rgb(0x11, 0x12, 0x14);
+        style.visuals.window_fill = floating;
+        style.visuals.panel_fill = theme::Palette::dark().chat;
+        style.visuals.window_stroke = egui::Stroke::NONE;
+        style.visuals.window_corner_radius = egui::CornerRadius::same(6);
+        style.visuals.menu_corner_radius = egui::CornerRadius::same(6);
+        style.visuals.popup_shadow = egui::Shadow {
+            offset: [0, 4],
+            blur: 12,
+            spread: 0,
+            color: egui::Color32::from_black_alpha(100),
+        };
+        style.visuals.widgets.hovered.weak_bg_fill = theme::Palette::dark().accent;
+        style.visuals.widgets.hovered.bg_fill = theme::Palette::dark().accent;
+        style.visuals.widgets.hovered.fg_stroke.color = egui::Color32::WHITE;
+        style.visuals.widgets.inactive.fg_stroke.color = theme::Palette::dark().text;
+        style.spacing.menu_margin = egui::Margin::same(8);
+        style.spacing.button_padding = egui::vec2(8.0, 6.0);
+        style.interaction.tooltip_delay = 0.0;
+        style.interaction.tooltip_grace_time = 0.0;
+        style.interaction.show_tooltips_only_when_still = false;
+        style.override_font_id = None;
+        style.text_styles.insert(
+            egui::TextStyle::Body,
+            fastframe_fonts::Weight::Medium.font_id(14.0),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Button,
+            fastframe_fonts::Weight::Medium.font_id(14.0),
+        );
     });
 }
 

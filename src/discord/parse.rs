@@ -7,9 +7,9 @@ use serde_json::Value;
 
 use super::{CDN, avatar_url};
 use crate::model::{
-    Attachment, Channel, ChannelKind, CustomEmoji, Embed, EmbedField, EmbedMedia, Guild, Id,
-    ListItem, Member, Message, Model, Overwrite, Reaction, ReactionEmoji, Reply, Role, Status,
-    Sticker, User,
+    Activity, ActivityKind, Attachment, Badge, Channel, ChannelKind, CustomEmoji, Embed,
+    EmbedField, EmbedMedia, Guild, Id, ListItem, Member, Message, Model, Overwrite, Presence,
+    Profile, Reaction, ReactionEmoji, Reply, Role, Status, Sticker, User,
 };
 
 pub fn id(value: &Value) -> Option<Id> {
@@ -50,28 +50,79 @@ pub fn user(value: &Value) -> Option<User> {
         picture,
         status: Status::Offline,
         activity: None,
+        activities: Vec::new(),
         bot: value["bot"].as_bool().unwrap_or(false),
     })
 }
 
-/// Status and the activity line from a presence.
-pub fn presence(value: &Value) -> (Status, Option<String>) {
-    let status = Status::parse(value["status"].as_str().unwrap_or("offline"));
-    let activity = value["activities"].as_array().and_then(|list| {
-        list.iter().find_map(|a| {
-            let name = a["name"].as_str()?;
-            Some(match a["type"].as_i64() {
-                Some(0) => format!("Jogando {name}"),
-                Some(1) => format!("Transmitindo {name}"),
-                Some(2) => format!("Ouvindo {name}"),
-                Some(3) => format!("Assistindo {name}"),
-                Some(4) => text(&a["state"])?,
-                Some(5) => format!("Competindo em {name}"),
-                _ => name.to_owned(),
-            })
-        })
-    });
-    (status, activity)
+/// Status and activities from a presence.
+pub fn presence(value: &Value) -> Presence {
+    Presence {
+        status: Status::parse(value["status"].as_str().unwrap_or("offline")),
+        activities: value["activities"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(activity)
+            .collect(),
+    }
+}
+
+fn activity(a: &Value) -> Option<Activity> {
+    let application = id(&a["application_id"]);
+    let kind = match a["type"].as_i64() {
+        Some(1) => ActivityKind::Streaming,
+        Some(2) => ActivityKind::Listening,
+        Some(3) => ActivityKind::Watching,
+        Some(4) => ActivityKind::Custom,
+        Some(5) => ActivityKind::Competing,
+        _ => ActivityKind::Playing,
+    };
+    let asset = |key: &str| {
+        a["assets"][key]
+            .as_str()
+            .and_then(|k| asset_url(k, application))
+    };
+    let emoji = &a["emoji"];
+    Some(Activity {
+        kind,
+        name: a["name"].as_str()?.to_owned(),
+        details: text(&a["details"]),
+        state: text(&a["state"]),
+        application,
+        large_image: asset("large_image"),
+        large_text: text(&a["assets"]["large_text"]),
+        small_image: asset("small_image"),
+        small_text: text(&a["assets"]["small_text"]),
+        start: a["timestamps"]["start"].as_i64(),
+        end: a["timestamps"]["end"].as_i64(),
+        emoji: id(&emoji["id"])
+            .is_none()
+            .then(|| text(&emoji["name"]))
+            .flatten(),
+        emoji_url: id(&emoji["id"]).map(|e| {
+            crate::model::CustomEmoji::url(e, emoji["animated"].as_bool().unwrap_or(false))
+        }),
+        url: text(&a["url"]),
+    })
+}
+
+/// Rich Presence picture keys: `mp:` through Discord's media proxy,
+/// `spotify:` from Spotify, plain ids from the application's assets.
+fn asset_url(key: &str, application: Option<Id>) -> Option<String> {
+    if let Some(path) = key.strip_prefix("mp:") {
+        return Some(format!("https://media.discordapp.net/{path}"));
+    }
+    if let Some(image) = key.strip_prefix("spotify:") {
+        return Some(format!("https://i.scdn.co/image/{image}"));
+    }
+    if key.starts_with("youtube:") || key.starts_with("twitch:") {
+        return None;
+    }
+    Some(format!(
+        "{CDN}/app-assets/{}/{key}.png?size=160",
+        application?
+    ))
 }
 
 pub fn channel(value: &Value, guild: Option<Id>) -> Option<Channel> {
@@ -479,10 +530,8 @@ pub fn supplemental(value: &Value, model: &mut Model) {
         let Some(uid) = id(&p["user_id"]).or_else(|| id(&p["user"]["id"])) else {
             continue;
         };
-        let (status, activity) = presence(p);
         if let Some(user) = model.users.get_mut(&uid) {
-            user.status = status;
-            user.activity = activity;
+            user.set_presence(presence(p));
         }
     }
 }
@@ -493,9 +542,7 @@ pub fn member_list(value: &Value, model: &mut Model) {
         return;
     };
     let mut users = Vec::new();
-    let item = |value: &Value,
-                users: &mut Vec<(User, Member, Status, Option<String>)>|
-     -> Option<ListItem> {
+    let item = |value: &Value, users: &mut Vec<(User, Member, Presence)>| -> Option<ListItem> {
         if let Some(group) = value.get("group") {
             return Some(ListItem::Group {
                 id: group["id"].as_str().unwrap_or_default().to_owned(),
@@ -504,9 +551,8 @@ pub fn member_list(value: &Value, model: &mut Model) {
         }
         let m = value.get("member")?;
         let u = user(&m["user"])?;
-        let (status, activity) = presence(&m["presence"]);
         let id = u.id;
-        users.push((u, member(m), status, activity));
+        users.push((u, member(m), presence(&m["presence"])));
         Some(ListItem::Member(id))
     };
     let mut list = model
@@ -568,16 +614,80 @@ pub fn member_list(value: &Value, model: &mut Model) {
             *count = *c;
         }
     }
-    for (u, m, status, activity) in users {
+    for (u, m, p) in users {
         let id = u.id;
-        let entry = model.users.entry(id).or_insert(u);
-        entry.status = status;
-        entry.activity = activity;
+        model.users.entry(id).or_insert(u).set_presence(p);
         if let Some(guild) = model.guild_mut(guild_id) {
             guild.members.insert(id, m);
         }
     }
     if let Some(guild) = model.guild_mut(guild_id) {
         guild.list = list;
+    }
+}
+
+fn color(value: &Value) -> Option<Color32> {
+    let c = value.as_u64()?;
+    Some(Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8))
+}
+
+/// `GET /users/{id}/profile`, with the server's own bio and banner over
+/// the account's when the user set them.
+pub fn profile(value: &Value) -> Profile {
+    let user = &value["user"];
+    let account = &value["user_profile"];
+    let server = &value["guild_member_profile"];
+    let uid = id(&user["id"]).unwrap_or(0);
+    let banner_of =
+        |hash: Option<&str>| hash.map(|h| format!("{CDN}/banners/{uid}/{h}.png?size=600"));
+    let banner =
+        banner_of(server["banner"].as_str()).or_else(|| banner_of(user["banner"].as_str()));
+    let theme = account["theme_colors"]
+        .as_array()
+        .and_then(|l| Some((color(l.first()?)?, color(l.get(1)?)?)));
+    Profile {
+        bio: text(&server["bio"])
+            .or_else(|| text(&account["bio"]))
+            .or_else(|| text(&user["bio"])),
+        pronouns: text(&server["pronouns"]).or_else(|| text(&account["pronouns"])),
+        banner,
+        accent: color(&account["accent_color"]).or_else(|| color(&user["accent_color"])),
+        theme,
+        badges: value["badges"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|b| {
+                Some(Badge {
+                    description: b["description"].as_str()?.to_owned(),
+                    icon: format!("{CDN}/badge-icons/{}.png", b["icon"].as_str()?),
+                    link: text(&b["link"]),
+                })
+            })
+            .collect(),
+        joined: value["guild_member"]["joined_at"]
+            .as_str()
+            .and_then(|t| t.parse().ok()),
+        roles: value["guild_member"]["roles"]
+            .as_array()
+            .map(|l| l.iter().filter_map(id).collect())
+            .unwrap_or_default(),
+        mutual_guilds: value["mutual_guilds"]
+            .as_array()
+            .map(|l| l.iter().filter_map(|g| id(&g["id"])).collect())
+            .unwrap_or_default(),
+        mutual_friends: value["mutual_friends_count"].as_u64().unwrap_or(0) as u32,
+        connections: value["connected_accounts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| {
+                Some((
+                    c["type"].as_str()?.to_owned(),
+                    c["name"].as_str()?.to_owned(),
+                ))
+            })
+            .collect(),
+        note: None,
     }
 }

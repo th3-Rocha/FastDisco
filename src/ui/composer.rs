@@ -82,6 +82,7 @@ pub fn show(app: &mut App, ui: &mut Ui, channel: Id) -> Rect {
                     input(app, ui, channel, &placeholder);
                 });
             field = frame.response.rect;
+            autocomplete(app, ui, channel, field);
             counter(app, ui, channel, field);
             typing(app, ui, channel);
         });
@@ -256,7 +257,35 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
     let id = composer_id(channel);
     let focused = ui.memory(|m| m.has_focus(id));
     let mut send = false;
-    if focused {
+    let suggest = suggestions(app, channel).filter(|(_, _, list)| !list.is_empty());
+    if focused && let Some((_, word, list)) = &suggest {
+        // The list takes the arrows, Tab and Enter while it shows.
+        let count = list.len();
+        let at = app.chat.suggestion.min(count - 1);
+        if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown)) {
+            app.chat.suggestion = (at + 1) % count;
+        }
+        if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp)) {
+            app.chat.suggestion = (at + count - 1) % count;
+        }
+        let accept = ui.input_mut(|i| {
+            i.consume_key(Modifiers::NONE, Key::Tab) || i.consume_key(Modifiers::NONE, Key::Enter)
+        });
+        if accept {
+            let chosen = &list[app.chat.suggestion.min(count - 1)];
+            act(
+                app,
+                ChatAction::Complete {
+                    word: word.clone(),
+                    insert: chosen.insert.clone(),
+                    raw: chosen.raw.clone(),
+                },
+            );
+        }
+        if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            app.chat.dismissed = Some(word.clone());
+        }
+    } else if focused {
         send = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
         if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
             if app.chat.picker.is_some() {
@@ -1296,8 +1325,22 @@ pub fn viewer(app: &mut App, ui: &mut Ui) {
             ui.painter()
                 .rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(220));
             let room = rect.shrink2(vec2(rect.width() * 0.05, rect.height() * 0.08));
-            match app.picture(Some(&url)) {
-                Some(uri) => {
+            // GIFs that are really MP4s loop here too, decoded larger.
+            let video = url.contains(".mp4");
+            let frame = video
+                .then(|| app.animation(&format!("{url}{}", crate::animation::LARGE)))
+                .flatten();
+            let picture = if video { None } else { app.picture(Some(&url)) };
+            match (frame, picture) {
+                (Some(frame), _) => {
+                    let size = frame.size_vec2();
+                    let scale = (room.width() / size.x).min(room.height() / size.y).min(2.0);
+                    let shown = Rect::from_center_size(room.center(), size * scale);
+                    egui::Image::new((frame.id(), shown.size()))
+                        .corner_radius(CornerRadius::same(4))
+                        .paint_at(ui, shown);
+                }
+                (None, Some(uri)) => {
                     let image = egui::Image::new(uri)
                         .max_size(room.size())
                         .maintain_aspect_ratio(true);
@@ -1306,7 +1349,7 @@ pub fn viewer(app: &mut App, ui: &mut Ui) {
                         .unwrap_or(room.size());
                     image.paint_at(ui, Rect::from_center_size(room.center(), size));
                 }
-                None => {
+                (None, None) => {
                     ui.painter().text(
                         room.center(),
                         Align2::CENTER_CENTER,
@@ -1427,4 +1470,289 @@ pub fn type_anywhere(app: &mut App, ctx: &egui::Context) {
     app.drafts.entry(channel).or_default().push_str(&typed);
     app.chat.focus_composer = true;
     app.chat.cursor_to_end = true;
+}
+
+/// One autocomplete row.
+pub struct Suggestion {
+    label: String,
+    detail: Option<String>,
+    hint: Hint,
+    /// What replaces the word in the draft.
+    insert: String,
+    /// What the inserted text stands for when sent.
+    raw: Option<String>,
+}
+
+enum Hint {
+    User(Id),
+    Emoji(String),
+    Custom(String),
+    Channel,
+    Everyone,
+}
+
+/// The word at the end of the draft, if the draft does not end in a space.
+fn last_word(draft: &str) -> Option<&str> {
+    if draft.ends_with(char::is_whitespace) {
+        return None;
+    }
+    draft
+        .rsplit(char::is_whitespace)
+        .next()
+        .filter(|w| !w.is_empty())
+}
+
+/// Discord's autocomplete for the word being typed: @people, :emoji: and
+/// #channels. Returns the list's title, the word and the rows.
+fn suggestions(app: &App, channel: Id) -> Option<(String, String, Vec<Suggestion>)> {
+    let draft = app.drafts.get(&channel)?;
+    let word = last_word(draft)?.to_owned();
+    if app.chat.dismissed.as_deref() == Some(word.as_str()) {
+        return None;
+    }
+    let guild = app.server();
+    let lower = word.to_lowercase();
+    let mut list = Vec::new();
+    if let Some(query) = lower.strip_prefix('@') {
+        let mut users: Vec<Id> = match guild.and_then(|g| app.model.guild(g)) {
+            Some(g) => g.members.keys().copied().collect(),
+            None => app
+                .model
+                .channel(channel)
+                .map(|c| c.recipients.clone())
+                .unwrap_or_default(),
+        };
+        users.sort_unstable();
+        users.dedup();
+        let mut scored: Vec<(u8, String, Suggestion)> = users
+            .into_iter()
+            .filter_map(|id| {
+                let user = app.model.user(id)?;
+                let name = app.model.name_in(guild, id);
+                let (n, u) = (name.to_lowercase(), user.username.to_lowercase());
+                let rank = if n.starts_with(query) || u.starts_with(query) {
+                    0
+                } else if n.contains(query) || u.contains(query) {
+                    1
+                } else {
+                    return None;
+                };
+                Some((
+                    rank,
+                    n,
+                    Suggestion {
+                        label: name.clone(),
+                        detail: Some(user.username.clone()),
+                        hint: Hint::User(id),
+                        insert: format!("@{name}"),
+                        raw: Some(format!("<@{id}>")),
+                    },
+                ))
+            })
+            .collect();
+        scored.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+        list.extend(scored.into_iter().map(|(_, _, s)| s).take(10));
+        if guild.is_some() {
+            for (word, detail) in [
+                (
+                    "everyone",
+                    "Notificar todos que têm permissão para ver este canal.",
+                ),
+                (
+                    "here",
+                    "Notificar todos online que têm permissão para ver este canal.",
+                ),
+            ] {
+                if word.starts_with(query) {
+                    list.push(Suggestion {
+                        label: format!("@{word}"),
+                        detail: Some(detail.into()),
+                        hint: Hint::Everyone,
+                        insert: format!("@{word}"),
+                        raw: None,
+                    });
+                }
+            }
+        }
+        return Some(("MEMBROS".into(), word, list));
+    }
+    if let Some(query) = lower.strip_prefix(':') {
+        // Discord waits for two letters before suggesting emoji.
+        if query.chars().count() < 2 || query.ends_with(':') {
+            return None;
+        }
+        if let Some(g) = guild.and_then(|g| app.model.guild(g)) {
+            for e in g
+                .emojis
+                .iter()
+                .filter(|e| e.name.to_lowercase().starts_with(query))
+                .take(5)
+            {
+                list.push(Suggestion {
+                    label: format!(":{}:", e.name),
+                    detail: None,
+                    hint: Hint::Custom(CustomEmoji::url(e.id, e.animated)),
+                    insert: format!(":{}:", e.name),
+                    raw: None,
+                });
+            }
+        }
+        for e in emojis::iter() {
+            if list.len() >= 10 {
+                break;
+            }
+            if let Some(code) = e.shortcodes().find(|c| c.starts_with(query)) {
+                list.push(Suggestion {
+                    label: format!(":{code}:"),
+                    detail: None,
+                    hint: Hint::Emoji(e.as_str().to_owned()),
+                    insert: e.as_str().to_owned(),
+                    raw: None,
+                });
+            }
+        }
+        return Some((format!("EMOJI CORRESPONDENTE A {word}"), word, list));
+    }
+    if let Some(query) = lower.strip_prefix('#') {
+        let g = guild.and_then(|g| app.model.guild(g))?;
+        let (loose, categories) = app.model.layout(g);
+        for id in loose
+            .into_iter()
+            .chain(categories.into_iter().flat_map(|(_, l)| l))
+        {
+            let Some(c) = app.model.channel(id) else {
+                continue;
+            };
+            if c.kind.is_textual() && c.name.to_lowercase().contains(query) && list.len() < 10 {
+                let category = c
+                    .parent
+                    .and_then(|p| app.model.channel(p))
+                    .map(|p| p.name.to_uppercase());
+                list.push(Suggestion {
+                    label: c.name.clone(),
+                    detail: category,
+                    hint: Hint::Channel,
+                    insert: format!("#{}", c.name),
+                    raw: Some(format!("<#{id}>")),
+                });
+            }
+        }
+        return Some(("CANAIS DE TEXTO".into(), word, list));
+    }
+    None
+}
+
+/// The suggestions above the field, as Discord lists them.
+fn autocomplete(app: &mut App, ui: &mut Ui, channel: Id, field: Rect) {
+    let Some((title, word, list)) = suggestions(app, channel) else {
+        app.chat.suggestion = 0;
+        return;
+    };
+    if list.is_empty() {
+        return;
+    }
+    let palette = app.palette;
+    let selected = app.chat.suggestion.min(list.len() - 1);
+    let mut chosen = None;
+    egui::Area::new(egui::Id::new("autocomplete"))
+        .order(egui::Order::Foreground)
+        .pivot(Align2::LEFT_BOTTOM)
+        .fixed_pos(field.left_top() - vec2(0.0, 8.0))
+        .show(ui.ctx(), |ui| {
+            Frame::new()
+                .fill(palette.sidebar)
+                .corner_radius(CornerRadius::same(8))
+                .shadow(Shadow {
+                    offset: [0, 4],
+                    blur: 12,
+                    spread: 0,
+                    color: Color32::from_black_alpha(90),
+                })
+                .inner_margin(Margin::same(8))
+                .show(ui, |ui| {
+                    ui.set_width(field.width() - 16.0);
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    let (head, _) =
+                        ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
+                    ui.painter().text(
+                        pos2(head.left() + 8.0, head.center().y),
+                        Align2::LEFT_CENTER,
+                        hyphens(&title),
+                        font(Weight::Bold, 12.0),
+                        palette.muted,
+                    );
+                    for (i, s) in list.iter().enumerate() {
+                        let (rect, response) = ui
+                            .allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
+                        if i == selected || response.hovered() {
+                            ui.painter()
+                                .rect_filled(rect, CornerRadius::same(4), palette.selected);
+                        }
+                        let icon = pos2(rect.left() + 20.0, rect.center().y);
+                        match &s.hint {
+                            Hint::User(id) => {
+                                if let Some(user) = app.model.user(*id) {
+                                    super::widgets::avatar(ui, app, user, icon, 12.0, None);
+                                }
+                            }
+                            Hint::Emoji(text) => {
+                                ui.painter().text(
+                                    icon,
+                                    Align2::CENTER_CENTER,
+                                    text,
+                                    font(Weight::Regular, 20.0),
+                                    Color32::WHITE,
+                                );
+                            }
+                            Hint::Custom(url) => {
+                                if let Some(uri) = app.picture(Some(url)) {
+                                    egui::Image::new(uri).paint_at(
+                                        ui,
+                                        Rect::from_center_size(icon, Vec2::splat(22.0)),
+                                    );
+                                }
+                            }
+                            Hint::Channel => paint_icon(ui, Icon::Hash, icon, 20.0, palette.muted),
+                            Hint::Everyone => {
+                                ui.painter().text(
+                                    icon,
+                                    Align2::CENTER_CENTER,
+                                    "@",
+                                    font(Weight::Bold, 18.0),
+                                    palette.muted,
+                                );
+                            }
+                        }
+                        let label = ui.painter().text(
+                            pos2(rect.left() + 40.0, rect.center().y),
+                            Align2::LEFT_CENTER,
+                            hyphens(&s.label),
+                            font(Weight::Medium, 15.0),
+                            palette.strong,
+                        );
+                        if let Some(detail) = &s.detail {
+                            Elide::new(ui, rect.right() - 8.0).text(
+                                pos2(label.right() + 8.0, rect.center().y),
+                                Align2::LEFT_CENTER,
+                                hyphens(detail),
+                                font(Weight::Regular, 13.0),
+                                palette.muted,
+                            );
+                        }
+                        if response.hovered() {
+                            app.chat.suggestion = i;
+                        }
+                        if response.clicked() {
+                            chosen = Some(ChatAction::Complete {
+                                word: word.clone(),
+                                insert: s.insert.clone(),
+                                raw: s.raw.clone(),
+                            });
+                        }
+                    }
+                });
+        });
+    if let Some(action) = chosen {
+        app.actions.push(Action::Chat(action));
+    }
 }

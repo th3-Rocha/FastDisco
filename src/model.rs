@@ -37,9 +37,108 @@ pub struct User {
     /// The avatar picture's URL on Discord's CDN.
     pub picture: Option<String>,
     pub status: Status,
-    /// "Jogando ...", or the custom status.
+    /// "Jogando ...", or the custom status: the line under the name.
     pub activity: Option<String>,
+    /// Everything the user is doing, for the profile.
+    pub activities: Vec<Activity>,
     pub bot: bool,
+}
+
+/// What the profile endpoint adds to a user.
+#[derive(Clone, Debug, Default)]
+pub struct Profile {
+    pub bio: Option<String>,
+    pub pronouns: Option<String>,
+    pub banner: Option<String>,
+    /// The banner's colour when there is no picture.
+    pub accent: Option<Color32>,
+    /// Nitro profile colours: the top and the bottom of the card.
+    pub theme: Option<(Color32, Color32)>,
+    pub badges: Vec<Badge>,
+    /// When they joined the server the profile was asked from.
+    pub joined: Option<jiff::Timestamp>,
+    pub roles: Vec<Id>,
+    pub mutual_guilds: Vec<Id>,
+    pub mutual_friends: u32,
+    pub connections: Vec<(String, String)>,
+    pub note: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Badge {
+    pub description: String,
+    pub icon: String,
+    pub link: Option<String>,
+}
+
+/// What the gateway says a user is up to.
+#[derive(Clone, Debug, Default)]
+pub struct Presence {
+    pub status: Status,
+    pub activities: Vec<Activity>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ActivityKind {
+    #[default]
+    Playing,
+    Streaming,
+    Listening,
+    Watching,
+    Custom,
+    Competing,
+}
+
+/// A game, a song, a stream or a custom status, with Rich Presence.
+#[derive(Clone, Debug, Default)]
+pub struct Activity {
+    pub kind: ActivityKind,
+    pub name: String,
+    pub details: Option<String>,
+    pub state: Option<String>,
+    pub application: Option<Id>,
+    /// Picture URLs, already resolved from Discord's asset keys.
+    pub large_image: Option<String>,
+    pub large_text: Option<String>,
+    pub small_image: Option<String>,
+    pub small_text: Option<String>,
+    /// Unix milliseconds.
+    pub start: Option<i64>,
+    pub end: Option<i64>,
+    /// A custom status's emoji: Unicode text, or a custom emoji's picture.
+    pub emoji: Option<String>,
+    pub emoji_url: Option<String>,
+    /// A stream's page.
+    pub url: Option<String>,
+}
+
+impl Activity {
+    pub fn is_spotify(&self) -> bool {
+        self.kind == ActivityKind::Listening && self.name == "Spotify"
+    }
+
+    /// The short line Discord shows under a name in lists.
+    pub fn line(&self) -> Option<String> {
+        Some(match self.kind {
+            ActivityKind::Playing => format!("Jogando {}", self.name),
+            ActivityKind::Streaming => format!(
+                "Transmitindo {}",
+                self.details.as_deref().unwrap_or(&self.name)
+            ),
+            ActivityKind::Listening => format!("Ouvindo {}", self.name),
+            ActivityKind::Watching => format!("Assistindo {}", self.name),
+            ActivityKind::Competing => format!("Competindo em {}", self.name),
+            ActivityKind::Custom => return self.state.clone().or_else(|| self.emoji.clone()),
+        })
+    }
+}
+
+impl User {
+    pub fn set_presence(&mut self, presence: Presence) {
+        self.status = presence.status;
+        self.activity = presence.activities.iter().find_map(Activity::line);
+        self.activities = presence.activities;
+    }
 }
 
 impl User {

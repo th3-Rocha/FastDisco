@@ -53,6 +53,10 @@ pub enum Action {
     CancelLogout,
     Logout,
     Chat(ChatAction),
+    MarkRead(Id),
+    MarkGuildRead(Id),
+    /// Alt+Up and Alt+Down: the channel above or below the open one.
+    StepChannel(i32),
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -111,7 +115,7 @@ impl App {
             deafened: false,
             drafts: HashMap::new(),
             actions: Vec::new(),
-            chat: Chat::default(),
+            chat: Chat::new(),
             ctx: ctx.clone(),
             pictures: RefCell::new(HashMap::new()),
             animations: RefCell::new(crate::animation::Animations::default()),
@@ -203,6 +207,25 @@ impl App {
                     self.chat.dialog = Some(crate::chat::Dialog::Failed(reason));
                 }
                 Event::GifHome(home) => self.chat.gif_home = Some(home),
+                Event::Profile { user, profile } => {
+                    self.chat.profiles.insert(
+                        user,
+                        (
+                            crate::chat::ProfileState::Ready(profile),
+                            std::time::Instant::now(),
+                        ),
+                    );
+                }
+                Event::ProfileFailed(user) => {
+                    self.chat.profiles.insert(
+                        user,
+                        (crate::chat::ProfileState::Failed, std::time::Instant::now()),
+                    );
+                }
+                Event::DirectOpened(value) => self.direct_opened(&value),
+                Event::ApplicationIcon { application, url } => {
+                    self.chat.app_icons.insert(application, url);
+                }
                 Event::Favorites(list) => self.chat.favorites = list,
                 Event::Gifs { query, list } => {
                     let current = self.chat.picker.as_ref().and_then(|p| p.searched.clone());
@@ -254,24 +277,24 @@ impl App {
     /// Development aid: `FASTDISCO_OPEN=name` opens the first text channel
     /// whose name contains it, to check a screen without clicking there.
     fn open_named(&mut self) {
-        let Ok(wanted) = std::env::var("FASTDISCO_OPEN") else {
-            return;
-        };
-        let wanted = crate::text::hyphens(&wanted).into_owned();
-        let found = self.model.guilds.iter().find_map(|g| {
-            g.channels
-                .iter()
-                .copied()
-                .find(|c| {
-                    self.model.channel(*c).is_some_and(|c| {
-                        c.kind.is_textual() && c.name.contains(&wanted) && self.model.can_view(c)
+        if let Ok(wanted) = std::env::var("FASTDISCO_OPEN") {
+            let wanted = crate::text::hyphens(&wanted).into_owned();
+            let found = self.model.guilds.iter().find_map(|g| {
+                g.channels
+                    .iter()
+                    .copied()
+                    .find(|c| {
+                        self.model.channel(*c).is_some_and(|c| {
+                            c.kind.is_textual()
+                                && c.name.contains(&wanted)
+                                && self.model.can_view(c)
+                        })
                     })
-                })
-                .map(|c| (g.id, c))
-        });
-        if let Some((guild, channel)) = found {
-            self.place = Place::Server(guild);
-            self.open_channel(channel);
+                    .map(|c| (g.id, c))
+            });
+            if let Some((_, channel)) = found {
+                self.open_channel(channel);
+            }
         }
         let tab = match std::env::var("FASTDISCO_PICKER").as_deref() {
             Ok("emoji") => Some(crate::chat::PickerTab::Emoji),
@@ -279,6 +302,27 @@ impl App {
             Ok("sticker") => Some(crate::chat::PickerTab::Sticker),
             _ => None,
         };
+        // FASTDISCO_DM opens the newest direct message; FASTDISCO_PROFILE
+        // shows the user's own card.
+        if std::env::var("FASTDISCO_DM").is_ok()
+            && let Some(first) = self.model.sorted_direct().into_iter().find(|c| {
+                self.model
+                    .channel(*c)
+                    .is_some_and(|c| c.kind == crate::model::ChannelKind::Direct)
+            })
+        {
+            self.go_direct(first);
+        }
+        if std::env::var("FASTDISCO_PROFILE").is_ok() {
+            let anchor =
+                egui::Rect::from_min_size(egui::pos2(80.0, 900.0), egui::vec2(160.0, 40.0));
+            let me = self.model.me;
+            self.apply_chat(ChatAction::ShowProfile {
+                user: me,
+                anchor,
+                side: crate::chat::Side::Above,
+            });
+        }
         if let Some(tab) = tab {
             self.apply_chat(ChatAction::OpenPicker {
                 tab,
@@ -372,6 +416,24 @@ impl App {
                 Action::ToggleMembers => self.show_members = !self.show_members,
                 Action::Send => self.send_draft(),
                 Action::Chat(action) => self.apply_chat(action),
+                Action::MarkRead(id) => self.mark_read(id),
+                Action::MarkGuildRead(guild) => {
+                    let channels = self
+                        .model
+                        .guild(guild)
+                        .map(|g| g.channels.clone())
+                        .unwrap_or_default();
+                    for id in channels {
+                        if self
+                            .model
+                            .channel(id)
+                            .is_some_and(|c| c.unread() || c.mentions > 0)
+                        {
+                            self.mark_read(id);
+                        }
+                    }
+                }
+                Action::StepChannel(step) => self.step_channel(step),
                 Action::ToggleMute => {
                     self.muted = !self.muted;
                     if !self.muted {
@@ -384,6 +446,41 @@ impl App {
                 }
             }
         }
+    }
+
+    /// The open place's text channels in their shown order, and moves
+    /// `step` along them.
+    fn step_channel(&mut self, step: i32) {
+        let list: Vec<Id> = match self.place {
+            Place::Server(g) => {
+                let Some(guild) = self.model.guild(g) else {
+                    return;
+                };
+                let (loose, categories) = self.model.layout(guild);
+                loose
+                    .into_iter()
+                    .chain(categories.into_iter().flat_map(|(_, l)| l))
+                    .collect()
+            }
+            Place::Home => self.model.sorted_direct(),
+        };
+        let list: Vec<Id> = list
+            .into_iter()
+            .filter(|c| self.model.channel(*c).is_some_and(|c| c.kind.is_textual()))
+            .collect();
+        let Some(at) = self.channel.and_then(|c| list.iter().position(|x| *x == c)) else {
+            return;
+        };
+        let next = at as i64 + i64::from(step);
+        if let Some(id) = usize::try_from(next).ok().and_then(|n| list.get(n)) {
+            self.open_channel(*id);
+        }
+    }
+
+    /// Opens a direct message from anywhere.
+    pub fn go_direct(&mut self, channel: Id) {
+        self.place = Place::Home;
+        self.open_channel(channel);
     }
 
     fn go_home(&mut self) {
@@ -417,10 +514,22 @@ impl App {
         if !channel.kind.is_textual() {
             return;
         }
+        // A channel opened from a mention may be on another server.
+        self.place = match channel.guild {
+            Some(guild) => Place::Server(guild),
+            None => Place::Home,
+        };
         if self.channel != Some(id) {
             self.chat.player = None;
+            self.chat.popout = None;
             self.chat.picker = None;
             self.chat.editing = None;
+        }
+        if self.channel != Some(id) {
+            match channel.read.filter(|_| channel.unread()) {
+                Some(read) => self.chat.unread_from.insert(id, read),
+                None => self.chat.unread_from.remove(&id),
+            };
         }
         self.channel = Some(id);
         self.chat.focus_composer = true;
@@ -664,10 +773,8 @@ impl App {
                 let Some(id) = parse::id(&data["user"]["id"]) else {
                     return;
                 };
-                let (status, activity) = parse::presence(&data);
                 if let Some(user) = self.model.users.get_mut(&id) {
-                    user.status = status;
-                    user.activity = activity;
+                    user.set_presence(parse::presence(&data));
                 }
             }
             "GUILD_MEMBER_LIST_UPDATE" => parse::member_list(&data, &mut self.model),

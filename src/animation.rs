@@ -11,8 +11,11 @@ use std::time::{Duration, Instant};
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
 
-/// Widest frame kept, about the widest a GIF is shown.
+/// Widest frame kept, about the widest a GIF is shown in the chat.
 const MAX_WIDTH: u32 = 400;
+/// The same GIF in the viewer: ask for `url` + LARGE.
+pub const LARGE: &str = "#large";
+const LARGE_WIDTH: u32 = 1280;
 const MAX_FPS: f64 = 30.0;
 /// Frames kept per animation: ten seconds at 30 fps.
 const MAX_FRAMES: usize = 300;
@@ -141,7 +144,12 @@ fn decode(ctx: &egui::Context, url: String) -> Receiver<Decoded> {
     std::thread::Builder::new()
         .name("animation".into())
         .spawn(move || {
-            let Some((width, height, fps)) = probe(&url) else {
+            let (source, max_width) = match url.strip_suffix(LARGE) {
+                Some(source) => (source.to_owned(), LARGE_WIDTH),
+                None => (url.clone(), MAX_WIDTH),
+            };
+            let url = source;
+            let Some((width, height, fps)) = probe(&url, max_width) else {
                 let _ = sender.send(Decoded::Done);
                 return;
             };
@@ -196,7 +204,7 @@ fn decode(ctx: &egui::Context, url: String) -> Receiver<Decoded> {
 }
 
 /// Frame size (scaled down, even) and rate of the video at `url`.
-fn probe(url: &str) -> Option<(u32, u32, f64)> {
+fn probe(url: &str, max_width: u32) -> Option<(u32, u32, f64)> {
     let output = Command::new("ffprobe")
         .args([
             "-v",
@@ -221,7 +229,7 @@ fn probe(url: &str) -> Option<(u32, u32, f64)> {
     if w == 0 || h == 0 {
         return None;
     }
-    let width = w.min(MAX_WIDTH) & !1;
+    let width = w.min(max_width) & !1;
     let height = ((h as f64 * width as f64 / w as f64).round() as u32 & !1).max(2);
     let fps = stream["avg_frame_rate"]
         .as_str()

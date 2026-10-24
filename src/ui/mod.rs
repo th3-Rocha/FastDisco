@@ -7,6 +7,7 @@ mod login;
 mod message;
 pub mod overlay;
 mod player;
+mod profile;
 mod rail;
 mod sidebar;
 mod widgets;
@@ -22,11 +23,29 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 player.update();
             }
             app.update_animations();
+            // Alt+Up and Alt+Down move between channels, as in Discord.
+            let alt = egui::Modifiers::ALT;
+            if ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowUp)) {
+                app.actions.push(crate::app::Action::StepChannel(-1));
+            }
+            if ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowDown)) {
+                app.actions.push(crate::app::Action::StepChannel(1));
+            }
             composer::type_anywhere(app, ui.ctx());
             rail::show(app, ui);
             sidebar::show(app, ui);
             chat::show(app, ui);
+            profile::popout(app, ui);
             sidebar::logout_dialog(app, ui);
+            let wanted: Vec<crate::model::Id> =
+                ui.data_mut(|d| {
+                    std::mem::take(d.get_temp_mut_or_default::<Vec<crate::model::Id>>(
+                        egui::Id::new("want-app-icons"),
+                    ))
+                });
+            for application in wanted {
+                app.want_app_icon(application);
+            }
         }
     }
 }

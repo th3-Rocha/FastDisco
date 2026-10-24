@@ -293,3 +293,98 @@ fn percent(text: &str) -> String {
         })
         .collect()
 }
+
+/// A user's profile, as seen from a server when `guild` is given.
+pub async fn profile(
+    client: &reqwest::Client,
+    token: &str,
+    user: u64,
+    guild: Option<u64>,
+) -> Result<Value, String> {
+    let mut url = format!(
+        "{API}/users/{user}/profile?with_mutual_guilds=true&with_mutual_friends_count=true"
+    );
+    if let Some(guild) = guild {
+        url.push_str(&format!("&guild_id={guild}"));
+    }
+    let response = client
+        .get(url)
+        .header("Authorization", token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(response.status().to_string());
+    }
+    response.json().await.map_err(|e| e.to_string())
+}
+
+/// The user's private note about someone.
+pub async fn note(client: &reqwest::Client, token: &str, user: u64) -> Option<String> {
+    let response = client
+        .get(format!("{API}/users/@me/notes/{user}"))
+        .header("Authorization", token)
+        .send()
+        .await
+        .ok()?;
+    let value: Value = response.json().await.ok()?;
+    value["note"].as_str().map(str::to_owned)
+}
+
+pub async fn set_note(
+    client: &reqwest::Client,
+    token: &str,
+    user: u64,
+    note: &str,
+) -> Result<(), String> {
+    let response = client
+        .put(format!("{API}/users/@me/notes/{user}"))
+        .header("Authorization", token)
+        .json(&json!({ "note": note }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(response.status().to_string())
+    }
+}
+
+/// Opens (or finds) the direct message with a user.
+pub async fn open_direct(
+    client: &reqwest::Client,
+    token: &str,
+    user: u64,
+) -> Result<Value, String> {
+    let response = client
+        .post(format!("{API}/users/@me/channels"))
+        .header("Authorization", token)
+        .json(&json!({ "recipients": [user.to_string()] }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(response.status().to_string());
+    }
+    response.json().await.map_err(|e| e.to_string())
+}
+
+/// The icon of a game, for Rich Presence without pictures of its own.
+pub async fn application_icon(
+    client: &reqwest::Client,
+    token: &str,
+    application: u64,
+) -> Option<String> {
+    let response = client
+        .get(format!("{API}/applications/{application}/rpc"))
+        .header("Authorization", token)
+        .send()
+        .await
+        .ok()?;
+    let value: Value = response.json().await.ok()?;
+    let icon = value["icon"].as_str()?;
+    Some(format!(
+        "https://cdn.discordapp.com/app-icons/{application}/{icon}.png?size=128"
+    ))
+}

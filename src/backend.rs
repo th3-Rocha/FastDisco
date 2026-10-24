@@ -58,6 +58,18 @@ pub enum Command {
     Typing(u64),
     /// Trending GIFs, or a search.
     Gifs(Option<String>),
+    /// A user's profile and the note about them.
+    Profile {
+        user: u64,
+        guild: Option<u64>,
+    },
+    SetNote {
+        user: u64,
+        note: String,
+    },
+    /// Opens the direct message with a user.
+    OpenDirect(u64),
+    ApplicationIcon(u64),
     /// The trending searches for the GIF picker's first screen.
     GifHome,
     /// The favourite GIFs from the user's settings.
@@ -120,6 +132,16 @@ pub enum Event {
         reason: String,
     },
     GifHome(rest::GifHome),
+    Profile {
+        user: u64,
+        profile: Box<crate::model::Profile>,
+    },
+    ProfileFailed(u64),
+    DirectOpened(Value),
+    ApplicationIcon {
+        application: u64,
+        url: Option<String>,
+    },
     Favorites(Vec<discord::frecency::Favorite>),
     Gifs {
         query: Option<String>,
@@ -356,6 +378,51 @@ impl Worker {
             Command::Typing(channel) => {
                 self.spawn(move |client, token, _| async move {
                     rest::typing(&client, &token, channel).await
+                });
+            }
+            Command::Profile { user, guild } => {
+                self.spawn(move |client, token, events| async move {
+                    let (profile, note) = tokio::join!(
+                        rest::profile(&client, &token, user, guild),
+                        rest::note(&client, &token, user)
+                    );
+                    match profile {
+                        Ok(value) => {
+                            let mut profile = parse::profile(&value);
+                            profile.note = note;
+                            let _ = events.send(Event::Profile {
+                                user,
+                                profile: Box::new(profile),
+                            });
+                        }
+                        Err(error) => {
+                            log::warn!("profile of {user}: {error}");
+                            let _ = events.send(Event::ProfileFailed(user));
+                        }
+                    }
+                });
+            }
+            Command::SetNote { user, note } => {
+                self.spawn(move |client, token, _| async move {
+                    if let Err(error) = rest::set_note(&client, &token, user, &note).await {
+                        log::warn!("note on {user}: {error}");
+                    }
+                });
+            }
+            Command::OpenDirect(user) => {
+                self.spawn(move |client, token, events| async move {
+                    match rest::open_direct(&client, &token, user).await {
+                        Ok(channel) => {
+                            let _ = events.send(Event::DirectOpened(channel));
+                        }
+                        Err(error) => log::warn!("direct message with {user}: {error}"),
+                    }
+                });
+            }
+            Command::ApplicationIcon(application) => {
+                self.spawn(move |client, token, events| async move {
+                    let url = rest::application_icon(&client, &token, application).await;
+                    let _ = events.send(Event::ApplicationIcon { application, url });
                 });
             }
             Command::GifHome => {

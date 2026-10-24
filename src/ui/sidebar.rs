@@ -257,8 +257,38 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id) {
             palette.icon,
         );
     }
-    if response.clicked() && channel.kind.is_textual() {
+    let unread = channel.unread() || channel.mentions > 0;
+    let guild = channel.guild;
+    let textual = channel.kind.is_textual();
+    if response.clicked() && textual {
         app.actions.push(Action::OpenChannel(id));
+    }
+    let mut chosen = None;
+    response.context_menu(|ui| {
+        ui.set_min_width(180.0);
+        if ui
+            .add_enabled(unread, egui::Button::new("Marcar como lido"))
+            .clicked()
+        {
+            chosen = Some(Action::MarkRead(id));
+            ui.close();
+        }
+        if let Some(guild) = guild
+            && ui.button("Copiar link").clicked()
+        {
+            chosen = Some(Action::Chat(crate::chat::ChatAction::Copy(format!(
+                "https://discord.com/channels/{guild}/{id}"
+            ))));
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Copiar ID do canal").clicked() {
+            chosen = Some(Action::Chat(crate::chat::ChatAction::Copy(id.to_string())));
+            ui.close();
+        }
+    });
+    if let Some(action) = chosen {
+        app.actions.push(action);
     }
 }
 
@@ -431,6 +461,15 @@ fn user_panel(app: &mut App, ui: &mut Ui) {
                 pos2(rect.right() - 102.0, rect.bottom() - 8.0),
             );
             let response = ui.interact(identity, ui.id().with("me"), Sense::click());
+            if response.clicked() {
+                let me = app.model.me;
+                app.actions
+                    .push(Action::Chat(crate::chat::ChatAction::ShowProfile {
+                        user: me,
+                        anchor: identity,
+                        side: crate::chat::Side::Above,
+                    }));
+            }
             let behind = if response.hovered() {
                 palette.selected
             } else {

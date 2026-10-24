@@ -87,7 +87,7 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
                 header_top = ui.cursor().top();
             }
             if !continues || message.reply.is_some() || message.command.is_some() {
-                header(ui, app, row.guild, message);
+                header(row, ui, message);
             }
             let editing = app
                 .chat
@@ -331,7 +331,9 @@ fn reply_line(row: &mut Row<'_>, ui: &mut Ui, message: &Message, left: f32) {
     }
 }
 
-fn header(ui: &mut Ui, app: &App, guild: Option<Id>, message: &Message) {
+fn header(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
+    let app = row.app;
+    let guild = row.guild;
     let palette = app.palette;
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
     let color = app
@@ -343,7 +345,29 @@ fn header(ui: &mut Ui, app: &App, guild: Option<Id>, message: &Message) {
         font(Weight::Medium, 16.0),
         color,
     );
+    let name_rect = Rect::from_min_size(rect.min, name.size());
     let mut x = rect.left() + name.size().x;
+    // Discord underlines the name under the pointer; a click opens the profile.
+    let name_response = ui.interact(
+        name_rect,
+        ui.id().with(("author", message.id)),
+        Sense::click(),
+    );
+    if name_response.hovered() {
+        ui.painter().hline(
+            name_rect.x_range(),
+            name_rect.bottom() - 1.0,
+            Stroke::new(1.0, color),
+        );
+    }
+    if name_response.clicked() {
+        row.act(ChatAction::ShowProfile {
+            user: message.author,
+            anchor: name_rect,
+            side: crate::chat::Side::Right,
+        });
+    }
+    user_menu(row, &name_response, message.author);
     ui.painter().galley(rect.min, name, color);
     if app.model.user(message.author).is_some_and(|u| u.bot) {
         let tag = Rect::from_min_size(pos2(x + 4.0, rect.top() + 4.0), vec2(30.0, 15.0));
@@ -358,13 +382,83 @@ fn header(ui: &mut Ui, app: &App, guild: Option<Id>, message: &Message) {
         );
         x += 34.0;
     }
-    ui.painter().text(
+    let time = ui.painter().text(
         pos2(x + 8.0, rect.center().y),
         Align2::LEFT_CENTER,
         timestamp(message.time),
         font(Weight::Regular, 12.0),
         palette.muted,
     );
+    // The full date under the pointer, as Discord's tooltip.
+    ui.interact(time, ui.id().with(("time", message.id)), Sense::hover())
+        .on_hover_text(full_date(message.time));
+}
+
+/// "sexta-feira, 24 de outubro de 2026 10:04".
+pub fn full_date(time: jiff::Timestamp) -> String {
+    const DAYS: [&str; 7] = [
+        "segunda-feira",
+        "terça-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "sábado",
+        "domingo",
+    ];
+    let zoned = time.to_zoned(jiff::tz::TimeZone::system());
+    let day = DAYS[zoned.weekday().to_monday_zero_offset() as usize];
+    format!(
+        "{day}, {} {}",
+        super::widgets::long_date(zoned.date()),
+        zoned.strftime("%H:%M")
+    )
+}
+
+/// The right-click menu on a person, as Discord's.
+pub fn user_menu(row: &mut Row<'_>, response: &egui::Response, user: Id) {
+    let app = row.app;
+    let username = app
+        .model
+        .user(user)
+        .map(|u| u.username.clone())
+        .unwrap_or_default();
+    let me = user == app.model.me;
+    let anchor = response.rect;
+    let mut chosen = None;
+    response.context_menu(|ui| {
+        ui.set_min_width(180.0);
+        if ui.button("Perfil").clicked() {
+            chosen = Some(ChatAction::ShowProfile {
+                user,
+                anchor,
+                side: crate::chat::Side::Right,
+            });
+            ui.close();
+        }
+        if ui.button("Mencionar").clicked() {
+            chosen = Some(ChatAction::Mention(user));
+            ui.close();
+        }
+        if !me && ui.button("Mensagem").clicked() {
+            chosen = Some(ChatAction::MessageUser {
+                user,
+                text: String::new(),
+            });
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Copiar nome de usuário").clicked() {
+            chosen = Some(ChatAction::Copy(username.clone()));
+            ui.close();
+        }
+        if ui.button("Copiar ID do usuário").clicked() {
+            chosen = Some(ChatAction::Copy(user.to_string()));
+            ui.close();
+        }
+    });
+    if let Some(action) = chosen {
+        row.act(action);
+    }
 }
 
 /// The text, unless it is only the link of an embed that shows instead.
@@ -558,6 +652,8 @@ pub fn blocks(
 enum Target {
     Link(String),
     Spoiler(usize),
+    User(Id),
+    Channel(Id),
 }
 
 /// One run of styled text, with custom emoji drawn over placeholders and
@@ -643,7 +739,7 @@ fn text(
             }
             Inline::User(id, s) => {
                 let name = app.model.name_in(row.guild, *id);
-                push(
+                let range = push(
                     &mut job,
                     &format!("@{name}"),
                     TextFormat {
@@ -652,6 +748,7 @@ fn text(
                         ..format(s, MENTION_TEXT)
                     },
                 );
+                targets.push((range, Target::User(*id)));
             }
             Inline::Everyone(word, s) => {
                 push(
@@ -687,7 +784,7 @@ fn text(
                     .model
                     .channel(*id)
                     .map_or_else(|| "#canal-desconhecido".into(), |c| format!("#{}", c.name));
-                push(
+                let range = push(
                     &mut job,
                     &name,
                     TextFormat {
@@ -696,6 +793,7 @@ fn text(
                         ..format(s, MENTION_TEXT)
                     },
                 );
+                targets.push((range, Target::Channel(*id)));
             }
             Inline::Time {
                 unix,
@@ -796,6 +894,15 @@ fn text(
                 let action = match target {
                     Target::Link(url) => ChatAction::OpenUrl(url.clone()),
                     Target::Spoiler(i) => ChatAction::RevealSpoiler(message, *i),
+                    Target::User(user) => ChatAction::ShowProfile {
+                        user: *user,
+                        anchor: Rect::from_center_size(pointer, Vec2::splat(16.0)),
+                        side: crate::chat::Side::Right,
+                    },
+                    Target::Channel(channel) => {
+                        row.out.push(Action::OpenChannel(*channel));
+                        return;
+                    }
                 };
                 row.act(action);
             }
@@ -1158,15 +1265,9 @@ fn file_card(row: &mut Row<'_>, ui: &mut Ui, file: &Attachment, sending: bool) {
 }
 
 /// A GIF sent as a video: it plays at once, silent and in a loop, as in
-/// Discord. Without ffmpeg, or if it cannot be decoded, the poster shows.
-fn looping(
-    row: &mut Row<'_>,
-    ui: &mut Ui,
-    video: &str,
-    poster: Option<&str>,
-    page: Option<&str>,
-    size: Vec2,
-) {
+/// Discord, and a click shows it large. Without ffmpeg, or if it cannot be
+/// decoded, the poster shows.
+fn looping(row: &mut Row<'_>, ui: &mut Ui, video: &str, poster: Option<&str>, size: Vec2) {
     let app = row.app;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     if !ui.is_rect_visible(rect) {
@@ -1196,8 +1297,9 @@ fn looping(
     if response.hovered() {
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     }
+    // Like Discord, a click shows it large; the viewer links to the page.
     if response.clicked() {
-        row.act(ChatAction::OpenUrl(page.unwrap_or(video).to_owned()));
+        row.act(ChatAction::ViewImage(video.to_owned()));
     }
 }
 
@@ -1231,14 +1333,7 @@ fn embed(row: &mut Row<'_>, ui: &mut Ui, embed: &Embed) {
                     .thumbnail
                     .as_ref()
                     .map(|t| t.proxy.clone().unwrap_or(t.url.clone()));
-                looping(
-                    row,
-                    ui,
-                    &video.url,
-                    poster.as_deref(),
-                    embed.url.as_deref(),
-                    size,
-                );
+                looping(row, ui, &video.url, poster.as_deref(), size);
             }
             return;
         }

@@ -47,7 +47,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             paint_icon(ui, Icon::Threads, rect.center(), 26.0, tint);
                         },
                     );
-                    if home {
+                    if home.clicked() {
                         app.actions.push(Action::GoHome);
                     }
                     ui.add_space(GAP);
@@ -60,11 +60,12 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     ui.add_space(GAP);
 
                     let mut open = None;
+                    let mut menu: Option<Action> = None;
                     for guild in &app.model.guilds {
                         let (unread, mentions) = app.model.guild_unread(guild);
                         let selected = app.place == Place::Server(guild.id);
                         let icon = app.picture(guild.icon.as_deref());
-                        let clicked = item(
+                        let response = item(
                             ui,
                             app,
                             selected,
@@ -97,21 +98,56 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                                 }
                             },
                         );
-                        if clicked {
+                        if response.clicked() {
                             open = Some(guild.id);
                         }
+                        let id = guild.id;
+                        response.context_menu(|ui| {
+                            ui.set_min_width(180.0);
+                            if ui
+                                .add_enabled(unread, egui::Button::new("Marcar como lido"))
+                                .clicked()
+                            {
+                                menu = Some(Action::MarkGuildRead(id));
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("Copiar ID do servidor").clicked() {
+                                menu = Some(Action::Chat(crate::chat::ChatAction::Copy(
+                                    id.to_string(),
+                                )));
+                                ui.close();
+                            }
+                        });
                         ui.add_space(GAP);
                     }
                     if let Some(id) = open {
                         app.actions.push(Action::OpenServer(id));
                     }
+                    if let Some(action) = menu {
+                        app.actions.push(action);
+                    }
 
-                    for (icon, hint) in [
-                        (Icon::Plus, "Adicionar um servidor"),
-                        (Icon::Compass, "Explorar servidores"),
-                        (Icon::Download, "Baixar apps"),
+                    // Creating and joining servers open Discord's own pages
+                    // for now.
+                    for (icon, hint, url) in [
+                        (
+                            Icon::Plus,
+                            "Adicionar um servidor",
+                            "https://discord.com/channels/@me",
+                        ),
+                        (
+                            Icon::Compass,
+                            "Explorar servidores",
+                            "https://discord.com/discovery",
+                        ),
+                        (
+                            Icon::Download,
+                            "Baixar apps",
+                            "https://discord.com/download",
+                        ),
                     ] {
-                        item(ui, app, false, false, 0, hint, |ui, rect, lit| {
+                        let response = item(ui, app, false, false, 0, hint, |ui, rect, lit| {
                             ui.painter().rect_filled(
                                 rect,
                                 radius(lit),
@@ -125,6 +161,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                                 if lit { Color32::WHITE } else { palette.online },
                             );
                         });
+                        if response.clicked() {
+                            app.actions
+                                .push(Action::Chat(crate::chat::ChatAction::OpenUrl(url.into())));
+                        }
                         ui.add_space(GAP);
                     }
                 });
@@ -146,7 +186,7 @@ fn item(
     mentions: u32,
     hint: &str,
     paint: impl FnOnce(&Ui, Rect, bool),
-) -> bool {
+) -> egui::Response {
     let palette = app.palette;
     let (slot, response) = ui.allocate_exact_size(vec2(RAIL_WIDTH, ICON), Sense::click());
     let hovered = response.hovered();
@@ -179,7 +219,10 @@ fn item(
             Some(palette.rail),
         );
     }
-    response.on_hover_text(hint).clicked()
+    if hovered {
+        rail_tooltip(ui, rect, hint);
+    }
+    response
 }
 
 /// "Rust Brasil" is "RB", as the rail shows a server without an icon.
@@ -188,4 +231,40 @@ fn acronym(name: &str) -> String {
         .filter_map(|word| word.chars().next())
         .take(5)
         .collect()
+}
+
+/// Discord's tooltip beside the rail: the name in a dark bubble to the
+/// right, pointing at the icon.
+fn rail_tooltip(ui: &Ui, icon: Rect, text: &str) {
+    let floating = Color32::from_rgb(0x11, 0x12, 0x14);
+    let at = egui::pos2(icon.right() + 14.0, icon.center().y);
+    egui::Area::new(egui::Id::new("rail-tooltip"))
+        .order(egui::Order::Tooltip)
+        .pivot(egui::Align2::LEFT_CENTER)
+        .fixed_pos(at)
+        .interactable(false)
+        .show(ui.ctx(), |ui| {
+            let frame = egui::Frame::new()
+                .fill(floating)
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(12, 8))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(super::widgets::hyphens(text))
+                            .font(font(Weight::SemiBold, 16.0))
+                            .color(Color32::WHITE),
+                    );
+                });
+            let r = frame.response.rect;
+            let tip = [
+                egui::pos2(r.left() - 5.0, r.center().y),
+                egui::pos2(r.left(), r.center().y - 5.0),
+                egui::pos2(r.left(), r.center().y + 5.0),
+            ];
+            ui.painter().add(egui::Shape::convex_polygon(
+                tip.to_vec(),
+                floating,
+                egui::Stroke::NONE,
+            ));
+        });
 }

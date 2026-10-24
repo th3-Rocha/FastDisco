@@ -9,7 +9,7 @@ use egui::{
 use fastframe_fonts::Weight;
 
 use super::widgets::{Elide, avatar, day, font, icon_button, long_date, paint_icon};
-use super::{composer, message};
+use super::{composer, message, profile};
 use crate::app::{Action, App, Place};
 use crate::icons::Icon;
 use crate::model::{ChannelKind, Id, ListItem, Message, Status};
@@ -36,6 +36,18 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 && ui.available_width() >= MEMBERS_MIN_CHAT + MEMBERS_WIDTH
             {
                 members(app, ui);
+            }
+            let direct = app
+                .model
+                .channel(channel)
+                .filter(|c| c.kind == ChannelKind::Direct)
+                .and_then(|c| c.recipients.first().copied());
+            if let Some(user) = direct
+                && app.chat.dm_profile
+                && ui.available_width() >= MEMBERS_MIN_CHAT + profile::PANEL_WIDTH
+            {
+                app.load_profile(user);
+                profile::panel(app, ui, user);
             }
             let field = composer::show(app, ui, channel);
             egui::CentralPanel::default()
@@ -179,14 +191,16 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                         );
                         icon_button(ui, &palette, Icon::Threads, 24.0, false, "Tópicos");
                     } else {
-                        icon_button(
-                            ui,
-                            &palette,
-                            Icon::User,
-                            24.0,
-                            false,
-                            "Mostrar perfil do usuário",
-                        );
+                        let shown = app.chat.dm_profile;
+                        let hint = if shown {
+                            "Ocultar perfil do usuário"
+                        } else {
+                            "Mostrar perfil do usuário"
+                        };
+                        if icon_button(ui, &palette, Icon::User, 24.0, shown, hint).clicked() {
+                            app.actions
+                                .push(Action::Chat(crate::chat::ChatAction::ToggleDmProfile));
+                        }
                         icon_button(
                             ui,
                             &palette,
@@ -264,15 +278,7 @@ fn messages(app: &mut App, ui: &mut Ui, id: Id) {
             welcome(app, ui, id, width);
         }
         if channel.requested && channel.messages.is_empty() && channel.last_message.is_some() {
-            ui.add_space(24.0);
-            let (rect, _) = ui.allocate_exact_size(vec2(width, 20.0), Sense::hover());
-            ui.painter().text(
-                rect.center(),
-                Align2::CENTER_CENTER,
-                "Carregando mensagens…",
-                font(Weight::Medium, 14.0),
-                palette.muted,
-            );
+            skeleton(ui, &palette, width);
         }
         let mut row = message::Row {
             app,
@@ -280,8 +286,17 @@ fn messages(app: &mut App, ui: &mut Ui, id: Id) {
             channel: id,
             out: &mut out,
         };
+        let unread_from = app.chat.unread_from.get(&id).copied();
+        let mut new_shown = false;
         let mut previous: Option<&Message> = None;
         for m in &channel.messages {
+            if !new_shown
+                && unread_from
+                    .is_some_and(|read| m.id > read && !m.pending && m.author != app.model.me)
+            {
+                new_shown = true;
+                new_divider(ui, &palette, width);
+            }
             let new_day = previous.is_none_or(|p| day(p.time) != day(m.time));
             if new_day {
                 divider(ui, &palette, width, &long_date(day(m.time)));
@@ -303,6 +318,55 @@ fn messages(app: &mut App, ui: &mut Ui, id: Id) {
     });
     let offset = output.state.offset.y;
     let height = output.content_size.y;
+    let viewport = output.inner_rect;
+    // Far from the newest messages: Discord's bar to jump back.
+    if height - offset - viewport.height() > viewport.height() * 1.5 {
+        let bar = Rect::from_min_max(
+            pos2(viewport.left() + 16.0, viewport.bottom() - 32.0),
+            pos2(viewport.right() - 16.0, viewport.bottom()),
+        );
+        ui.painter().rect_filled(
+            bar,
+            CornerRadius {
+                nw: 8,
+                ne: 8,
+                sw: 0,
+                se: 0,
+            },
+            palette.sidebar,
+        );
+        ui.painter().text(
+            pos2(bar.left() + 12.0, bar.center().y),
+            Align2::LEFT_CENTER,
+            "Você está vendo mensagens antigas",
+            font(Weight::Medium, 14.0),
+            palette.text,
+        );
+        let label = ui.painter().layout_no_wrap(
+            "Ir para o presente".into(),
+            font(Weight::SemiBold, 14.0),
+            palette.strong,
+        );
+        let jump = Rect::from_min_size(
+            pos2(
+                bar.right() - 12.0 - label.size().x,
+                bar.center().y - label.size().y / 2.0,
+            ),
+            label.size(),
+        );
+        let response = ui.interact(jump.expand(4.0), ui.id().with(("jump", id)), Sense::click());
+        if response.hovered() {
+            ui.painter().hline(
+                jump.x_range(),
+                jump.bottom(),
+                Stroke::new(1.0, palette.strong),
+            );
+        }
+        ui.painter().galley(jump.min, label, palette.strong);
+        if response.clicked() {
+            ui.data_mut(|d| d.insert_temp(egui::Id::new(("scroll-shift", id)), height));
+        }
+    }
     if let (Some((old_first, old_height)), Some(first)) = (anchor, first)
         && old_first != first
         && height > old_height
@@ -385,6 +449,81 @@ fn welcome(app: &App, ui: &mut Ui, id: Id, width: f32) {
     );
 }
 
+/// Grey rows shaped like messages while the history loads.
+fn skeleton(ui: &mut Ui, palette: &Palette, width: f32) {
+    let shade = palette.selected.gamma_multiply(0.6);
+    let lines: [&[f32]; 6] = [
+        &[0.5, 0.3],
+        &[0.7],
+        &[0.4, 0.6, 0.2],
+        &[0.55],
+        &[0.3, 0.45],
+        &[0.65, 0.35],
+    ];
+    for (i, widths) in lines.iter().enumerate() {
+        ui.add_space(20.0);
+        let (rect, _) = ui.allocate_exact_size(
+            vec2(width, 20.0 + widths.len() as f32 * 22.0),
+            Sense::hover(),
+        );
+        ui.painter()
+            .circle_filled(pos2(rect.left() + 36.0, rect.top() + 20.0), 20.0, shade);
+        let name = Rect::from_min_size(
+            pos2(rect.left() + 72.0, rect.top() + 4.0),
+            vec2(80.0 + (i % 3) as f32 * 30.0, 14.0),
+        );
+        ui.painter().rect_filled(name, CornerRadius::same(7), shade);
+        for (j, w) in widths.iter().enumerate() {
+            let line = Rect::from_min_size(
+                pos2(rect.left() + 72.0, rect.top() + 26.0 + j as f32 * 22.0),
+                vec2((width - 120.0) * w, 14.0),
+            );
+            ui.painter().rect_filled(line, CornerRadius::same(7), shade);
+        }
+    }
+}
+
+/// Discord's red line where the unread messages begin.
+fn new_divider(ui: &mut Ui, palette: &Palette, width: f32) {
+    ui.add_space(12.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 12.0), Sense::hover());
+    let y = rect.center().y;
+    ui.painter().hline(
+        (rect.left() + 16.0)..=(rect.right() - 16.0),
+        y,
+        Stroke::new(1.0, palette.danger),
+    );
+    let label =
+        ui.painter()
+            .layout_no_wrap("NOVAS".into(), font(Weight::Bold, 10.0), Color32::WHITE);
+    let pill = Rect::from_min_size(
+        pos2(rect.right() - 16.0 - label.size().x - 10.0, y - 7.0),
+        vec2(label.size().x + 10.0, 14.0),
+    );
+    ui.painter().rect_filled(
+        pill,
+        CornerRadius {
+            nw: 0,
+            sw: 0,
+            ne: 4,
+            se: 4,
+        },
+        palette.danger,
+    );
+    let tip = [
+        pos2(pill.left() - 6.0, y),
+        pos2(pill.left(), pill.top()),
+        pos2(pill.left(), pill.bottom()),
+    ];
+    ui.painter().add(egui::Shape::convex_polygon(
+        tip.to_vec(),
+        palette.danger,
+        Stroke::NONE,
+    ));
+    ui.painter()
+        .galley(pill.center() - label.size() / 2.0, label, Color32::WHITE);
+}
+
 fn divider(ui: &mut Ui, palette: &Palette, width: f32, label: &str) {
     ui.add_space(12.0);
     let (rect, _) = ui.allocate_exact_size(vec2(width, 12.0), Sense::hover());
@@ -407,6 +546,7 @@ fn divider(ui: &mut Ui, palette: &Palette, width: f32, label: &str) {
 fn members(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
     let Place::Server(id) = app.place else { return };
+    let mut out = Vec::new();
     egui::Panel::right("members")
         .resizable(false)
         .exact_size(MEMBERS_WIDTH)
@@ -438,6 +578,12 @@ fn members(app: &mut App, ui: &mut Ui) {
                         );
                         return;
                     }
+                    let mut row = message::Row {
+                        app,
+                        guild: Some(id),
+                        channel: 0,
+                        out: &mut out,
+                    };
                     for item in &guild.list {
                         match item {
                             ListItem::Group { id: group, count } => {
@@ -461,14 +607,16 @@ fn members(app: &mut App, ui: &mut Ui) {
                                     palette.muted,
                                 );
                             }
-                            ListItem::Member(user) => member(app, ui, id, *user),
+                            ListItem::Member(user) => member(&mut row, ui, id, *user),
                         }
                     }
                 });
         });
+    app.actions.extend(out);
 }
 
-fn member(app: &App, ui: &mut Ui, guild: Id, id: Id) {
+fn member(row: &mut message::Row<'_>, ui: &mut Ui, guild: Id, id: Id) {
+    let app = row.app;
     let palette = app.palette;
     let Some(user) = app.model.user(id) else {
         return;
@@ -481,6 +629,16 @@ fn member(app: &App, ui: &mut Ui, guild: Id, id: Id) {
         pos2(slot.left() + 8.0, slot.top() + 1.0),
         pos2(slot.right() - 8.0, slot.bottom() - 1.0),
     );
+    // Discord opens the card to the left of the member list.
+    if response.clicked() {
+        row.out
+            .push(Action::Chat(crate::chat::ChatAction::ShowProfile {
+                user: id,
+                anchor: rect,
+                side: crate::chat::Side::Left,
+            }));
+    }
+    message::user_menu(row, &response, id);
     let hovered = response.hovered();
     let behind = if hovered {
         palette.hover

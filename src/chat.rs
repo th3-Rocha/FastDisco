@@ -167,10 +167,75 @@ pub enum ChatAction {
     RevealMedia(String),
     OpenUrl(String),
     Copy(String),
+    ShowProfile {
+        user: Id,
+        anchor: egui::Rect,
+        side: Side,
+    },
+    CloseProfile,
+    SaveNote {
+        user: Id,
+        note: String,
+    },
+    /// Opens the direct message with a user, sending `text` if any.
+    MessageUser {
+        user: Id,
+        text: String,
+    },
+    /// Puts @name in the composer.
+    Mention(Id),
+    ToggleDmProfile,
+    /// Replaces the word being typed with an autocomplete choice.
+    Complete {
+        word: String,
+        insert: String,
+        raw: Option<String>,
+    },
+}
+
+/// Which side of what was clicked the profile card opens on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    Right,
+    Left,
+    Above,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Popout {
+    pub user: Id,
+    pub guild: Option<Id>,
+    pub anchor: egui::Rect,
+    pub side: Side,
+}
+
+pub enum ProfileState {
+    Loading,
+    Ready(Box<crate::model::Profile>),
+    Failed,
 }
 
 #[derive(Default)]
 pub struct Chat {
+    pub popout: Option<Popout>,
+    pub profiles: HashMap<Id, (ProfileState, Instant)>,
+    /// The message typed in a profile card, to send once the direct
+    /// message exists.
+    pub card_message: HashMap<Id, String>,
+    pending_direct: Option<(Id, String)>,
+    pub app_icons: HashMap<Id, Option<String>>,
+    /// The profile panel beside a direct message.
+    pub dm_profile: bool,
+    /// Where the unread messages began when a channel was opened, for the
+    /// "new" line.
+    pub unread_from: HashMap<Id, Id>,
+    /// What autocomplete put in a draft and what it stands for when sent:
+    /// "@name" is "<@id>", "#channel" is "<#id>".
+    pub mentioned: HashMap<Id, Vec<(String, String)>>,
+    /// The highlighted autocomplete suggestion.
+    pub suggestion: usize,
+    /// An autocomplete closed with Escape, until the word changes.
+    pub dismissed: Option<String>,
     pub reply: HashMap<Id, Id>,
     pub editing: Option<Editing>,
     pub uploads: HashMap<Id, Vec<Pending>>,
@@ -192,6 +257,14 @@ pub struct Chat {
 }
 
 impl Chat {
+    pub fn new() -> Self {
+        // Discord shows the profile beside a direct message at first.
+        Self {
+            dm_profile: true,
+            ..Self::default()
+        }
+    }
+
     /// Names of who is typing in a channel now, not counting the user.
     pub fn typing_in(&self, channel: Id) -> Vec<Id> {
         self.typing
@@ -495,6 +568,147 @@ impl App {
                 let _ = open::that_detached(url);
             }
             ChatAction::Copy(text) => self.ctx.copy_text(text),
+            ChatAction::ShowProfile { user, anchor, side } => {
+                let same = self
+                    .chat
+                    .popout
+                    .is_some_and(|p| p.user == user && p.anchor == anchor);
+                self.chat.popout = (!same).then_some(Popout {
+                    user,
+                    guild: self.server(),
+                    anchor,
+                    side,
+                });
+                if !same {
+                    self.load_profile(user);
+                }
+            }
+            ChatAction::CloseProfile => self.chat.popout = None,
+            ChatAction::SaveNote { user, note } => {
+                let current = match self.chat.profiles.get(&user) {
+                    Some((ProfileState::Ready(p), _)) => p.note.clone().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                if note != current {
+                    if let Some((ProfileState::Ready(p), _)) = self.chat.profiles.get_mut(&user) {
+                        p.note = Some(note.clone());
+                    }
+                    self.backend().send(Command::SetNote { user, note });
+                }
+            }
+            ChatAction::MessageUser { user, text } => {
+                self.chat.popout = None;
+                self.chat.card_message.remove(&user);
+                let existing = self.model.direct.iter().copied().find(|c| {
+                    self.model.channel(*c).is_some_and(|c| {
+                        c.kind == crate::model::ChannelKind::Direct && c.recipients == [user]
+                    })
+                });
+                match existing {
+                    Some(channel) => self.open_direct(channel, text),
+                    None => {
+                        self.chat.pending_direct = Some((user, text));
+                        self.backend().send(Command::OpenDirect(user));
+                    }
+                }
+            }
+            ChatAction::Mention(user) => {
+                self.chat.popout = None;
+                if let Some(channel) = channel {
+                    let name = self.model.name_in(self.server(), user);
+                    let draft = self.drafts.entry(channel).or_default();
+                    if !draft.is_empty() && !draft.ends_with(' ') {
+                        draft.push(' ');
+                    }
+                    draft.push_str(&format!("@{name} "));
+                    self.chat
+                        .mentioned
+                        .entry(channel)
+                        .or_default()
+                        .push((format!("@{name}"), format!("<@{user}>")));
+                    self.chat.focus_composer = true;
+                    self.chat.cursor_to_end = true;
+                }
+            }
+            ChatAction::ToggleDmProfile => self.chat.dm_profile = !self.chat.dm_profile,
+            ChatAction::Complete { word, insert, raw } => {
+                let Some(channel) = channel else { return };
+                let draft = self.drafts.entry(channel).or_default();
+                if draft.ends_with(&word) {
+                    draft.truncate(draft.len() - word.len());
+                }
+                draft.push_str(&insert);
+                draft.push(' ');
+                if let Some(raw) = raw {
+                    self.chat
+                        .mentioned
+                        .entry(channel)
+                        .or_default()
+                        .push((insert, raw));
+                }
+                self.chat.suggestion = 0;
+                self.chat.focus_composer = true;
+                self.chat.cursor_to_end = true;
+            }
+        }
+    }
+
+    /// Asks for a profile unless a recent one is at hand.
+    pub fn load_profile(&mut self, user: Id) {
+        let fresh = self.chat.profiles.get(&user).is_some_and(|(state, at)| {
+            !matches!(state, ProfileState::Failed) && at.elapsed() < Duration::from_secs(300)
+        });
+        if !fresh {
+            self.chat
+                .profiles
+                .insert(user, (ProfileState::Loading, Instant::now()));
+            let guild = self.server();
+            self.backend().send(Command::Profile { user, guild });
+        }
+    }
+
+    /// A game's icon for Rich Presence without its own pictures.
+    pub fn app_icon(&self, application: Id) -> Option<String> {
+        self.chat.app_icons.get(&application).cloned().flatten()
+    }
+
+    pub fn want_app_icon(&mut self, application: Id) {
+        if !self.chat.app_icons.contains_key(&application) {
+            self.chat.app_icons.insert(application, None);
+            self.backend().send(Command::ApplicationIcon(application));
+        }
+    }
+
+    /// The direct message Discord created or found: open it, and send what
+    /// was typed in the profile card.
+    pub fn direct_opened(&mut self, value: &Value) {
+        for u in value["recipients"].as_array().into_iter().flatten() {
+            if let Some(u) = parse::user(u) {
+                self.model.users.entry(u.id).or_insert(u);
+            }
+        }
+        let Some(mut channel) = parse::channel(value, None) else {
+            return;
+        };
+        let id = channel.id;
+        if !self.model.channels.contains_key(&id) {
+            channel.read = channel.last_message;
+            self.model.channels.insert(id, channel);
+            self.model.direct.push(id);
+        }
+        let text = self
+            .chat
+            .pending_direct
+            .take()
+            .map(|(_, t)| t)
+            .unwrap_or_default();
+        self.open_direct(id, text);
+    }
+
+    fn open_direct(&mut self, channel: Id, text: String) {
+        self.go_direct(channel);
+        if !text.trim().is_empty() {
+            self.send_message(channel, text.trim().to_owned(), Vec::new(), None);
         }
     }
 
@@ -623,7 +837,10 @@ impl App {
         if text.is_empty() && files.is_empty() {
             return;
         }
-        let text = self.expand_emoji(&text);
+        let mut text = self.expand_emoji(&text);
+        for (shown, raw) in self.chat.mentioned.remove(&channel).unwrap_or_default() {
+            text = text.replace(&shown, &raw);
+        }
         let length = text.chars().count();
         if length > self.model.max_message() {
             self.chat.dialog = Some(Dialog::TooLong { channel, length });
@@ -705,6 +922,7 @@ impl App {
             c.messages.push(message);
         }
         self.chat.last_typing.remove(&channel);
+        self.chat.unread_from.remove(&channel);
         self.backend().send(Command::Send {
             channel,
             message: rest::Outgoing {
