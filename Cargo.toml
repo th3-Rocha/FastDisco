@@ -1,0 +1,46 @@
+[package]
+name = "fastdisco"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+description = "A native Discord client"
+repository = "https://github.com/th3-Rocha/FastDisco"
+keywords = ["discord", "chat", "egui"]
+
+[dependencies]
+anyhow = "1"
+log = "0.4"
+# The whole UI. glow keeps the binary and the dependency tree small; wgpu is
+# not needed for a 2D chat client.
+eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "glow", "default_fonts", "wayland", "x11"] }
+egui = "0.36.2"
+egui_extras = { version = "0.36.2", features = ["svg"] }
+# The shared foundation of Spotifast and ZapFast (crmne/fastframe). Every
+# crate comes from the same tag; move them together.
+fastframe-fonts = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+fastframe-text = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+fastframe-icons = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+# Colour emoji in the platform's own style, in every text through its egui
+# plugin.
+fastframe-emoji = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+
+[patch.crates-io]
+# crmne/egui apps-0.36.2, shared with Spotifast and ZapFast. Every egui crate
+# comes from the same revision so they share one emath and epaint.
+ecolor = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+eframe = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+egui = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+egui-winit = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+egui_extras = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+egui_glow = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+emath = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+epaint = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+# crmne/winit apps-0.30: Wayland occlusion and clipboard fixes the apps share.
+winit = { git = "https://github.com/crmne/winit", rev = "0bed9dc0a7db02590a279fb8bac795fa39ee6948" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

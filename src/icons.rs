@@ -1,0 +1,32 @@
+fastframe_icons::icons! {
+    /// Every icon the interface draws.
+    pub enum Icon {
+        prefix: "fastdisco-icon-",
+        directory: "../assets/icons/",
+        Hash => "hash",
+        Speaker => lucide "volume-2",
+        Headphones => "headphones",
+        Mic => lucide "mic",
+        Settings => lucide "settings",
+        Plus => lucide "plus",
+        PlusCircle => "circle-plus",
+        Compass => "compass",
+        Download => "download",
+        Users => lucide "users",
+        User => lucide "user",
+        UserPlus => "user-plus",
+        Inbox => "inbox",
+        Help => "circle-help",
+        Bell => "bell",
+        Pin => lucide "pin",
+        Search => lucide "search",
+        Threads => "messages-square",
+        Gift => "gift",
+        Gif => "gif",
+        Sticker => "sticker",
+        Smile => "smile",
+        ChevronDown => lucide "chevron-down",
+        ChevronRight => lucide "chevron-right",
+        Close => lucide "x",
+    }
+}
