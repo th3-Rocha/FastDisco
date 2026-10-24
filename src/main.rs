@@ -7,6 +7,7 @@ mod icons;
 mod login;
 mod model;
 mod session;
+mod stats;
 mod theme;
 mod ui;
 
@@ -14,12 +15,20 @@ use app::App;
 
 struct Shell {
     app: App,
+    stats: stats::Stats,
 }
 
 impl eframe::App for Shell {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.stats.frame(frame.info().cpu_usage);
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F12)) {
+            self.stats.visible = !self.stats.visible;
+        }
         self.app.poll(ui.ctx());
         ui::show(&mut self.app, ui);
+        if self.stats.visible {
+            ui::overlay::show(&self.app, &self.stats, ui);
+        }
         self.app.apply();
     }
 }
@@ -58,6 +67,7 @@ fn main() -> anyhow::Result<()> {
             setup(&cc.egui_ctx);
             Ok(Box::new(Shell {
                 app: App::new(&cc.egui_ctx, model::Model::sample()),
+                stats: stats::Stats::start(),
             }))
         }),
     )

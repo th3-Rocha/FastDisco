@@ -3,6 +3,7 @@
 
 mod chat;
 mod login;
+pub mod overlay;
 mod rail;
 mod sidebar;
 mod widgets;
