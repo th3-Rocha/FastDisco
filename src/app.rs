@@ -85,6 +85,7 @@ pub struct App {
     pub chat: Chat,
     pub ctx: egui::Context,
     pictures: RefCell<HashMap<String, Picture>>,
+    animations: RefCell<crate::animation::Animations>,
     /// Numbers each loaded picture's URI.
     loaded: u64,
 }
@@ -113,6 +114,7 @@ impl App {
             chat: Chat::default(),
             ctx: ctx.clone(),
             pictures: RefCell::new(HashMap::new()),
+            animations: RefCell::new(crate::animation::Animations::default()),
             loaded: 0,
         }
     }
@@ -142,6 +144,20 @@ impl App {
                 None
             }
         }
+    }
+
+    /// The frame to show now of a looping silent video (a GIF sent as
+    /// MP4); the first ask starts decoding it.
+    pub fn animation(&self, url: &str) -> Option<egui::TextureHandle> {
+        self.animations.borrow_mut().frame(&self.ctx, url)
+    }
+
+    pub fn animation_failed(&self, url: &str) -> bool {
+        self.animations.borrow().failed(url)
+    }
+
+    pub fn update_animations(&self) {
+        self.animations.borrow_mut().update(&self.ctx);
     }
 
     /// Takes what the backend has sent since the last frame.
@@ -186,6 +202,8 @@ impl App {
                     }
                     self.chat.dialog = Some(crate::chat::Dialog::Failed(reason));
                 }
+                Event::GifHome(home) => self.chat.gif_home = Some(home),
+                Event::Favorites(list) => self.chat.favorites = list,
                 Event::Gifs { query, list } => {
                     let current = self.chat.picker.as_ref().and_then(|p| p.searched.clone());
                     if current.as_deref().unwrap_or_default()

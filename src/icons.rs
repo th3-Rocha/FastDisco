@@ -48,5 +48,9 @@ fastframe_icons::icons! {
         Eye => lucide "eye",
         EyeOff => lucide "eye-off",
         Music => "music-2",
+        Star => "star",
+        StarFill => "star-fill",
+        Trending => "trending-up",
+        Back => lucide "arrow-left",
     }
 }

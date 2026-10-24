@@ -199,10 +199,27 @@ pub async fn ack(client: &reqwest::Client, token: &str, channel: u64, message: u
 pub struct Gif {
     /// The page link that is sent as the message.
     pub url: String,
-    /// The animated picture.
+    /// A small looping MP4, as Discord's picker shows.
     pub src: String,
     pub width: u32,
     pub height: u32,
+}
+
+/// The picker's first screen: the trending searches with a preview each.
+#[derive(Clone, Debug, Default)]
+pub struct GifHome {
+    pub categories: Vec<(String, String)>,
+    /// A preview for the "trending" tile.
+    pub trending: Option<String>,
+}
+
+fn gif_of(g: &Value) -> Option<Gif> {
+    Some(Gif {
+        url: g["url"].as_str()?.to_owned(),
+        src: g["src"].as_str().or(g["gif_src"].as_str())?.to_owned(),
+        width: g["width"].as_u64().unwrap_or(200) as u32,
+        height: g["height"].as_u64().unwrap_or(150) as u32,
+    })
 }
 
 /// Trending GIFs with no query, else the search.
@@ -213,11 +230,11 @@ pub async fn gifs(
 ) -> Result<Vec<Gif>, String> {
     let url = match query {
         Some(q) => format!(
-            "{API}/gifs/search?q={}&media_format=gif&provider=tenor&locale=pt-BR&limit=30",
+            "{API}/gifs/search?q={}&media_format=mp4&provider=tenor&locale=pt-BR&limit=40",
             percent(q)
         ),
         None => format!(
-            "{API}/gifs/trending-gifs?media_format=gif&provider=tenor&locale=pt-BR&limit=30"
+            "{API}/gifs/trending-gifs?media_format=mp4&provider=tenor&locale=pt-BR&limit=40"
         ),
     };
     let response = client
@@ -232,17 +249,38 @@ pub async fn gifs(
         .or_else(|| value["gifs"].as_array())
         .cloned()
         .unwrap_or_default();
-    Ok(list
-        .iter()
-        .filter_map(|g| {
-            Some(Gif {
-                url: g["url"].as_str()?.to_owned(),
-                src: g["gif_src"].as_str().or(g["src"].as_str())?.to_owned(),
-                width: g["width"].as_u64().unwrap_or(200) as u32,
-                height: g["height"].as_u64().unwrap_or(150) as u32,
-            })
+    Ok(list.iter().filter_map(gif_of).collect())
+}
+
+pub async fn gif_home(client: &reqwest::Client, token: &str) -> Result<GifHome, String> {
+    let url = format!("{API}/gifs/trending?provider=tenor&locale=pt-BR&media_format=mp4");
+    let response = client
+        .get(url)
+        .header("Authorization", token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let value: Value = response.json().await.map_err(|e| e.to_string())?;
+    let categories = value["categories"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| {
+            Some((
+                c["name"].as_str()?.to_owned(),
+                c["src"].as_str()?.to_owned(),
+            ))
         })
-        .collect())
+        .collect();
+    let trending = value["gifs"]
+        .as_array()
+        .and_then(|l| l.first())
+        .and_then(gif_of)
+        .map(|g| g.src);
+    Ok(GifHome {
+        categories,
+        trending,
+    })
 }
 
 fn percent(text: &str) -> String {

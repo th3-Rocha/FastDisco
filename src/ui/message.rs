@@ -63,6 +63,7 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
         id,
         Sense::click(),
     );
+    super::no_hand(ui, row_response.id);
     let background = ui.painter().add(Shape::Noop);
 
     let content = Rect::from_min_max(
@@ -756,6 +757,7 @@ fn text(
         Sense::click()
     };
     let (rect, response) = ui.allocate_exact_size(galley.size(), sense);
+    super::no_hand(ui, response.id);
     ui.painter().galley(rect.min, galley.clone(), style.color);
     for (byte, url, emoji_size) in &emojis {
         for placed in &galley.rows {
@@ -1017,15 +1019,7 @@ fn gallery(row: &mut Row<'_>, ui: &mut Ui, images: &[&Attachment]) {
         } else {
             sized(&a.proxy, size, ppp)
         };
-        picture(
-            row,
-            ui,
-            &url,
-            &a.url,
-            size,
-            a.spoiler,
-            a.kind() == MediaKind::Gif,
-        );
+        picture(row, ui, &url, &a.url, size, a.spoiler);
         return;
     }
     // A grid of squares, two or three across, like Discord's mosaic.
@@ -1046,15 +1040,7 @@ fn gallery(row: &mut Row<'_>, ui: &mut Ui, images: &[&Attachment]) {
                 } else {
                     sized(&a.proxy, size * 2.0, ppp)
                 };
-                picture(
-                    row,
-                    ui,
-                    &url,
-                    &a.url,
-                    size,
-                    a.spoiler,
-                    a.kind() == MediaKind::Gif,
-                );
+                picture(row, ui, &url, &a.url, size, a.spoiler);
             }
         });
         ui.add_space(gap);
@@ -1062,15 +1048,7 @@ fn gallery(row: &mut Row<'_>, ui: &mut Ui, images: &[&Attachment]) {
 }
 
 /// A picture with a placeholder while it loads; click to see it large.
-fn picture(
-    row: &mut Row<'_>,
-    ui: &mut Ui,
-    url: &str,
-    full: &str,
-    size: Vec2,
-    spoiler: bool,
-    gif: bool,
-) {
+fn picture(row: &mut Row<'_>, ui: &mut Ui, url: &str, full: &str, size: Vec2, spoiler: bool) {
     let app = row.app;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     if !ui.is_rect_visible(rect) {
@@ -1090,18 +1068,6 @@ fn picture(
             ui.painter().rect_filled(rect, radius, EMBED_BG);
             paint_icon(ui, Icon::Image, rect.center(), 32.0, app.palette.muted);
         }
-    }
-    if gif && !hidden {
-        let tag = Rect::from_min_size(rect.left_top() + vec2(6.0, 6.0), vec2(30.0, 18.0));
-        ui.painter()
-            .rect_filled(tag, CornerRadius::same(4), Color32::from_black_alpha(160));
-        ui.painter().text(
-            tag.center(),
-            Align2::CENTER_CENTER,
-            "GIF",
-            font(Weight::Bold, 11.0),
-            Color32::WHITE,
-        );
     }
     if hidden {
         spoiler_pill(ui, rect);
@@ -1191,15 +1157,48 @@ fn file_card(row: &mut Row<'_>, ui: &mut Ui, file: &Attachment, sending: bool) {
         });
 }
 
-/// Tenor and Giphy serve each GIF as MP4 and GIF under related names.
-fn gif_from_video(url: &str) -> Option<String> {
-    if url.contains("media.tenor.com/") {
-        return Some(url.replacen("AAAPo/", "AAAAC/", 1).replace(".mp4", ".gif"));
+/// A GIF sent as a video: it plays at once, silent and in a loop, as in
+/// Discord. Without ffmpeg, or if it cannot be decoded, the poster shows.
+fn looping(
+    row: &mut Row<'_>,
+    ui: &mut Ui,
+    video: &str,
+    poster: Option<&str>,
+    page: Option<&str>,
+    size: Vec2,
+) {
+    let app = row.app;
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    if !ui.is_rect_visible(rect) {
+        return;
     }
-    if url.contains("giphy.com/media/") {
-        return Some(url.replace(".mp4", ".gif"));
+    let radius = CornerRadius::same(8);
+    let frame = (crate::media::available() && !app.animation_failed(video))
+        .then(|| app.animation(video))
+        .flatten();
+    match frame {
+        Some(frame) => {
+            egui::Image::new((frame.id(), rect.size()))
+                .corner_radius(radius)
+                .paint_at(ui, rect);
+        }
+        None => match poster.and_then(|p| app.picture(Some(p))) {
+            Some(uri) => {
+                egui::Image::new(uri)
+                    .corner_radius(radius)
+                    .paint_at(ui, rect);
+            }
+            None => {
+                ui.painter().rect_filled(rect, radius, EMBED_BG);
+            }
+        },
     }
-    None
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+    }
+    if response.clicked() {
+        row.act(ChatAction::OpenUrl(page.unwrap_or(video).to_owned()));
+    }
 }
 
 fn embed(row: &mut Row<'_>, ui: &mut Ui, embed: &Embed) {
@@ -1215,7 +1214,7 @@ fn embed(row: &mut Row<'_>, ui: &mut Ui, embed: &Embed) {
                     .clone()
                     .filter(|_| !gif)
                     .map_or(media.url.clone(), |p| sized(&p, size, ppp));
-                picture(row, ui, &url, &media.url, size, false, gif);
+                picture(row, ui, &url, &media.url, size, false);
             }
             return;
         }
@@ -1227,25 +1226,19 @@ fn embed(row: &mut Row<'_>, ui: &mut Ui, embed: &Embed) {
                 max_w,
                 MEDIA_H,
             );
-            match video.and_then(|v| gif_from_video(&v.url)) {
-                Some(gif) => picture(row, ui, &gif, &gif, size, false, true),
-                None => {
-                    if let Some(video) = video {
-                        let poster = embed
-                            .thumbnail
-                            .as_ref()
-                            .map(|t| t.proxy.clone().unwrap_or(t.url.clone()));
-                        player::video(
-                            row,
-                            ui,
-                            &video.url,
-                            &video.url,
-                            poster.as_deref(),
-                            size,
-                            false,
-                        );
-                    }
-                }
+            if let Some(video) = video {
+                let poster = embed
+                    .thumbnail
+                    .as_ref()
+                    .map(|t| t.proxy.clone().unwrap_or(t.url.clone()));
+                looping(
+                    row,
+                    ui,
+                    &video.url,
+                    poster.as_deref(),
+                    embed.url.as_deref(),
+                    size,
+                );
             }
             return;
         }
@@ -1287,7 +1280,7 @@ fn embed(row: &mut Row<'_>, ui: &mut Ui, embed: &Embed) {
                         .proxy
                         .clone()
                         .map_or(thumb.url.clone(), |p| sized(&p, size, ppp));
-                    picture(row, ui, &url, &thumb.url, size, false, false);
+                    picture(row, ui, &url, &thumb.url, size, false);
                 }
             });
             embed_media(row, ui, embed, width - 32.0);
@@ -1455,7 +1448,7 @@ fn embed_media(row: &mut Row<'_>, ui: &mut Ui, embed: &Embed, width: f32) {
             .clone()
             .filter(|_| !gif)
             .map_or(image.url.clone(), |p| sized(&p, size, ppp));
-        picture(row, ui, &url, &image.url, size, false, gif);
+        picture(row, ui, &url, &image.url, size, false);
     }
 }
 

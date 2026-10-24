@@ -11,7 +11,8 @@ use fastframe_fonts::Weight;
 use super::message::size_text;
 use super::widgets::{Elide, font, hyphens, icon_button, paint_icon};
 use crate::app::{Action, App};
-use crate::chat::{ChatAction, Dialog, PickerTab, PickerTarget};
+use crate::chat::{ChatAction, Dialog, GifView, PickerTab, PickerTarget};
+use crate::discord::rest;
 use crate::icons::Icon;
 use crate::model::{ChannelKind, CustomEmoji, Id, ReactionEmoji};
 
@@ -525,6 +526,8 @@ pub fn picker(app: &mut App, ui: &mut Ui, field: Rect) {
                             }
                         });
                     }
+                    let gif_view = app.chat.picker.as_ref().map(|p| p.gif_view);
+                    let mut back = false;
                     let query = app.chat.picker.as_mut().map(|p| &mut p.query);
                     if let Some(query) = query {
                         let hint = match tab {
@@ -532,20 +535,41 @@ pub fn picker(app: &mut App, ui: &mut Ui, field: Rect) {
                             PickerTab::Sticker => "Encontrar figurinhas",
                             PickerTab::Emoji => "Encontre o emoji perfeito",
                         };
-                        let response = Frame::new()
-                            .fill(palette.rail)
-                            .corner_radius(CornerRadius::same(4))
-                            .inner_margin(Margin::symmetric(8, 6))
-                            .show(ui, |ui| {
-                                ui.add(
-                                    egui::TextEdit::singleline(query)
-                                        .id(egui::Id::new("picker-search"))
-                                        .hint_text(RichText::new(hint).color(palette.muted))
-                                        .frame(Frame::NONE)
-                                        .font(font(Weight::Regular, 15.0))
-                                        .desired_width(f32::INFINITY),
-                                )
-                            });
+                        let response = ui
+                            .horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                if tab == PickerTab::Gif && gif_view != Some(GifView::Home) {
+                                    back = icon_button(
+                                        ui,
+                                        &palette,
+                                        Icon::Back,
+                                        32.0,
+                                        false,
+                                        "Voltar",
+                                    )
+                                    .clicked();
+                                }
+                                Frame::new()
+                                    .fill(palette.rail)
+                                    .corner_radius(CornerRadius::same(4))
+                                    .inner_margin(Margin::symmetric(8, 6))
+                                    .show(ui, |ui| {
+                                        ui.add(
+                                            egui::TextEdit::singleline(query)
+                                                .id(egui::Id::new("picker-search"))
+                                                .hint_text(RichText::new(hint).color(palette.muted))
+                                                .frame(Frame::NONE)
+                                                .font(font(Weight::Regular, 15.0))
+                                                .desired_width(f32::INFINITY),
+                                        )
+                                    })
+                                    .inner
+                            })
+                            .inner;
+                        let response = egui::InnerResponse {
+                            inner: response.clone(),
+                            response,
+                        };
                         if ui.memory(|m| m.focused().is_none()) {
                             response.inner.request_focus();
                         }
@@ -554,6 +578,10 @@ pub fn picker(app: &mut App, ui: &mut Ui, field: Rect) {
                                 d.insert_temp(egui::Id::new("picker-edited"), ui.input(|i| i.time))
                             });
                         }
+                    }
+                    if back {
+                        app.actions
+                            .push(Action::Chat(ChatAction::GifView(GifView::Home)));
                     }
                     match tab {
                         PickerTab::Emoji => emoji_tab(app, ui),
@@ -748,20 +776,21 @@ fn emoji_tab(app: &mut App, ui: &mut Ui) {
 }
 
 fn gif_tab(app: &mut App, ui: &mut Ui) {
-    let palette = app.palette;
-    // Search a moment after the typing stops.
-    let query = app
-        .chat
-        .picker
-        .as_ref()
-        .map(|p| p.query.trim().to_owned())
-        .unwrap_or_default();
-    let searched = app.chat.picker.as_ref().and_then(|p| p.searched.clone());
+    let Some(picker) = &app.chat.picker else {
+        return;
+    };
+    let view = picker.gif_view;
+    let query = picker.query.trim().to_owned();
+    let searched = picker.searched.clone();
+    // Typing searches a moment after the typing stops; clearing the field
+    // goes back to the tiles.
     let edited: f64 = ui
         .data(|d| d.get_temp(egui::Id::new("picker-edited")))
         .unwrap_or(0.0);
     let now = ui.input(|i| i.time);
-    if searched.as_deref() != Some(query.as_str()) {
+    let typed = matches!(view, GifView::Home | GifView::Search)
+        && searched.as_deref().unwrap_or_default() != query;
+    if typed && (!query.is_empty() || view == GifView::Search) {
         if now - edited > 0.4 {
             app.actions
                 .push(Action::Chat(ChatAction::SearchGifs(query.clone())));
@@ -770,17 +799,194 @@ fn gif_tab(app: &mut App, ui: &mut Ui) {
                 .request_repaint_after(std::time::Duration::from_millis(150));
         }
     }
-    if app.chat.gifs.is_empty() {
-        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 60.0), Sense::hover());
-        ui.painter().text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            "Carregando GIFs…",
-            font(Weight::Medium, 14.0),
-            palette.muted,
-        );
-        return;
+    match view {
+        GifView::Home => gif_tiles(app, ui),
+        GifView::Favorites => {
+            let list: Vec<rest::Gif> = app
+                .chat
+                .favorites
+                .iter()
+                .map(|f| rest::Gif {
+                    url: f.url.clone(),
+                    src: f.src.clone(),
+                    width: f.width.max(1),
+                    height: f.height.max(1),
+                })
+                .collect();
+            if list.is_empty() {
+                ui.add_space(40.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        RichText::new("Nenhum favorito ainda")
+                            .font(font(Weight::SemiBold, 16.0))
+                            .color(app.palette.text),
+                    );
+                    ui.label(
+                        RichText::new("Clique na estrela de um GIF para favoritá-lo.")
+                            .color(app.palette.muted),
+                    );
+                });
+            } else {
+                gif_grid(app, ui, &list);
+            }
+        }
+        GifView::Trending | GifView::Search => {
+            let list = app.chat.gifs.clone();
+            if list.is_empty() {
+                let (rect, _) =
+                    ui.allocate_exact_size(vec2(ui.available_width(), 60.0), Sense::hover());
+                ui.painter().text(
+                    rect.center(),
+                    Align2::CENTER_CENTER,
+                    "Carregando GIFs…",
+                    font(Weight::Medium, 14.0),
+                    app.palette.muted,
+                );
+            } else {
+                gif_grid(app, ui, &list);
+            }
+        }
     }
+}
+
+/// A looping preview: an MP4 through the decoder, else a picture.
+fn paint_gif(app: &App, ui: &Ui, src: &str, rect: Rect) -> bool {
+    let radius = CornerRadius::same(4);
+    if src.ends_with(".mp4") || src.contains(".mp4?") {
+        if let Some(frame) = app.animation(src) {
+            egui::Image::new((frame.id(), rect.size()))
+                .corner_radius(radius)
+                .paint_at(ui, rect);
+            return true;
+        }
+    } else if let Some(uri) = app.picture(Some(src)) {
+        egui::Image::new(uri)
+            .corner_radius(radius)
+            .paint_at(ui, rect);
+        return true;
+    }
+    ui.painter().rect_filled(rect, radius, app.palette.rail);
+    false
+}
+
+/// The first screen: favourites, trending, then the trending searches.
+fn gif_tiles(app: &mut App, ui: &mut Ui) {
+    let palette = app.palette;
+    let mut tiles: Vec<(Option<Icon>, String, Option<String>, ChatAction)> = vec![
+        (
+            Some(Icon::Star),
+            "Favoritos".into(),
+            app.chat.favorites.first().map(|f| f.src.clone()),
+            ChatAction::GifView(GifView::Favorites),
+        ),
+        (
+            Some(Icon::Trending),
+            "GIFs em alta".into(),
+            app.chat.gif_home.as_ref().and_then(|h| h.trending.clone()),
+            ChatAction::GifView(GifView::Trending),
+        ),
+    ];
+    for (name, src) in app
+        .chat
+        .gif_home
+        .as_ref()
+        .map(|h| h.categories.clone())
+        .unwrap_or_default()
+    {
+        tiles.push((None, name.clone(), Some(src), ChatAction::SearchGifs(name)));
+    }
+    let mut chosen = None;
+    egui::ScrollArea::vertical()
+        .id_salt("gif-tiles")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let width = ui.available_width();
+            let gap = 8.0;
+            let column = (width - gap) / 2.0;
+            let height = 110.0;
+            let origin = ui.cursor().min;
+            let rows = tiles.len().div_ceil(2);
+            let (_area, _) =
+                ui.allocate_exact_size(vec2(width, rows as f32 * (height + gap)), Sense::hover());
+            for (i, (icon, name, src, action)) in tiles.into_iter().enumerate() {
+                let rect = Rect::from_min_size(
+                    origin
+                        + vec2(
+                            (i % 2) as f32 * (column + gap),
+                            (i / 2) as f32 * (height + gap),
+                        ),
+                    vec2(column, height),
+                );
+                if !ui.is_rect_visible(rect) {
+                    continue;
+                }
+                let response = ui.interact(rect, ui.id().with(("gif-tile", i)), Sense::click());
+                if let Some(src) = &src {
+                    paint_gif(app, ui, src, rect);
+                } else {
+                    ui.painter()
+                        .rect_filled(rect, CornerRadius::same(4), palette.rail);
+                }
+                // Discord's tiles: dimmed, the title in the middle.
+                let dim = if response.hovered() { 90 } else { 140 };
+                ui.painter().rect_filled(
+                    rect,
+                    CornerRadius::same(4),
+                    Color32::from_black_alpha(dim),
+                );
+                if response.hovered() {
+                    ui.painter().rect_stroke(
+                        rect,
+                        CornerRadius::same(4),
+                        Stroke::new(2.0, palette.accent),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                match icon {
+                    Some(icon) => {
+                        let label = ui.painter().layout_no_wrap(
+                            name,
+                            font(Weight::Bold, 16.0),
+                            Color32::WHITE,
+                        );
+                        let total = 22.0 + 6.0 + label.size().x;
+                        let left = rect.center().x - total / 2.0;
+                        paint_icon(
+                            ui,
+                            icon,
+                            pos2(left + 11.0, rect.center().y),
+                            22.0,
+                            Color32::WHITE,
+                        );
+                        ui.painter().galley(
+                            pos2(left + 28.0, rect.center().y - label.size().y / 2.0),
+                            label,
+                            Color32::WHITE,
+                        );
+                    }
+                    None => {
+                        ui.painter().text(
+                            rect.center(),
+                            Align2::CENTER_CENTER,
+                            name,
+                            font(Weight::Bold, 16.0),
+                            Color32::WHITE,
+                        );
+                    }
+                }
+                if response.clicked() {
+                    chosen = Some(action);
+                }
+            }
+        });
+    if let Some(action) = chosen {
+        app.actions.push(Action::Chat(action));
+    }
+}
+
+/// Results in two columns, each at its own height; a star to favourite.
+fn gif_grid(app: &mut App, ui: &mut Ui, list: &[rest::Gif]) {
+    let palette = app.palette;
     let mut chosen = None;
     egui::ScrollArea::vertical()
         .id_salt("gif-grid")
@@ -792,36 +998,31 @@ fn gif_tab(app: &mut App, ui: &mut Ui) {
             let mut heights = [0.0f32; 2];
             let origin = ui.cursor().min;
             let mut rects = Vec::new();
-            for gif in &app.chat.gifs {
+            for gif in list {
                 let col = if heights[0] <= heights[1] { 0 } else { 1 };
                 let h = column * gif.height.max(1) as f32 / gif.width.max(1) as f32;
-                let rect = Rect::from_min_size(
+                rects.push(Rect::from_min_size(
                     origin + vec2(col as f32 * (column + gap), heights[col]),
                     vec2(column, h),
-                );
+                ));
                 heights[col] += h + gap;
-                rects.push(rect);
             }
-            let total = heights[0].max(heights[1]);
-            let (area, _) = ui.allocate_exact_size(vec2(width, total), Sense::hover());
-            let _ = area;
-            for (gif, rect) in app.chat.gifs.iter().zip(rects) {
+            let (_area, _) =
+                ui.allocate_exact_size(vec2(width, heights[0].max(heights[1])), Sense::hover());
+            for (gif, rect) in list.iter().zip(rects) {
                 if !ui.is_rect_visible(rect) {
                     continue;
                 }
                 let response = ui.interact(rect, ui.id().with(("gif", &gif.url)), Sense::click());
-                match app.picture(Some(&gif.src)) {
-                    Some(uri) => {
-                        egui::Image::new(uri)
-                            .corner_radius(CornerRadius::same(4))
-                            .paint_at(ui, rect);
-                    }
-                    None => {
-                        ui.painter()
-                            .rect_filled(rect, CornerRadius::same(4), palette.rail);
-                    }
-                }
-                if response.hovered() {
+                paint_gif(app, ui, &gif.src, rect);
+                let favorite = app.chat.favorites.iter().any(|f| f.url == gif.url);
+                let star = Rect::from_min_size(
+                    pos2(rect.right() - 34.0, rect.top() + 6.0),
+                    Vec2::splat(28.0),
+                );
+                let star_response =
+                    ui.interact(star, ui.id().with(("star", &gif.url)), Sense::click());
+                if response.hovered() || star_response.hovered() {
                     ui.painter().rect_stroke(
                         rect,
                         CornerRadius::same(4),
@@ -829,13 +1030,45 @@ fn gif_tab(app: &mut App, ui: &mut Ui) {
                         egui::StrokeKind::Inside,
                     );
                 }
-                if response.clicked() {
-                    chosen = Some(gif.url.clone());
+                if response.hovered() || star_response.hovered() || favorite {
+                    ui.painter().rect_filled(
+                        star,
+                        CornerRadius::same(6),
+                        Color32::from_black_alpha(150),
+                    );
+                    let (icon, tint) = if favorite {
+                        (Icon::StarFill, Color32::from_rgb(0xf0, 0xb2, 0x32))
+                    } else {
+                        (Icon::Star, Color32::WHITE)
+                    };
+                    paint_icon(ui, icon, star.center(), 18.0, tint);
+                }
+                if star_response
+                    .on_hover_text(if favorite {
+                        "Remover dos favoritos"
+                    } else {
+                        "Adicionar aos favoritos"
+                    })
+                    .clicked()
+                {
+                    let gif = crate::discord::frecency::Favorite {
+                        url: gif.url.clone(),
+                        src: gif.src.clone(),
+                        width: gif.width,
+                        height: gif.height,
+                        order: 0,
+                    };
+                    chosen = Some(ChatAction::Favorite {
+                        gif,
+                        add: !favorite,
+                    });
+                } else if response.clicked() {
+                    chosen = Some(ChatAction::PickGif(gif.url.clone()));
                 }
             }
         });
-    if let Some(url) = chosen {
-        app.actions.push(Action::Chat(ChatAction::PickGif(url)));
+    if let Some(action) = chosen {
+        app.actions.push(Action::Chat(action));
     }
 }
 

@@ -1,6 +1,7 @@
 //! Talking to Discord: the HTTP API and the gateway.
 
 pub mod auth;
+pub mod frecency;
 pub mod gateway;
 pub mod parse;
 pub mod remote_auth;

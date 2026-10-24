@@ -33,7 +33,19 @@ pub enum PickerTarget {
     Reaction { channel: Id, message: Id },
 }
 
+/// What the GIF tab shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GifView {
+    /// The tiles: favourites, trending and the trending searches.
+    Home,
+    Trending,
+    Favorites,
+    /// The results for the query (typed, or a tile's search).
+    Search,
+}
+
 pub struct Picker {
+    pub gif_view: GifView,
     pub tab: PickerTab,
     pub target: PickerTarget,
     pub query: String,
@@ -125,8 +137,14 @@ pub enum ChatAction {
         reaction: ReactionEmoji,
     },
     PickGif(String),
-    /// Searches GIFs; empty asks for the trending ones.
+    /// Searches GIFs; empty goes back to the tiles.
     SearchGifs(String),
+    GifView(GifView),
+    /// Adds or removes a favourite GIF.
+    Favorite {
+        gif: crate::discord::frecency::Favorite,
+        add: bool,
+    },
     PickSticker(Id),
     AttachFiles,
     AddFiles(Vec<PathBuf>),
@@ -158,6 +176,8 @@ pub struct Chat {
     pub uploads: HashMap<Id, Vec<Pending>>,
     pub picker: Option<Picker>,
     pub gifs: Vec<rest::Gif>,
+    pub gif_home: Option<rest::GifHome>,
+    pub favorites: Vec<crate::discord::frecency::Favorite>,
     /// Who is typing where, and since when.
     pub typing: HashMap<Id, Vec<(Id, Instant)>>,
     last_typing: HashMap<Id, Instant>,
@@ -267,25 +287,23 @@ impl App {
                     .as_ref()
                     .is_some_and(|p| p.tab == tab && p.target == target);
                 self.chat.picker = (!same).then(|| Picker {
+                    gif_view: GifView::Home,
                     tab,
                     target,
                     query: String::new(),
                     searched: None,
                 });
                 if !same && tab == PickerTab::Gif {
-                    self.backend().send(Command::Gifs(None));
-                    if let Some(p) = &mut self.chat.picker {
-                        p.searched = Some(String::new());
-                    }
+                    self.gif_home();
                 }
             }
             ChatAction::PickerTab(tab) => {
                 if let Some(picker) = &mut self.chat.picker {
                     picker.tab = tab;
                     picker.query.clear();
-                    if tab == PickerTab::Gif && picker.searched.is_none() {
-                        picker.searched = Some(String::new());
-                        self.backend().send(Command::Gifs(None));
+                    picker.gif_view = GifView::Home;
+                    if tab == PickerTab::Gif {
+                        self.gif_home();
                     }
                 }
             }
@@ -316,12 +334,54 @@ impl App {
                 }
             }
             ChatAction::SearchGifs(query) => {
-                if let Some(picker) = &mut self.chat.picker {
-                    picker.searched = Some(query.clone());
+                let Some(picker) = &mut self.chat.picker else {
+                    return;
+                };
+                if query.is_empty() {
+                    picker.gif_view = GifView::Home;
+                    picker.searched = None;
+                    return;
                 }
+                picker.gif_view = GifView::Search;
+                picker.query = query.clone();
+                picker.searched = Some(query.clone());
                 self.chat.gifs.clear();
-                self.backend()
-                    .send(Command::Gifs((!query.is_empty()).then_some(query)));
+                self.backend().send(Command::Gifs(Some(query)));
+            }
+            ChatAction::GifView(view) => {
+                let Some(picker) = &mut self.chat.picker else {
+                    return;
+                };
+                picker.gif_view = view;
+                if view != GifView::Search {
+                    picker.query.clear();
+                    picker.searched = None;
+                }
+                if view == GifView::Trending {
+                    self.chat.gifs.clear();
+                    self.backend().send(Command::Gifs(None));
+                }
+            }
+            ChatAction::Favorite { gif, add } => {
+                self.chat.favorites.retain(|f| f.url != gif.url);
+                if add {
+                    let order = self
+                        .chat
+                        .favorites
+                        .iter()
+                        .map(|f| f.order)
+                        .max()
+                        .unwrap_or(0)
+                        + 1;
+                    self.chat.favorites.insert(
+                        0,
+                        crate::discord::frecency::Favorite {
+                            order,
+                            ..gif.clone()
+                        },
+                    );
+                }
+                self.backend().send(Command::Favorite { gif, add });
             }
             ChatAction::PickSticker(id) => {
                 self.chat.picker = None;
@@ -436,6 +496,14 @@ impl App {
             }
             ChatAction::Copy(text) => self.ctx.copy_text(text),
         }
+    }
+
+    /// The tiles need the trending searches and the favourites.
+    fn gif_home(&mut self) {
+        if self.chat.gif_home.is_none() {
+            self.backend().send(Command::GifHome);
+        }
+        self.backend().send(Command::LoadFavorites);
     }
 
     fn start_edit(&mut self, channel: Id, message: Id) {

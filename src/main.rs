@@ -1,5 +1,6 @@
 //! FastDisco: Discord, native and fast.
 
+mod animation;
 mod app;
 mod backend;
 mod chat;
@@ -33,6 +34,7 @@ impl eframe::App for Shell {
         if self.stats.visible {
             ui::overlay::show(&self.app, &self.stats, ui);
         }
+        ui::pointing_hand(ui.ctx());
         self.app.apply();
     }
 }

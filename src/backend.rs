@@ -58,6 +58,15 @@ pub enum Command {
     Typing(u64),
     /// Trending GIFs, or a search.
     Gifs(Option<String>),
+    /// The trending searches for the GIF picker's first screen.
+    GifHome,
+    /// The favourite GIFs from the user's settings.
+    LoadFavorites,
+    /// Adds or removes a favourite GIF in the user's settings.
+    Favorite {
+        gif: discord::frecency::Favorite,
+        add: bool,
+    },
     /// The system's file picker, for files to send.
     PickFiles,
     Ack {
@@ -110,6 +119,8 @@ pub enum Event {
         nonce: String,
         reason: String,
     },
+    GifHome(rest::GifHome),
+    Favorites(Vec<discord::frecency::Favorite>),
     Gifs {
         query: Option<String>,
         list: Vec<rest::Gif>,
@@ -345,6 +356,47 @@ impl Worker {
             Command::Typing(channel) => {
                 self.spawn(move |client, token, _| async move {
                     rest::typing(&client, &token, channel).await
+                });
+            }
+            Command::GifHome => {
+                self.spawn(move |client, token, events| async move {
+                    match rest::gif_home(&client, &token).await {
+                        Ok(home) => {
+                            let _ = events.send(Event::GifHome(home));
+                        }
+                        Err(error) => log::warn!("gif categories: {error}"),
+                    }
+                });
+            }
+            Command::LoadFavorites => {
+                self.spawn(move |client, token, events| async move {
+                    match discord::frecency::load(&client, &token).await {
+                        Ok(settings) => {
+                            let _ =
+                                events.send(Event::Favorites(discord::frecency::parse(&settings)));
+                        }
+                        Err(error) => log::warn!("favourite gifs: {error}"),
+                    }
+                });
+            }
+            Command::Favorite { gif, add } => {
+                self.spawn(move |client, token, events| async move {
+                    // Read the settings fresh, so a change made elsewhere
+                    // in the meantime is kept.
+                    let result = async {
+                        let settings = discord::frecency::load(&client, &token).await?;
+                        let changed = discord::frecency::change(&settings, &gif, add)
+                            .ok_or_else(|| "unreadable settings".to_owned())?;
+                        discord::frecency::save(&client, &token, &changed).await?;
+                        Ok::<_, String>(discord::frecency::parse(&changed))
+                    }
+                    .await;
+                    match result {
+                        Ok(list) => {
+                            let _ = events.send(Event::Favorites(list));
+                        }
+                        Err(error) => log::warn!("favourite gif: {error}"),
+                    }
                 });
             }
             Command::Gifs(query) => {
