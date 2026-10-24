@@ -31,6 +31,8 @@ fastframe-emoji = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" 
 fastframe-theme = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Settings written whole, never half, off the interface thread.
 fastframe-file = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+# Desktop notifications for direct messages and mentions.
+fastframe-notifications = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Starting at login, through the desktop's own autostart.
 fastframe-autostart = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # The per-user config, state and cache folders.

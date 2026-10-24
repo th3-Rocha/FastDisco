@@ -1066,7 +1066,8 @@ fn media(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
             _ => file_card(row, ui, attachment, false),
         }
     }
-    for embed in &message.embeds {
+    // Link previews and bot embeds, unless the user turned them off.
+    for embed in message.embeds.iter().filter(|_| row.app.settings.embeds) {
         ui.add_space(4.0);
         self::embed(row, ui, embed);
     }
@@ -1103,6 +1104,12 @@ fn fit(width: Option<u32>, height: Option<u32>, max_w: f32, max_h: f32) -> Vec2 
     };
     let scale = (max_w / w).min(max_h / h).min(1.0);
     vec2((w * scale).max(16.0), (h * scale).max(16.0))
+}
+
+fn is_gif(url: &str) -> bool {
+    url.split('?')
+        .next()
+        .is_some_and(|path| path.to_lowercase().ends_with(".gif"))
 }
 
 /// Discord's media proxy resizes JPEG, PNG and WebP; GIFs keep their
@@ -1162,6 +1169,19 @@ fn picture(row: &mut Row<'_>, ui: &mut Ui, url: &str, full: &str, size: Vec2, sp
     if !ui.is_rect_visible(rect) {
         return;
     }
+    // With autoplay off, a GIF shows its first frame (Discord's proxy turns
+    // it into a PNG) until the pointer is on it.
+    let still;
+    let url = if !app.settings.animate && !response.hovered() && is_gif(url) {
+        still = format!(
+            "{url}{}format=png",
+            if url.contains('?') { '&' } else { '?' }
+        )
+        .replace("cdn.discordapp.com", "media.discordapp.net");
+        still.as_str()
+    } else {
+        url
+    };
     let radius = CornerRadius::same(8);
     let hidden = spoiler && !app.chat.revealed_media.contains(full);
     match app.picture(Some(url)) {
@@ -1276,7 +1296,9 @@ fn looping(row: &mut Row<'_>, ui: &mut Ui, video: &str, poster: Option<&str>, si
         return;
     }
     let radius = CornerRadius::same(8);
-    let frame = (crate::media::available() && !app.animation_failed(video))
+    // With autoplay off, it moves only under the pointer, as in Discord.
+    let moving = app.settings.animate || response.hovered();
+    let frame = (moving && crate::media::available() && !app.animation_failed(video))
         .then(|| app.animation(video))
         .flatten();
     match frame {

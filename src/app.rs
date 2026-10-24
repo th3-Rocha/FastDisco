@@ -127,6 +127,9 @@ pub struct App {
     pub chat: Chat,
     pub ctx: egui::Context,
     pub settings: crate::settings::Settings,
+    notifier: crate::notify::Notifier,
+    /// The unread count last put in the window title.
+    title_count: u32,
     pub settings_page: Option<SettingsPage>,
     pub profile_form: Option<ProfileForm>,
     /// Whether FastDisco starts at login; `None` where it cannot.
@@ -164,6 +167,8 @@ impl App {
             actions: Vec::new(),
             chat: Chat::new(),
             settings: crate::settings::Settings::load(),
+            notifier: crate::notify::Notifier::start(ctx),
+            title_count: 0,
             settings_page: None,
             profile_form: None,
             autostart: None,
@@ -252,6 +257,67 @@ impl App {
         }
     }
 
+    /// "(3) FastDisco" while direct messages or mentions wait, as Discord.
+    fn update_title(&mut self, ctx: &egui::Context) {
+        let count: u32 = self.model.channels.values().map(|c| c.mentions).sum();
+        if count != self.title_count {
+            self.title_count = count;
+            let title = if count > 0 {
+                format!("({count}) FastDisco")
+            } else {
+                "FastDisco".to_owned()
+            };
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        }
+    }
+
+    /// A direct message or a mention, away from it: tell the desktop.
+    fn notify(&mut self, message: &Message, channel: Id) {
+        if !self.settings.notifications || message.author == self.model.me {
+            return;
+        }
+        let Some(c) = self.model.channel(channel) else {
+            return;
+        };
+        let direct = matches!(c.kind, ChannelKind::Direct | ChannelKind::Group);
+        if !direct && !message.mentions_me {
+            return;
+        }
+        let focused = self.ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        if focused && self.channel == Some(channel) {
+            return;
+        }
+        let guild = c.guild;
+        let author = self.model.name_in(guild, message.author);
+        let title = match (c.kind, guild.and_then(|g| self.model.guild(g))) {
+            (ChannelKind::Group, _) => format!("{author} ({})", self.model.direct_name(c)),
+            (_, Some(g)) => format!("{author} (#{}, {})", c.name, g.name),
+            _ => author,
+        };
+        let model = &self.model;
+        let mut body = crate::notify::plain(
+            &message.text,
+            |id| model.name_in(guild, id),
+            |id| {
+                model
+                    .channel(id)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_default()
+            },
+        );
+        if body.is_empty() {
+            body = if !message.attachments.is_empty() {
+                "Enviou um anexo".into()
+            } else if !message.stickers.is_empty() {
+                "Enviou uma figurinha".into()
+            } else {
+                "Enviou uma mensagem".into()
+            };
+        }
+        let sound = self.settings.notification_sound;
+        self.notifier.show(&title, &body, channel, sound);
+    }
+
     pub fn save_settings(&self) {
         self.settings.save(&self.files);
     }
@@ -304,6 +370,14 @@ impl App {
     /// Takes what the backend has sent since the last frame.
     pub fn poll(&mut self, ctx: &egui::Context) {
         self.poll_themes();
+        if let Some(channel) = self.notifier.clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.settings_page = None;
+            self.open_channel(channel);
+        }
+        self.update_title(ctx);
         // Ctrl + and Ctrl − change the zoom too; keep the setting with it.
         let zoom = ctx.zoom_factor();
         if (zoom - self.settings.zoom).abs() > 0.001 {
@@ -842,6 +916,7 @@ impl App {
                     return;
                 };
                 self.stopped_typing(channel_id, message.author);
+                self.notify(&message, channel_id);
                 let open = self.channel == Some(channel_id);
                 let Some(channel) = self.model.channels.get_mut(&channel_id) else {
                     return;
