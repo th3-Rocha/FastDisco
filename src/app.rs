@@ -1,18 +1,22 @@
 //! Application state. Views draw from it and push `Action`s; `App::apply`
 //! runs them after the frame is drawn, so no view mutates what another is
-//! still reading.
+//! still reading. Backend events arrive through `App::poll`.
 
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 
-use crate::backend::{Backend, Command, Event};
+use serde_json::Value;
+
+use crate::backend::{Backend, Command, Connection, Event};
+use crate::discord::parse;
 use crate::login::{Login, Qr, View};
-use crate::model::{ChannelId, Message, Model, ServerId};
+use crate::model::{ChannelKind, Id, Message, Model, Status};
 use crate::theme::Palette;
 
 /// What fills the window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
-    /// Checking the saved token.
+    /// Checking the saved token, or waiting for READY.
     Connecting,
     Login,
     Main,
@@ -22,15 +26,15 @@ pub enum Screen {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
     Home,
-    Server(ServerId),
+    Server(Id),
 }
 
 #[derive(Clone, Debug)]
 pub enum Action {
     GoHome,
-    OpenServer(ServerId),
-    OpenChannel(ChannelId),
-    ToggleCategory(ServerId, usize),
+    OpenServer(Id),
+    OpenChannel(Id),
+    ToggleCategory(Id),
     ToggleMembers,
     Send,
     ToggleMute,
@@ -49,59 +53,78 @@ pub enum Action {
     Logout,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Picture {
+    Requested,
+    Loaded,
+}
+
 pub struct App {
     pub screen: Screen,
     pub login: Login,
     pub confirm_logout: bool,
+    pub connection: Connection,
     backend: Backend,
     pub model: Model,
     pub palette: Palette,
     pub place: Place,
-    /// The open channel, remembered per server.
-    pub channel: Option<ChannelId>,
-    last_channel: Vec<Option<ChannelId>>,
-    pub collapsed: HashSet<(ServerId, usize)>,
+    pub channel: Option<Id>,
+    /// The channel last open on each server.
+    last_channel: HashMap<Id, Id>,
+    pub collapsed: HashSet<Id>,
     pub show_members: bool,
     pub muted: bool,
     pub deafened: bool,
     /// What the user is typing, per channel.
-    pub drafts: Vec<String>,
+    pub drafts: HashMap<Id, String>,
     pub actions: Vec<Action>,
+    pictures: RefCell<HashMap<String, Picture>>,
 }
 
 impl App {
-    pub fn new(ctx: &egui::Context, model: Model) -> Self {
-        let channels = model.channels.len();
-        let servers = model.servers.len();
+    pub fn new(ctx: &egui::Context) -> Self {
         let backend = Backend::start(ctx.clone());
         backend.send(Command::Resume);
-        let mut app = Self {
+        Self {
             screen: Screen::Connecting,
             login: Login::default(),
             confirm_logout: false,
+            connection: Connection::Connecting,
             backend,
-            model,
+            model: Model::default(),
             palette: Palette::dark(),
             place: Place::Home,
             channel: None,
-            last_channel: vec![None; servers],
+            last_channel: HashMap::new(),
             collapsed: HashSet::new(),
             show_members: true,
             muted: false,
             deafened: false,
-            drafts: vec![String::new(); channels],
+            drafts: HashMap::new(),
             actions: Vec::new(),
-        };
-        let (server, channel) = app.model.start;
-        app.last_channel[server] = Some(channel);
-        app.open_server(server);
-        app
+            pictures: RefCell::new(HashMap::new()),
+        }
     }
 
-    pub fn server(&self) -> Option<ServerId> {
+    pub fn server(&self) -> Option<Id> {
         match self.place {
             Place::Server(id) => Some(id),
             Place::Home => None,
+        }
+    }
+
+    /// The picture at `url` once it has loaded; the first ask downloads it.
+    pub fn picture<'a>(&self, url: Option<&'a str>) -> Option<&'a str> {
+        let url = url?;
+        let mut pictures = self.pictures.borrow_mut();
+        match pictures.get(url) {
+            Some(Picture::Loaded) => Some(url),
+            Some(Picture::Requested) => None,
+            None => {
+                pictures.insert(url.to_owned(), Picture::Requested);
+                self.backend.send(Command::FetchImage(url.to_owned()));
+                None
+            }
         }
     }
 
@@ -112,23 +135,57 @@ impl App {
                 Event::SignedOut => {
                     self.screen = Screen::Login;
                     self.login = Login::default();
+                    self.model = Model::default();
                     self.backend.send(Command::StartQr);
                 }
-                Event::SignedIn(me) => {
-                    let user = &mut self.model.users[self.model.me];
-                    user.name = me.display_name().to_owned();
-                    user.username = me.username.clone();
-                    user.picture = me.avatar_url();
+                Event::SignedIn => {
                     self.login = Login::default();
-                    self.screen = Screen::Main;
+                    self.screen = Screen::Connecting;
                 }
-                Event::Image { uri, bytes } => ctx.include_bytes(uri, bytes),
+                Event::Connection(state) => self.connection = state,
+                Event::Ready(model) => self.ready(*model),
+                Event::Dispatch { kind, data } => self.dispatch(&kind, data),
+                Event::Messages { channel, list } => self.history(channel, &list),
+                Event::SendFailed { channel, nonce } => {
+                    if let Some(message) = self.model.channels.get_mut(&channel).and_then(|c| {
+                        c.messages
+                            .iter_mut()
+                            .find(|m| m.nonce.as_deref() == Some(&nonce))
+                    }) {
+                        message.pending = false;
+                        message.failed = true;
+                    }
+                }
+                Event::Image { uri, bytes } => {
+                    self.pictures
+                        .borrow_mut()
+                        .insert(uri.clone(), Picture::Loaded);
+                    ctx.include_bytes(uri, bytes);
+                }
                 event => {
                     if self.login.handle(ctx, event) {
                         self.backend.send(Command::StartQr);
                     }
                 }
             }
+        }
+    }
+
+    fn ready(&mut self, model: Model) {
+        let first = self.screen != Screen::Main;
+        self.model = model;
+        self.screen = Screen::Main;
+        // After a reconnect, stay where the user was if it still exists.
+        let still_there = self
+            .channel
+            .is_some_and(|c| self.model.channels.contains_key(&c));
+        if first || !still_there {
+            match self.model.guilds.first().map(|g| g.id) {
+                Some(guild) => self.open_server(guild),
+                None => self.go_home(),
+            }
+        } else if let Some(channel) = self.channel {
+            self.open_channel(channel);
         }
     }
 
@@ -206,22 +263,12 @@ impl App {
                     self.screen = Screen::Connecting;
                     self.backend.send(Command::Logout);
                 }
-                Action::GoHome => {
-                    self.place = Place::Home;
-                    self.channel = self.model.direct.first().map(|dm| dm.channel);
-                    self.mark_read();
-                }
+                Action::GoHome => self.go_home(),
                 Action::OpenServer(id) => self.open_server(id),
-                Action::OpenChannel(id) => {
-                    self.channel = Some(id);
-                    if let Some(server) = self.server() {
-                        self.last_channel[server] = Some(id);
-                    }
-                    self.mark_read();
-                }
-                Action::ToggleCategory(server, category) => {
-                    if !self.collapsed.remove(&(server, category)) {
-                        self.collapsed.insert((server, category));
+                Action::OpenChannel(id) => self.open_channel(id),
+                Action::ToggleCategory(id) => {
+                    if !self.collapsed.remove(&id) {
+                        self.collapsed.insert(id);
                     }
                 }
                 Action::ToggleMembers => self.show_members = !self.show_members,
@@ -240,53 +287,311 @@ impl App {
         }
     }
 
-    fn open_server(&mut self, id: ServerId) {
+    fn go_home(&mut self) {
+        self.place = Place::Home;
+        self.channel = None;
+        if let Some(first) = self.model.sorted_direct().first().copied() {
+            self.open_channel(first);
+        }
+    }
+
+    fn open_server(&mut self, id: Id) {
         self.place = Place::Server(id);
-        self.channel = self.last_channel[id].or_else(|| self.model.first_text_channel(id));
-        self.last_channel[id] = self.channel;
-        self.mark_read();
+        self.channel = None;
+        let channel = self
+            .last_channel
+            .get(&id)
+            .copied()
+            .filter(|c| self.model.channels.contains_key(c))
+            .or_else(|| self.model.first_text_channel(id));
+        if let Some(channel) = channel {
+            self.open_channel(channel);
+        }
     }
 
-    /// Opening a channel reads it, and a server with nothing left unread
-    /// loses its dot.
-    fn mark_read(&mut self) {
-        let Some(id) = self.channel else { return };
-        let channel = &mut self.model.channels[id];
-        channel.unread = false;
+    /// Shows a channel: loads its history the first time, marks it read
+    /// and asks for the server's member list.
+    fn open_channel(&mut self, id: Id) {
+        let Some(channel) = self.model.channels.get_mut(&id) else {
+            return;
+        };
+        if !channel.kind.is_textual() {
+            return;
+        }
+        self.channel = Some(id);
+        if !channel.requested {
+            channel.requested = true;
+            self.backend.send(Command::LoadMessages(id));
+        }
+        let guild = channel.guild;
+        if let Some(guild) = guild {
+            self.last_channel.insert(guild, id);
+            if let Some(g) = self.model.guild_mut(guild)
+                && !g.subscribed
+            {
+                g.subscribed = true;
+                self.backend.send(Command::Subscribe { guild, channel: id });
+            }
+        }
+        self.mark_read(id);
+    }
+
+    fn mark_read(&mut self, id: Id) {
+        let Some(channel) = self.model.channels.get_mut(&id) else {
+            return;
+        };
+        let was_unread = channel.unread() || channel.mentions > 0;
         channel.mentions = 0;
-        if let Some(dm) = self.model.direct.iter_mut().find(|dm| dm.channel == id) {
-            dm.unread = 0;
-        }
-        if let Some(server) = self.server() {
-            let channels = &self.model.channels;
-            let server = &mut self.model.servers[server];
-            let all = server
-                .loose
-                .iter()
-                .chain(server.categories.iter().flat_map(|c| c.channels.iter()));
-            let (unread, mentions) = all.fold((false, 0), |(u, m), &c| {
-                (u || channels[c].unread, m + channels[c].mentions)
-            });
-            server.unread = unread;
-            server.mentions = mentions;
+        if let Some(last) = channel.last_message {
+            channel.read = Some(last);
+            if was_unread {
+                self.backend.send(Command::Ack {
+                    channel: id,
+                    message: last,
+                });
+            }
         }
     }
 
-    /// The message shows at once; the gateway will confirm it later.
+    /// The message shows at once, greyed until the gateway echoes it.
     fn send(&mut self) {
         let Some(id) = self.channel else { return };
-        let text = self.drafts[id].trim().to_owned();
+        let Some(draft) = self.drafts.get_mut(&id) else {
+            return;
+        };
+        let text = draft.trim().to_owned();
         if text.is_empty() {
             return;
         }
-        self.drafts[id].clear();
-        let messages = &mut self.model.channels[id].messages;
-        let minute = messages.last().map_or(0, |m| m.minute.max(0)).max(616);
-        messages.push(Message {
-            author: self.model.me,
-            minute,
-            text,
-            mentions_me: false,
+        draft.clear();
+        let now = jiff::Timestamp::now();
+        let nonce = snowflake(now).to_string();
+        if let Some(channel) = self.model.channels.get_mut(&id) {
+            channel.messages.push(Message {
+                id: u64::MAX,
+                nonce: Some(nonce.clone()),
+                author: self.model.me,
+                time: now,
+                text: text.clone(),
+                mentions_me: false,
+                edited: false,
+                pending: true,
+                failed: false,
+                attachments: Vec::new(),
+            });
+        }
+        self.backend.send(Command::Send {
+            channel: id,
+            content: text,
+            nonce,
         });
     }
+
+    fn history(&mut self, id: Id, list: &[Value]) {
+        let me = self.model.me;
+        let guild = self.model.channel(id).and_then(|c| c.guild);
+        let mut messages: Vec<Message> = Vec::new();
+        for value in list.iter().rev() {
+            self.learn_author(guild, value);
+            if let Some(m) = parse::message(value, me) {
+                messages.push(m);
+            }
+        }
+        if let Some(channel) = self.model.channels.get_mut(&id) {
+            // Keep anything that arrived live while the history loaded.
+            let newest = messages.last().map_or(0, |m| m.id);
+            let live: Vec<Message> = channel
+                .messages
+                .drain(..)
+                .filter(|m| m.id > newest || m.pending)
+                .collect();
+            messages.extend(live);
+            channel.messages = messages;
+        }
+    }
+
+    /// Remembers a message's author and their roles on the server.
+    fn learn_author(&mut self, guild: Option<Id>, value: &Value) {
+        let Some(user) = parse::user(&value["author"]) else {
+            return;
+        };
+        let id = user.id;
+        self.model.users.entry(id).or_insert(user);
+        if let Some(guild) = guild
+            && value["member"].is_object()
+            && let Some(g) = self.model.guild_mut(guild)
+        {
+            g.members.insert(id, parse::member(&value["member"]));
+        }
+    }
+
+    fn dispatch(&mut self, kind: &str, data: Value) {
+        let me = self.model.me;
+        match kind {
+            "READY_SUPPLEMENTAL" => parse::supplemental(&data, &mut self.model),
+            "MESSAGE_CREATE" => {
+                let Some(channel_id) = parse::id(&data["channel_id"]) else {
+                    return;
+                };
+                let guild = parse::id(&data["guild_id"]);
+                self.learn_author(guild, &data);
+                let Some(message) = parse::message(&data, me) else {
+                    return;
+                };
+                let open = self.channel == Some(channel_id);
+                let Some(channel) = self.model.channels.get_mut(&channel_id) else {
+                    return;
+                };
+                channel.last_message = Some(message.id);
+                if message.author == me || open {
+                    channel.read = Some(message.id);
+                } else if message.mentions_me || channel.kind != ChannelKind::Text {
+                    channel.mentions += 1;
+                }
+                if open && message.author != me {
+                    self.backend.send(Command::Ack {
+                        channel: channel_id,
+                        message: message.id,
+                    });
+                }
+                if !channel.requested {
+                    return;
+                }
+                match channel
+                    .messages
+                    .iter_mut()
+                    .find(|m| m.pending && m.nonce.is_some() && m.nonce == message.nonce)
+                {
+                    Some(pending) => *pending = message,
+                    None => channel.messages.push(message),
+                }
+            }
+            "MESSAGE_UPDATE" => {
+                let (Some(channel), Some(id)) =
+                    (parse::id(&data["channel_id"]), parse::id(&data["id"]))
+                else {
+                    return;
+                };
+                if let Some(content) = data["content"].as_str()
+                    && let Some(m) = self
+                        .model
+                        .channels
+                        .get_mut(&channel)
+                        .and_then(|c| c.messages.iter_mut().find(|m| m.id == id))
+                {
+                    m.text = content.to_owned();
+                    m.edited = true;
+                }
+            }
+            "MESSAGE_DELETE" => {
+                let (Some(channel), Some(id)) =
+                    (parse::id(&data["channel_id"]), parse::id(&data["id"]))
+                else {
+                    return;
+                };
+                if let Some(c) = self.model.channels.get_mut(&channel) {
+                    c.messages.retain(|m| m.id != id);
+                }
+            }
+            "MESSAGE_ACK" => {
+                let (Some(channel), Some(id)) = (
+                    parse::id(&data["channel_id"]),
+                    parse::id(&data["message_id"]),
+                ) else {
+                    return;
+                };
+                if let Some(c) = self.model.channels.get_mut(&channel) {
+                    c.read = Some(id);
+                    c.mentions = data["mention_count"].as_u64().unwrap_or(0) as u32;
+                }
+            }
+            "CHANNEL_CREATE" | "CHANNEL_UPDATE" => {
+                for u in data["recipients"].as_array().into_iter().flatten() {
+                    if let Some(u) = parse::user(u) {
+                        self.model.users.entry(u.id).or_insert(u);
+                    }
+                }
+                let Some(mut channel) = parse::channel(&data, None) else {
+                    return;
+                };
+                let id = channel.id;
+                if let Some(old) = self.model.channels.remove(&id) {
+                    channel.messages = old.messages;
+                    channel.requested = old.requested;
+                    channel.read = old.read;
+                    channel.mentions = old.mentions;
+                } else {
+                    channel.read = channel.last_message;
+                    match channel.guild {
+                        Some(guild) => {
+                            if let Some(g) = self.model.guild_mut(guild) {
+                                g.channels.push(id);
+                            }
+                        }
+                        None => self.model.direct.push(id),
+                    }
+                }
+                self.model.channels.insert(id, channel);
+            }
+            "CHANNEL_DELETE" => {
+                let Some(id) = parse::id(&data["id"]) else {
+                    return;
+                };
+                self.model.channels.remove(&id);
+                self.model.direct.retain(|c| *c != id);
+                for g in &mut self.model.guilds {
+                    g.channels.retain(|c| *c != id);
+                }
+                if self.channel == Some(id) {
+                    self.channel = None;
+                }
+            }
+            "GUILD_CREATE" => {
+                let Some(guild) = parse::guild(&data, &mut self.model) else {
+                    return;
+                };
+                match self.model.guilds.iter_mut().find(|g| g.id == guild.id) {
+                    Some(old) => *old = guild,
+                    None => self.model.guilds.push(guild),
+                }
+            }
+            "GUILD_DELETE" => {
+                let Some(id) = parse::id(&data["id"]) else {
+                    return;
+                };
+                if data["unavailable"].as_bool() == Some(true) {
+                    return;
+                }
+                self.model.guilds.retain(|g| g.id != id);
+                if self.place == Place::Server(id) {
+                    self.go_home();
+                }
+            }
+            "PRESENCE_UPDATE" => {
+                let Some(id) = parse::id(&data["user"]["id"]) else {
+                    return;
+                };
+                let (status, activity) = parse::presence(&data);
+                if let Some(user) = self.model.users.get_mut(&id) {
+                    user.status = status;
+                    user.activity = activity;
+                }
+            }
+            "GUILD_MEMBER_LIST_UPDATE" => parse::member_list(&data, &mut self.model),
+            "SESSIONS_REPLACE" => {
+                if let Some(me) = self.model.users.get_mut(&me)
+                    && let Some(first) = data.as_array().and_then(|l| l.first())
+                {
+                    me.status = Status::parse(first["status"].as_str().unwrap_or("online"));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A snowflake for now, used as a message nonce as Discord's clients do.
+fn snowflake(time: jiff::Timestamp) -> u64 {
+    const DISCORD_EPOCH: i64 = 1_420_070_400_000;
+    ((time.as_millisecond() - DISCORD_EPOCH) as u64) << 22
 }

@@ -45,6 +45,8 @@ qrcode = { version = "0.14", default-features = false }
 keyring-core = "1"
 open = "5"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+jiff = "0.2"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }

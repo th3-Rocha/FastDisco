@@ -6,7 +6,11 @@ use std::sync::mpsc as std_mpsc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::discord::{self, Me, auth, remote_auth};
+use serde_json::Value;
+
+use crate::discord::gateway::{self, Incoming, Outgoing};
+use crate::discord::{self, auth, parse, remote_auth, rest};
+use crate::model::Model;
 use crate::session;
 
 #[derive(Debug)]
@@ -27,13 +31,36 @@ pub enum Command {
     },
     StartQr,
     Logout,
+    /// The newest messages of a channel.
+    LoadMessages(u64),
+    Send {
+        channel: u64,
+        content: String,
+        nonce: String,
+    },
+    Ack {
+        channel: u64,
+        message: u64,
+    },
+    /// The member list of a server, seen from a channel.
+    Subscribe {
+        guild: u64,
+        channel: u64,
+    },
+    FetchImage(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Connection {
+    Connecting,
+    Connected,
 }
 
 #[derive(Debug)]
 pub enum Event {
     /// No saved token, or Discord no longer accepts it.
     SignedOut,
-    SignedIn(Me),
+    SignedIn,
     MfaRequired {
         ticket: String,
     },
@@ -43,6 +70,22 @@ pub enum Event {
     ForgotSent,
     ForgotFailed(auth::Error),
     Qr(remote_auth::Event),
+    Connection(Connection),
+    /// READY, already turned into a model off the interface thread.
+    Ready(Box<Model>),
+    /// Any other gateway event, applied by the interface.
+    Dispatch {
+        kind: String,
+        data: Value,
+    },
+    Messages {
+        channel: u64,
+        list: Vec<Value>,
+    },
+    SendFailed {
+        channel: u64,
+        nonce: String,
+    },
     /// An image for `ctx.include_bytes`.
     Image {
         uri: String,
@@ -66,7 +109,10 @@ impl Backend {
                     .enable_all()
                     .build()
                     .expect("the tokio runtime starts");
-                runtime.block_on(Worker::new(ctx, sender).run(receiver));
+                let (gateway_sender, gateway_events) = mpsc::unbounded_channel();
+                runtime.block_on(
+                    Worker::new(ctx, sender, gateway_sender).run(receiver, gateway_events),
+                );
             })
             .expect("the backend thread starts");
         Self { commands, events }
@@ -83,16 +129,24 @@ struct Worker {
     client: reqwest::Client,
     qr: Option<JoinHandle<()>>,
     token: Option<String>,
+    gateway: Option<(JoinHandle<()>, mpsc::UnboundedSender<Outgoing>)>,
+    gateway_events: mpsc::UnboundedSender<Incoming>,
 }
 
 impl Worker {
-    fn new(ctx: egui::Context, events: std_mpsc::Sender<Event>) -> Self {
+    fn new(
+        ctx: egui::Context,
+        events: std_mpsc::Sender<Event>,
+        gateway_events: mpsc::UnboundedSender<Incoming>,
+    ) -> Self {
         Self {
             ctx,
             events,
             client: discord::client(),
             qr: None,
             token: None,
+            gateway: None,
+            gateway_events,
         }
     }
 
@@ -101,10 +155,15 @@ impl Worker {
         self.ctx.request_repaint();
     }
 
-    async fn run(mut self, mut commands: mpsc::UnboundedReceiver<Command>) {
+    async fn run(
+        mut self,
+        mut commands: mpsc::UnboundedReceiver<Command>,
+        mut gateway_events: mpsc::UnboundedReceiver<Incoming>,
+    ) {
         let (qr_sender, mut qr_events) = mpsc::unbounded_channel();
         loop {
             tokio::select! {
+                Some(incoming) = gateway_events.recv() => self.gateway_event(incoming).await,
                 command = commands.recv() => {
                     let Some(command) = command else { return };
                     self.handle(command, &qr_sender).await;
@@ -138,9 +197,9 @@ impl Worker {
                     .ok()
                     .and_then(|r| r.inspect_err(|e| log::warn!("{e:#}")).ok().flatten());
                 match token {
-                    Some(token) => match auth::me(&self.client, &token).await {
-                        Ok(Some(me)) => self.signed_in(token, me),
-                        Ok(None) => {
+                    Some(token) => match auth::check(&self.client, &token).await {
+                        Ok(true) => self.signed_in(token),
+                        Ok(false) => {
                             forget().await;
                             self.emit(Event::SignedOut);
                         }
@@ -191,7 +250,58 @@ impl Worker {
                     qr.clone(),
                 )));
             }
+            Command::LoadMessages(channel) => {
+                let Some(token) = self.token.clone() else {
+                    return;
+                };
+                let (client, events, ctx) =
+                    (self.client.clone(), self.events.clone(), self.ctx.clone());
+                tokio::spawn(async move {
+                    match rest::messages(&client, &token, channel).await {
+                        Ok(list) => {
+                            let _ = events.send(Event::Messages { channel, list });
+                            ctx.request_repaint();
+                        }
+                        Err(error) => log::warn!("history of {channel}: {error}"),
+                    }
+                });
+            }
+            Command::Send {
+                channel,
+                content,
+                nonce,
+            } => {
+                let Some(token) = self.token.clone() else {
+                    return;
+                };
+                let (client, events, ctx) =
+                    (self.client.clone(), self.events.clone(), self.ctx.clone());
+                tokio::spawn(async move {
+                    if let Err(error) = rest::send(&client, &token, channel, &content, &nonce).await
+                    {
+                        log::warn!("send to {channel}: {error}");
+                        let _ = events.send(Event::SendFailed { channel, nonce });
+                        ctx.request_repaint();
+                    }
+                });
+            }
+            Command::Ack { channel, message } => {
+                let Some(token) = self.token.clone() else {
+                    return;
+                };
+                let client = self.client.clone();
+                tokio::spawn(async move { rest::ack(&client, &token, channel, message).await });
+            }
+            Command::Subscribe { guild, channel } => {
+                if let Some((_, outgoing)) = &self.gateway {
+                    let _ = outgoing.send(Outgoing::Subscribe { guild, channel });
+                }
+            }
+            Command::FetchImage(url) => self.fetch_image(url),
             Command::Logout => {
+                if let Some((task, _)) = self.gateway.take() {
+                    task.abort();
+                }
                 if let Some(token) = self.token.take() {
                     auth::logout(&self.client, &token).await;
                 }
@@ -203,31 +313,69 @@ impl Worker {
 
     /// Checks a token, keeps it in the keyring and opens the app.
     async fn sign_in(&mut self, token: String) -> Result<(), String> {
-        match auth::me(&self.client, &token).await {
-            Ok(Some(me)) => {
+        match auth::check(&self.client, &token).await {
+            Ok(true) => {
                 let saved = token.clone();
                 if let Ok(Err(error)) =
                     tokio::task::spawn_blocking(move || session::save(&saved)).await
                 {
                     log::warn!("{error:#}");
                 }
-                self.signed_in(token, me);
+                self.signed_in(token);
                 Ok(())
             }
-            Ok(None) => Err("Token inválido.".into()),
+            Ok(false) => Err("Token inválido.".into()),
             Err(error) => Err(error.message()),
         }
     }
 
-    fn signed_in(&mut self, token: String, me: Me) {
+    fn signed_in(&mut self, token: String) {
         if let Some(task) = self.qr.take() {
             task.abort();
         }
-        self.token = Some(token);
-        if let Some(url) = me.avatar_url() {
-            self.fetch_image(url);
+        if let Some((task, _)) = self.gateway.take() {
+            task.abort();
         }
-        self.emit(Event::SignedIn(me));
+        let (outgoing, receiver) = mpsc::unbounded_channel();
+        let task = tokio::spawn(gateway::run(
+            token.clone(),
+            receiver,
+            self.gateway_events.clone(),
+        ));
+        self.gateway = Some((task, outgoing));
+        self.token = Some(token);
+        self.emit(Event::SignedIn);
+    }
+
+    async fn gateway_event(&mut self, incoming: Incoming) {
+        match incoming {
+            Incoming::Connecting => self.emit(Event::Connection(Connection::Connecting)),
+            Incoming::Unauthorized => {
+                self.gateway = None;
+                self.token = None;
+                forget().await;
+                self.emit(Event::SignedOut);
+            }
+            Incoming::Dispatch { kind, data } if kind == "READY" => {
+                let model = tokio::task::spawn_blocking(move || parse::ready(&data)).await;
+                if let Ok(model) = model {
+                    log::info!(
+                        "READY: {} servers, {} channels, {} direct messages",
+                        model.guilds.len(),
+                        model.channels.len(),
+                        model.direct.len()
+                    );
+                    self.emit(Event::Ready(Box::new(model)));
+                    self.emit(Event::Connection(Connection::Connected));
+                }
+            }
+            Incoming::Dispatch { kind, data } => {
+                if kind == "RESUMED" {
+                    self.emit(Event::Connection(Connection::Connected));
+                }
+                self.emit(Event::Dispatch { kind, data });
+            }
+        }
     }
 
     fn fetch_image(&self, url: String) {

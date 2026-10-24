@@ -3,35 +3,53 @@
 use egui::{Align2, Color32, CornerRadius, FontId, Pos2, Rect, Response, Sense, Ui, Vec2, vec2};
 use fastframe_fonts::Weight;
 
+use crate::app::App;
 use crate::icons::Icon;
 use crate::model::{Status, User};
+pub use crate::text::hyphens;
 use crate::theme::Palette;
 
 pub fn font(weight: Weight, size: f32) -> FontId {
     weight.font_id(size)
 }
 
-/// Inter draws U+002D as wide as a minus sign, so "Boas-vindas" gets gaps
-/// around the dash. A dash touching a letter is a hyphen: draw U+2010.
-pub fn hyphens(text: &str) -> std::borrow::Cow<'_, str> {
-    if !text.contains('-') {
-        return text.into();
+/// Paints single-line text that ends in "…" where it would pass `right`,
+/// as Discord cuts long names.
+pub struct Elide<'a> {
+    ui: &'a Ui,
+    right: f32,
+}
+
+impl<'a> Elide<'a> {
+    pub fn new(ui: &'a Ui, right: f32) -> Self {
+        Self { ui, right }
     }
-    let chars: Vec<char> = text.chars().collect();
-    let letter = |i: Option<usize>| {
-        i.and_then(|i| chars.get(i))
-            .is_some_and(|c| c.is_alphabetic())
-    };
-    (0..chars.len())
-        .map(|i| {
-            if chars[i] == '-' && (letter(i.checked_sub(1)) || letter(Some(i + 1))) {
-                '\u{2010}'
-            } else {
-                chars[i]
-            }
-        })
-        .collect::<String>()
-        .into()
+
+    /// Like `Painter::text`, for left-anchored text.
+    pub fn text(
+        &self,
+        pos: Pos2,
+        anchor: Align2,
+        text: impl ToString,
+        font_id: FontId,
+        color: Color32,
+    ) {
+        let mut job = egui::text::LayoutJob::single_section(
+            text.to_string(),
+            egui::TextFormat {
+                font_id,
+                color,
+                ..Default::default()
+            },
+        );
+        job.wrap.max_width = (self.right - pos.x).max(0.0);
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        job.wrap.overflow_character = Some('…');
+        let galley = self.ui.painter().layout_job(job);
+        let rect = anchor.anchor_size(pos, galley.size());
+        self.ui.painter().galley(rect.min, galley, color);
+    }
 }
 
 pub fn paint_icon(ui: &Ui, icon: Icon, center: Pos2, size: f32, tint: Color32) {
@@ -74,20 +92,14 @@ pub fn status_color(palette: &Palette, status: Status) -> Color32 {
 
 /// A round avatar with the user's initial, and their status at the bottom
 /// right cut out of `behind`.
-pub fn avatar(
-    ui: &Ui,
-    palette: &Palette,
-    user: &User,
-    center: Pos2,
-    radius: f32,
-    status: Option<Color32>,
-) {
+pub fn avatar(ui: &Ui, app: &App, user: &User, center: Pos2, radius: f32, status: Option<Color32>) {
+    let palette = &app.palette;
     let painter = ui.painter();
-    painter.circle_filled(center, radius, user.avatar);
-    match &user.picture {
+    painter.circle_filled(center, radius, user.color());
+    match app.picture(user.picture.as_deref()) {
         Some(uri) => {
             let rect = Rect::from_center_size(center, Vec2::splat(radius * 2.0));
-            egui::Image::new(uri.as_str())
+            egui::Image::new(uri)
                 .corner_radius(CornerRadius::same(radius as u8))
                 .paint_at(ui, rect);
         }
@@ -150,17 +162,52 @@ pub fn badge(ui: &Ui, palette: &Palette, right_center: Pos2, count: u32, ring: O
         .galley(rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
 }
 
-/// "Today at 10:04", "Yesterday at 22:50".
-pub fn timestamp(minute: i32) -> String {
-    let (day, minute) = if minute < 0 {
-        ("Ontem", minute + 24 * 60)
+/// "Hoje às 10:04", "Ontem às 22:50", "21/10/2026 18:03".
+pub fn timestamp(time: jiff::Timestamp) -> String {
+    let zone = jiff::tz::TimeZone::system();
+    let local = time.to_zoned(zone.clone());
+    let today = jiff::Timestamp::now().to_zoned(zone).date();
+    let date = local.date();
+    if date == today {
+        format!("Hoje às {}", local.strftime("%H:%M"))
+    } else if today.yesterday().ok() == Some(date) {
+        format!("Ontem às {}", local.strftime("%H:%M"))
     } else {
-        ("Hoje", minute)
-    };
-    format!("{day} às {:02}:{:02}", minute / 60, minute % 60)
+        local.strftime("%d/%m/%Y %H:%M").to_string()
+    }
 }
 
-pub fn clock(minute: i32) -> String {
-    let minute = minute.rem_euclid(24 * 60);
-    format!("{:02}:{:02}", minute / 60, minute % 60)
+pub fn clock(time: jiff::Timestamp) -> String {
+    time.to_zoned(jiff::tz::TimeZone::system())
+        .strftime("%H:%M")
+        .to_string()
+}
+
+/// The local day of a moment, for the dividers between days.
+pub fn day(time: jiff::Timestamp) -> jiff::civil::Date {
+    time.to_zoned(jiff::tz::TimeZone::system()).date()
+}
+
+/// "24 de outubro de 2026".
+pub fn long_date(date: jiff::civil::Date) -> String {
+    const MONTHS: [&str; 12] = [
+        "janeiro",
+        "fevereiro",
+        "março",
+        "abril",
+        "maio",
+        "junho",
+        "julho",
+        "agosto",
+        "setembro",
+        "outubro",
+        "novembro",
+        "dezembro",
+    ];
+    format!(
+        "{} de {} de {}",
+        date.day(),
+        MONTHS[date.month() as usize - 1],
+        date.year()
+    )
 }

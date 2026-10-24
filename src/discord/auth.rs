@@ -4,7 +4,7 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{API, Me};
+use super::API;
 
 /// What the login form gets back.
 #[derive(Debug)]
@@ -136,15 +136,15 @@ pub async fn remote_login(client: &reqwest::Client, ticket: &str) -> Result<Stri
         .ok_or_else(|| Error::Other("Resposta inesperada do Discord.".into()))
 }
 
-/// Who a token belongs to. `Ok(None)` when Discord no longer accepts it.
-pub async fn me(client: &reqwest::Client, token: &str) -> Result<Option<Me>, Error> {
+/// Whether Discord accepts a token.
+pub async fn check(client: &reqwest::Client, token: &str) -> Result<bool, Error> {
     let response = client
         .get(format!("{API}/users/@me"))
         .header("Authorization", token)
         .send()
         .await?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        return Ok(None);
+        return Ok(false);
     }
     if !response.status().is_success() {
         return Err(Error::Other(format!(
@@ -152,7 +152,7 @@ pub async fn me(client: &reqwest::Client, token: &str) -> Result<Option<Me>, Err
             response.status()
         )));
     }
-    Ok(Some(response.json().await?))
+    Ok(true)
 }
 
 /// Ends the session on Discord's side too.

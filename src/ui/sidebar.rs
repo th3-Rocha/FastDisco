@@ -6,10 +6,10 @@ use egui::{
 };
 use fastframe_fonts::Weight;
 
-use super::widgets::{avatar, badge, font, icon_button, paint_icon};
+use super::widgets::{Elide, avatar, badge, font, icon_button, paint_icon};
 use crate::app::{Action, App, Place};
 use crate::icons::Icon;
-use crate::model::{ChannelId, ChannelKind, ServerId};
+use crate::model::{ChannelKind, Id, Status};
 use crate::theme::{HEADER_HEIGHT, SIDEBAR_WIDTH, USER_PANEL_HEIGHT};
 
 pub fn show(app: &mut App, ui: &mut Ui) {
@@ -30,7 +30,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 .frame(Frame::new().inner_margin(Margin::ZERO))
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical()
-                        .id_salt("channels")
+                        .id_salt(("channels", app.server()))
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -59,8 +59,14 @@ fn header(app: &mut App, ui: &mut Ui) {
                         ui.painter()
                             .rect_filled(rect, CornerRadius::ZERO, palette.hover);
                     }
-                    let name = app.model.servers[id].name.clone();
-                    ui.painter().text(
+                    let name = app
+                        .model
+                        .guild(id)
+                        .map(|g| g.name.clone())
+                        .unwrap_or_default();
+                    let clip =
+                        Rect::from_min_max(rect.min, pos2(rect.right() - 36.0, rect.bottom()));
+                    Elide::new(ui, clip.right()).text(
                         pos2(rect.left() + 16.0, rect.center().y),
                         Align2::LEFT_CENTER,
                         name,
@@ -97,21 +103,24 @@ fn header(app: &mut App, ui: &mut Ui) {
         });
 }
 
-fn channels(app: &mut App, ui: &mut Ui, server: ServerId) {
+fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
     let palette = app.palette;
+    let Some(g) = app.model.guild(guild) else {
+        return;
+    };
+    let (loose, categories) = app.model.layout(g);
     ui.add_space(8.0);
-    let loose = app.model.servers[server].loose.clone();
     for id in loose {
         channel_row(app, ui, id);
     }
-    let categories: Vec<(String, Vec<ChannelId>)> = app.model.servers[server]
-        .categories
-        .iter()
-        .map(|c| (c.name.clone(), c.channels.clone()))
-        .collect();
-    for (index, (name, list)) in categories.into_iter().enumerate() {
+    for (category, list) in categories {
         ui.add_space(16.0);
-        let collapsed = app.collapsed.contains(&(server, index));
+        let collapsed = app.collapsed.contains(&category);
+        let name = app
+            .model
+            .channel(category)
+            .map(|c| c.name.to_uppercase())
+            .unwrap_or_default();
         let (rect, response) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 24.0), Sense::click());
         let tint = if response.hovered() {
             palette.text
@@ -130,10 +139,11 @@ fn channels(app: &mut App, ui: &mut Ui, server: ServerId) {
             12.0,
             tint,
         );
-        ui.painter().text(
+        let clip = Rect::from_min_max(rect.min, pos2(rect.right() - 32.0, rect.bottom()));
+        Elide::new(ui, clip.right()).text(
             pos2(rect.left() + 18.0, rect.center().y),
             Align2::LEFT_CENTER,
-            name.to_uppercase(),
+            name,
             font(Weight::SemiBold, 12.0),
             tint,
         );
@@ -145,12 +155,12 @@ fn channels(app: &mut App, ui: &mut Ui, server: ServerId) {
             palette.muted,
         );
         if response.clicked() {
-            app.actions.push(Action::ToggleCategory(server, index));
+            app.actions.push(Action::ToggleCategory(category));
         }
         for id in list {
             // A collapsed category still shows the open channel and unread ones.
-            let channel = app.model.channel(id);
-            if collapsed && Some(id) != app.channel && !channel.unread {
+            let unread = app.model.channel(id).is_some_and(|c| c.unread());
+            if collapsed && Some(id) != app.channel && !unread {
                 continue;
             }
             channel_row(app, ui, id);
@@ -159,10 +169,13 @@ fn channels(app: &mut App, ui: &mut Ui, server: ServerId) {
     ui.add_space(8.0);
 }
 
-fn channel_row(app: &mut App, ui: &mut Ui, id: ChannelId) {
+fn channel_row(app: &mut App, ui: &mut Ui, id: Id) {
     let palette = app.palette;
-    let channel = app.model.channel(id);
+    let Some(channel) = app.model.channel(id) else {
+        return;
+    };
     let selected = app.channel == Some(id);
+    let unread = channel.unread();
     let (slot, response) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 34.0), Sense::click());
     let rect = Rect::from_min_max(
         pos2(slot.left() + 8.0, slot.top() + 1.0),
@@ -176,12 +189,12 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: ChannelId) {
         ui.painter()
             .rect_filled(rect, CornerRadius::same(4), palette.hover);
     }
-    if channel.unread && !selected {
+    if unread && !selected {
         let pill = Rect::from_center_size(pos2(slot.left(), slot.center().y), vec2(8.0, 8.0));
         ui.painter()
             .rect_filled(pill, CornerRadius::same(4), palette.strong);
     }
-    let tint = if selected || channel.unread {
+    let tint = if selected || unread {
         palette.strong
     } else if hovered {
         palette.text
@@ -189,8 +202,9 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: ChannelId) {
         palette.muted
     };
     let icon = match channel.kind {
-        ChannelKind::Text => Icon::Hash,
         ChannelKind::Voice => Icon::Speaker,
+        ChannelKind::Other => Icon::Threads,
+        _ => Icon::Hash,
     };
     paint_icon(
         ui,
@@ -199,12 +213,18 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: ChannelId) {
         20.0,
         palette.muted,
     );
-    let weight = if channel.unread || selected {
+    let weight = if unread || selected {
         Weight::SemiBold
     } else {
         Weight::Medium
     };
-    ui.painter().text(
+    let reserve = if channel.mentions > 0 || hovered || selected {
+        52.0
+    } else {
+        8.0
+    };
+    let clip = Rect::from_min_max(rect.min, pos2(rect.right() - reserve, rect.bottom()));
+    Elide::new(ui, clip.right()).text(
         pos2(rect.left() + 36.0, rect.center().y),
         Align2::LEFT_CENTER,
         &channel.name,
@@ -237,23 +257,8 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: ChannelId) {
             palette.icon,
         );
     }
-    let voice = channel.voice.clone();
-    let kind = channel.kind;
-    if response.clicked() && kind == ChannelKind::Text {
+    if response.clicked() && channel.kind.is_textual() {
         app.actions.push(Action::OpenChannel(id));
-    }
-    for user in voice {
-        let (row, _) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 28.0), Sense::hover());
-        let user = app.model.user(user);
-        let center = pos2(row.left() + 54.0, row.center().y);
-        avatar(ui, &palette, user, center, 12.0, None);
-        ui.painter().text(
-            pos2(row.left() + 74.0, row.center().y),
-            Align2::LEFT_CENTER,
-            &user.name,
-            font(Weight::Medium, 14.0),
-            palette.muted,
-        );
     }
 }
 
@@ -302,12 +307,16 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
     );
     ui.add_space(4.0);
 
-    for index in 0..app.model.direct.len() {
-        let dm = &app.model.direct[index];
-        let (channel, unread) = (dm.channel, dm.unread);
-        let user = app.model.user(dm.user);
-        let selected = app.channel == Some(channel);
+    let mut open = None;
+    for id in app.model.sorted_direct() {
+        let Some(channel) = app.model.channel(id) else {
+            continue;
+        };
+        let selected = app.channel == Some(id);
         let (slot, response) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 44.0), Sense::click());
+        if !ui.is_rect_visible(slot) {
+            continue;
+        }
         let rect = Rect::from_min_max(
             pos2(slot.left() + 8.0, slot.top() + 1.0),
             pos2(slot.right() - 8.0, slot.bottom() - 1.0),
@@ -324,35 +333,52 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
             ui.painter()
                 .rect_filled(rect, CornerRadius::same(4), behind);
         }
-        avatar(
-            ui,
-            &palette,
-            user,
-            pos2(rect.left() + 24.0, rect.center().y),
-            16.0,
-            Some(behind),
-        );
-        let tint = if selected || unread > 0 {
+        let center = pos2(rect.left() + 24.0, rect.center().y);
+        let (name, activity) = match channel.kind {
+            ChannelKind::Direct => {
+                let user = channel.recipients.first().and_then(|u| app.model.user(*u));
+                if let Some(user) = user {
+                    avatar(ui, app, user, center, 16.0, Some(behind));
+                }
+                (
+                    user.map_or_else(|| "Desconhecido".into(), |u| u.name.clone()),
+                    user.and_then(|u| u.activity.clone()),
+                )
+            }
+            _ => {
+                ui.painter().circle_filled(center, 16.0, palette.accent);
+                paint_icon(ui, Icon::Users, center, 18.0, Color32::WHITE);
+                let members = channel.recipients.len() + 1;
+                (
+                    app.model.direct_name(channel),
+                    Some(format!("{members} membros")),
+                )
+            }
+        };
+        let unread = channel.mentions > 0 || channel.unread();
+        let tint = if selected || unread {
             palette.strong
         } else if hovered {
             palette.text
         } else {
             palette.muted
         };
-        let name_y = if user.activity.is_some() {
+        let clip = Rect::from_min_max(rect.min, pos2(rect.right() - 28.0, rect.bottom()));
+        let painter = Elide::new(ui, clip.right());
+        let name_y = if activity.is_some() {
             rect.center().y - 8.0
         } else {
             rect.center().y
         };
-        ui.painter().text(
+        painter.text(
             pos2(rect.left() + 50.0, name_y),
             Align2::LEFT_CENTER,
-            &user.name,
+            name,
             font(Weight::Medium, 15.0),
             tint,
         );
-        if let Some(activity) = &user.activity {
-            ui.painter().text(
+        if let Some(activity) = activity {
+            painter.text(
                 pos2(rect.left() + 50.0, rect.center().y + 9.0),
                 Align2::LEFT_CENTER,
                 activity,
@@ -360,12 +386,12 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
                 palette.muted,
             );
         }
-        if unread > 0 {
+        if channel.mentions > 0 {
             badge(
                 ui,
                 &palette,
                 pos2(rect.right() - 8.0, rect.center().y),
-                unread,
+                channel.mentions,
                 None,
             );
         } else if hovered {
@@ -378,8 +404,11 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
             );
         }
         if response.clicked() {
-            app.actions.push(Action::OpenChannel(channel));
+            open = Some(id);
         }
+    }
+    if let Some(id) = open {
+        app.actions.push(Action::OpenChannel(id));
     }
 }
 
@@ -397,7 +426,6 @@ fn user_panel(app: &mut App, ui: &mut Ui) {
         )
         .show(ui, |ui| {
             let rect = ui.max_rect();
-            let me = app.model.user(app.model.me);
             let identity = Rect::from_min_max(
                 pos2(rect.left() - 2.0, rect.top() + 8.0),
                 pos2(rect.right() - 102.0, rect.bottom() - 8.0),
@@ -412,32 +440,42 @@ fn user_panel(app: &mut App, ui: &mut Ui) {
                 ui.painter()
                     .rect_filled(identity, CornerRadius::same(4), behind);
             }
-            avatar(
-                ui,
-                &palette,
-                me,
-                pos2(identity.left() + 18.0, identity.center().y),
-                16.0,
-                Some(behind),
-            );
-            ui.painter().text(
-                pos2(identity.left() + 42.0, identity.center().y - 8.0),
-                Align2::LEFT_CENTER,
-                &me.name,
-                font(Weight::SemiBold, 14.0),
-                palette.strong,
-            );
-            ui.painter().text(
-                pos2(identity.left() + 42.0, identity.center().y + 9.0),
-                Align2::LEFT_CENTER,
-                if response.hovered() {
-                    me.username.as_str()
-                } else {
-                    "Disponível"
-                },
-                font(Weight::Regular, 12.0),
-                palette.muted,
-            );
+            if let Some(me) = app.model.user(app.model.me) {
+                avatar(
+                    ui,
+                    app,
+                    me,
+                    pos2(identity.left() + 18.0, identity.center().y),
+                    16.0,
+                    Some(behind),
+                );
+                let clip = Rect::from_min_max(identity.min, identity.max);
+                let painter = Elide::new(ui, clip.right());
+                painter.text(
+                    pos2(identity.left() + 42.0, identity.center().y - 8.0),
+                    Align2::LEFT_CENTER,
+                    &me.name,
+                    font(Weight::SemiBold, 14.0),
+                    palette.strong,
+                );
+                let status = match me.status {
+                    Status::Online => "Disponível",
+                    Status::Idle => "Ausente",
+                    Status::DoNotDisturb => "Não perturbar",
+                    Status::Offline => "Invisível",
+                };
+                painter.text(
+                    pos2(identity.left() + 42.0, identity.center().y + 9.0),
+                    Align2::LEFT_CENTER,
+                    if response.hovered() {
+                        me.username.as_str()
+                    } else {
+                        status
+                    },
+                    font(Weight::Regular, 12.0),
+                    palette.muted,
+                );
+            }
             let buttons =
                 Rect::from_min_max(pos2(rect.right() - 98.0, rect.top()), rect.right_bottom());
             let (muted, deafened) = (app.muted, app.deafened);

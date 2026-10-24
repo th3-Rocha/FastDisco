@@ -1,437 +1,362 @@
-//! What the interface shows: servers, channels, people and messages. Until
-//! the gateway lands, `Model::sample` fills it with a believable server.
+//! What the interface shows: servers, channels, people and messages, keyed
+//! by Discord's snowflake ids. The gateway fills it (`discord::parse`).
+
+use std::collections::HashMap;
 
 use egui::Color32;
 
-pub type UserId = usize;
-pub type ServerId = usize;
-pub type ChannelId = usize;
+/// A Discord snowflake.
+pub type Id = u64;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Status {
     Online,
     Idle,
     DoNotDisturb,
+    #[default]
     Offline,
 }
 
-#[derive(Clone, Debug)]
+impl Status {
+    pub fn parse(text: &str) -> Self {
+        match text {
+            "online" => Status::Online,
+            "idle" => Status::Idle,
+            "dnd" => Status::DoNotDisturb,
+            _ => Status::Offline,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct User {
+    pub id: Id,
+    /// The display name, else the username.
     pub name: String,
     pub username: String,
-    /// The fill behind the initial, until avatars are downloaded.
-    pub avatar: Color32,
-    /// The avatar picture's URI, once it is loaded.
+    /// The avatar picture's URL on Discord's CDN.
     pub picture: Option<String>,
     pub status: Status,
-    /// "Playing ..." or a custom status, under the name in lists.
+    /// "Jogando ...", or the custom status.
     pub activity: Option<String>,
+    pub bot: bool,
+}
+
+impl User {
+    /// The fill behind the initial while the picture loads.
+    pub fn color(&self) -> Color32 {
+        const COLORS: [u32; 6] = [0x5865f2, 0x757e8a, 0x3ba55c, 0xfaa61a, 0xed4245, 0xeb459e];
+        let hex = COLORS[(self.id >> 22) as usize % COLORS.len()];
+        Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct Role {
+    pub id: Id,
     pub name: String,
-    pub color: Color32,
-    /// Shown as its own group in the member list.
-    pub hoisted: bool,
+    pub color: Option<Color32>,
+    pub position: i64,
+    pub permissions: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChannelKind {
     Text,
     Voice,
+    Category,
+    Direct,
+    Group,
+    /// Forums, stages, threads and anything newer: listed, not opened.
+    Other,
+}
+
+impl ChannelKind {
+    pub fn from_type(kind: i64) -> Self {
+        match kind {
+            0 | 5 => ChannelKind::Text,
+            2 | 13 => ChannelKind::Voice,
+            4 => ChannelKind::Category,
+            1 => ChannelKind::Direct,
+            3 => ChannelKind::Group,
+            _ => ChannelKind::Other,
+        }
+    }
+
+    /// Opens to show messages.
+    pub fn is_textual(self) -> bool {
+        matches!(
+            self,
+            ChannelKind::Text | ChannelKind::Direct | ChannelKind::Group
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Overwrite {
+    pub id: Id,
+    /// 0 is a role, 1 a member.
+    pub kind: i64,
+    pub allow: u64,
+    pub deny: u64,
 }
 
 #[derive(Clone, Debug)]
 pub struct Channel {
+    pub id: Id,
+    pub guild: Option<Id>,
     pub name: String,
     pub kind: ChannelKind,
     pub topic: Option<String>,
-    pub unread: bool,
+    pub position: i64,
+    pub parent: Option<Id>,
+    pub overwrites: Vec<Overwrite>,
+    /// The newest message, to compare with what was read.
+    pub last_message: Option<Id>,
+    /// The newest message the user has read.
+    pub read: Option<Id>,
     pub mentions: u32,
+    /// Oldest first.
     pub messages: Vec<Message>,
-    /// Who is connected, for a voice channel.
-    pub voice: Vec<UserId>,
+    /// The history has been asked for.
+    pub requested: bool,
+    /// For direct messages and groups.
+    pub recipients: Vec<Id>,
 }
 
-#[derive(Clone, Debug)]
-pub struct Category {
-    pub name: String,
-    pub channels: Vec<ChannelId>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Member {
-    pub user: UserId,
-    /// The highest role, which colours the name and groups the member.
-    pub role: Option<usize>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Server {
-    pub name: String,
-    pub icon: Color32,
-    pub unread: bool,
-    pub mentions: u32,
-    pub roles: Vec<Role>,
-    pub members: Vec<Member>,
-    /// Channels outside a category come first.
-    pub loose: Vec<ChannelId>,
-    pub categories: Vec<Category>,
+impl Channel {
+    pub fn unread(&self) -> bool {
+        match (self.last_message, self.read) {
+            (Some(last), Some(read)) => last > read,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct Message {
-    pub author: UserId,
-    /// Minutes since midnight today; negative is yesterday.
-    pub minute: i32,
+    pub id: Id,
+    /// Ours until the gateway echoes it back with an id.
+    pub nonce: Option<String>,
+    pub author: Id,
+    pub time: jiff::Timestamp,
     pub text: String,
     pub mentions_me: bool,
+    pub edited: bool,
+    /// Sent but not yet confirmed.
+    pub pending: bool,
+    pub failed: bool,
+    /// Names of files, until attachments are drawn.
+    pub attachments: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
-pub struct DirectMessage {
-    pub user: UserId,
-    pub unread: u32,
-    pub channel: ChannelId,
+pub struct Member {
+    pub nick: Option<String>,
+    pub roles: Vec<Id>,
 }
 
+/// A row of the member list, as the gateway's lazy list sends it.
 #[derive(Clone, Debug)]
+pub enum ListItem {
+    Group { id: String, count: u32 },
+    Member(Id),
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Guild {
+    pub id: Id,
+    pub name: String,
+    pub icon: Option<String>,
+    pub owner: Id,
+    /// Highest position first.
+    pub roles: Vec<Role>,
+    pub members: HashMap<Id, Member>,
+    pub channels: Vec<Id>,
+    pub list: Vec<ListItem>,
+    /// The member list has been asked for.
+    pub subscribed: bool,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct Model {
-    pub me: UserId,
-    /// Where the window opens: the last server and channel used.
-    pub start: (ServerId, ChannelId),
-    pub users: Vec<User>,
-    pub servers: Vec<Server>,
-    pub channels: Vec<Channel>,
-    pub direct: Vec<DirectMessage>,
+    pub me: Id,
+    pub users: HashMap<Id, User>,
+    /// In the rail's order.
+    pub guilds: Vec<Guild>,
+    pub channels: HashMap<Id, Channel>,
+    /// Direct messages and groups.
+    pub direct: Vec<Id>,
 }
+
+const VIEW_CHANNEL: u64 = 1 << 10;
+const ADMINISTRATOR: u64 = 1 << 3;
 
 impl Model {
-    pub fn user(&self, id: UserId) -> &User {
-        &self.users[id]
+    pub fn user(&self, id: Id) -> Option<&User> {
+        self.users.get(&id)
     }
 
-    pub fn channel(&self, id: ChannelId) -> &Channel {
-        &self.channels[id]
+    pub fn channel(&self, id: Id) -> Option<&Channel> {
+        self.channels.get(&id)
+    }
+
+    pub fn guild(&self, id: Id) -> Option<&Guild> {
+        self.guilds.iter().find(|g| g.id == id)
+    }
+
+    pub fn guild_mut(&mut self, id: Id) -> Option<&mut Guild> {
+        self.guilds.iter_mut().find(|g| g.id == id)
+    }
+
+    /// The name shown on a server: the nickname, else the display name.
+    pub fn name_in(&self, guild: Option<Id>, user: Id) -> String {
+        let nick = guild
+            .and_then(|g| self.guild(g))
+            .and_then(|g| g.members.get(&user))
+            .and_then(|m| m.nick.clone());
+        nick.or_else(|| self.user(user).map(|u| u.name.clone()))
+            .unwrap_or_else(|| "Desconhecido".into())
     }
 
     /// The colour a name is drawn in on a server: its highest coloured role.
-    pub fn name_color(&self, server: Option<ServerId>, user: UserId) -> Option<Color32> {
-        let server = &self.servers[server?];
-        let member = server.members.iter().find(|m| m.user == user)?;
-        Some(server.roles[member.role?].color)
-    }
-
-    /// The first text channel of a server, to open when it is chosen.
-    pub fn first_text_channel(&self, server: ServerId) -> Option<ChannelId> {
-        let server = &self.servers[server];
-        server
-            .loose
+    pub fn name_color(&self, guild: Option<Id>, user: Id) -> Option<Color32> {
+        let guild = self.guild(guild?)?;
+        let member = guild.members.get(&user)?;
+        guild
+            .roles
             .iter()
-            .chain(server.categories.iter().flat_map(|c| c.channels.iter()))
-            .copied()
-            .find(|&id| self.channels[id].kind == ChannelKind::Text)
+            .filter(|r| member.roles.contains(&r.id))
+            .find_map(|r| r.color)
     }
 
-    pub fn sample() -> Self {
-        let mut b = Builder::default();
-        let me = b.user("Murilo", "th3rocha", 0x5865f2, Status::Online, None);
-        let ana = b.user(
-            "Ana",
-            "anabits",
-            0xeb459e,
-            Status::Online,
-            Some("Playing Hades II"),
-        );
-        let caio = b.user("Caio", "caiodev", 0x3ba55c, Status::Idle, None);
-        let bia = b.user(
-            "Bia",
-            "biaxyz",
-            0xfaa61a,
-            Status::DoNotDisturb,
-            Some("focado no TCC"),
-        );
-        let leo = b.user(
-            "Leo",
-            "leo.rs",
-            0xed4245,
-            Status::Online,
-            Some("Listening to Spotifast"),
-        );
-        let rafa = b.user("Rafa", "rafinha", 0x9b59b6, Status::Offline, None);
-        let duda = b.user("Duda", "dudinha", 0x1abc9c, Status::Offline, None);
-        let ferris = b.user(
-            "Ferris",
-            "ferris",
-            0xe67e22,
-            Status::Online,
-            Some("cargo build --release"),
-        );
+    /// The name of a direct message: the other person, or the group.
+    pub fn direct_name(&self, channel: &Channel) -> String {
+        if !channel.name.is_empty() {
+            return channel.name.clone();
+        }
+        let names: Vec<String> = channel
+            .recipients
+            .iter()
+            .filter_map(|id| self.user(*id).map(|u| u.name.clone()))
+            .collect();
+        if names.is_empty() {
+            "Grupo sem nome".into()
+        } else {
+            names.join(", ")
+        }
+    }
 
-        let general = b.channel(
-            "geral",
-            ChannelKind::Text,
-            Some("Papo livre. Seja gente boa."),
-            vec![
-                msg(ana, -70, "alguém viu o update novo do egui?"),
-                msg(leo, -68, "vi! o 0.36 ficou bem mais liso no wayland"),
-                msg(
-                    leo,
-                    -67,
-                    "e o fastframe já cuida de tray, tema e notificação",
-                ),
-                msg(caio, 545, "bom dia povo"),
-                msg(bia, 552, "bom diaaa"),
-                msg(ana, 601, "@Murilo bora testar o FastDisco hoje?"),
-                msg(me, 604, "bora, já tô com o layout pronto"),
-                msg(
-                    me,
-                    604,
-                    "servidores na esquerda, canais, chat e membros na direita, igualzinho",
-                ),
-                msg(ferris, 612, "compila em release que abre em menos de 1s 🦀"),
-                msg(leo, 615, "e sem Electron, só pra deixar registrado"),
-            ],
-        );
-        let mut mention = b.channels[general].messages[5].clone();
-        mention.mentions_me = true;
-        b.channels[general].messages[5] = mention;
-        let rules = b.channel(
-            "regras",
-            ChannelKind::Text,
-            Some("Leia antes de postar"),
-            vec![msg(
-                ferris,
-                -900,
-                "1. Respeito acima de tudo.\n2. Sem spam.\n3. Memes no canal certo.",
-            )],
-        );
-        let memes = b.channel(
-            "memes",
-            ChannelKind::Text,
-            None,
-            vec![
-                msg(caio, 400, "quando o borrow checker aceita de primeira"),
-                msg(ana, 402, "isso nunca aconteceu"),
-            ],
-        );
-        b.channels[memes].unread = true;
-        let rust = b.channel(
-            "rust",
-            ChannelKind::Text,
-            Some("Tudo sobre Rust"),
-            vec![
-                msg(ferris, 500, "alguém já usou twilight pro gateway?"),
-                msg(leo, 503, "@Murilo usou, pergunta pra ele"),
-            ],
-        );
-        b.channels[rust].unread = true;
-        b.channels[rust].mentions = 1;
-        b.channels[rust].messages[1].mentions_me = true;
-        let egui_ch = b.channel("egui", ChannelKind::Text, None, vec![]);
-        let lobby = b.channel("Lobby", ChannelKind::Voice, None, vec![]);
-        b.channels[lobby].voice = vec![ana, leo];
-        let games = b.channel("Jogando", ChannelKind::Voice, None, vec![]);
-
-        let rust_br = Server {
-            name: "Rust Brasil".into(),
-            icon: Color32::from_rgb(0xce, 0x42, 0x2b),
-            unread: true,
-            mentions: 1,
-            roles: vec![
-                Role {
-                    name: "Admin".into(),
-                    color: Color32::from_rgb(0xed, 0x42, 0x45),
-                    hoisted: true,
-                },
-                Role {
-                    name: "Rustacean".into(),
-                    color: Color32::from_rgb(0xe6, 0x7e, 0x22),
-                    hoisted: true,
-                },
-                Role {
-                    name: "Membro".into(),
-                    color: Color32::from_rgb(0x34, 0x98, 0xdb),
-                    hoisted: false,
-                },
-            ],
-            members: vec![
-                Member {
-                    user: ferris,
-                    role: Some(0),
-                },
-                Member {
-                    user: me,
-                    role: Some(1),
-                },
-                Member {
-                    user: leo,
-                    role: Some(1),
-                },
-                Member {
-                    user: ana,
-                    role: Some(2),
-                },
-                Member {
-                    user: caio,
-                    role: None,
-                },
-                Member {
-                    user: bia,
-                    role: Some(2),
-                },
-                Member {
-                    user: rafa,
-                    role: Some(1),
-                },
-                Member {
-                    user: duda,
-                    role: None,
-                },
-            ],
-            loose: vec![rules],
-            categories: vec![
-                Category {
-                    name: "Canais de texto".into(),
-                    channels: vec![general, memes, rust, egui_ch],
-                },
-                Category {
-                    name: "Canais de voz".into(),
-                    channels: vec![lobby, games],
-                },
-            ],
+    /// Whether the user may see a channel: the guild's roles, then the
+    /// channel's overwrites for @everyone, the roles and the member.
+    pub fn can_view(&self, channel: &Channel) -> bool {
+        let Some(guild) = channel.guild.and_then(|g| self.guild(g)) else {
+            return true;
         };
-
-        let mut servers = vec![rust_br];
-        for (name, color, unread) in [
-            ("Omarchy", 0x2f3136, false),
-            ("Linux Gamers", 0x5865f2, true),
-            ("Faculdade", 0x3ba55c, false),
-            ("Tauri Devs", 0x24c8db, false),
-        ] {
-            let general = b.channel("geral", ChannelKind::Text, None, vec![]);
-            let voice = b.channel("Geral", ChannelKind::Voice, None, vec![]);
-            servers.push(Server {
-                name: name.into(),
-                icon: Color32::from_rgb((color >> 16) as u8, (color >> 8) as u8, color as u8),
-                unread,
-                mentions: 0,
-                roles: vec![],
-                members: vec![Member {
-                    user: me,
-                    role: None,
-                }],
-                loose: vec![],
-                categories: vec![
-                    Category {
-                        name: "Canais de texto".into(),
-                        channels: vec![general],
-                    },
-                    Category {
-                        name: "Canais de voz".into(),
-                        channels: vec![voice],
-                    },
-                ],
-            });
+        if guild.owner == self.me {
+            return true;
         }
-
-        let dm_ana = b.channel(
-            "ana",
-            ChannelKind::Text,
-            None,
-            vec![
-                msg(ana, 590, "viu o print que te mandei?"),
-                msg(me, 592, "vi kkkk"),
-            ],
-        );
-        let dm_leo = b.channel(
-            "leo",
-            ChannelKind::Text,
-            None,
-            vec![msg(leo, 300, "manda o link do repo")],
-        );
-        let dm_bia = b.channel("bia", ChannelKind::Text, None, vec![]);
-        let direct = vec![
-            DirectMessage {
-                user: ana,
-                unread: 0,
-                channel: dm_ana,
-            },
-            DirectMessage {
-                user: leo,
-                unread: 2,
-                channel: dm_leo,
-            },
-            DirectMessage {
-                user: bia,
-                unread: 0,
-                channel: dm_bia,
-            },
-        ];
-
-        Model {
-            me,
-            start: (0, general),
-            users: b.users,
-            servers,
-            channels: b.channels,
-            direct,
+        let Some(member) = guild.members.get(&self.me) else {
+            return true;
+        };
+        let everyone = guild
+            .roles
+            .iter()
+            .find(|r| r.id == guild.id)
+            .map_or(0, |r| r.permissions);
+        let mut permissions = everyone;
+        for role in guild.roles.iter().filter(|r| member.roles.contains(&r.id)) {
+            permissions |= role.permissions;
         }
+        if permissions & ADMINISTRATOR != 0 {
+            return true;
+        }
+        if let Some(o) = channel.overwrites.iter().find(|o| o.id == guild.id) {
+            permissions = (permissions & !o.deny) | o.allow;
+        }
+        let (mut allow, mut deny) = (0, 0);
+        for o in channel
+            .overwrites
+            .iter()
+            .filter(|o| o.kind == 0 && member.roles.contains(&o.id))
+        {
+            allow |= o.allow;
+            deny |= o.deny;
+        }
+        permissions = (permissions & !deny) | allow;
+        if let Some(o) = channel
+            .overwrites
+            .iter()
+            .find(|o| o.kind == 1 && o.id == self.me)
+        {
+            permissions = (permissions & !o.deny) | o.allow;
+        }
+        permissions & VIEW_CHANNEL != 0
     }
-}
 
-fn msg(author: UserId, minute: i32, text: &str) -> Message {
-    Message {
-        author,
-        minute,
-        text: text.into(),
-        mentions_me: false,
+    /// A guild's visible channels in Discord's order: channels outside a
+    /// category, then each category with its channels; text before voice.
+    pub fn layout(&self, guild: &Guild) -> (Vec<Id>, Vec<(Id, Vec<Id>)>) {
+        let rank = |c: &Channel| (c.kind == ChannelKind::Voice, c.position, c.id);
+        let mut loose: Vec<&Channel> = Vec::new();
+        let mut categories: Vec<&Channel> = Vec::new();
+        let mut children: HashMap<Id, Vec<&Channel>> = HashMap::new();
+        for channel in guild.channels.iter().filter_map(|id| self.channel(*id)) {
+            if channel.kind == ChannelKind::Category {
+                categories.push(channel);
+            } else if !self.can_view(channel) {
+            } else if let Some(parent) = channel.parent {
+                children.entry(parent).or_default().push(channel);
+            } else {
+                loose.push(channel);
+            }
+        }
+        loose.sort_by_key(|c| rank(c));
+        categories.sort_by_key(|c| (c.position, c.id));
+        let loose = loose.into_iter().map(|c| c.id).collect();
+        let categories = categories
+            .into_iter()
+            .filter_map(|category| {
+                let mut list = children.remove(&category.id)?;
+                list.sort_by_key(|c| rank(c));
+                Some((category.id, list.into_iter().map(|c| c.id).collect()))
+            })
+            .collect();
+        (loose, categories)
     }
-}
 
-#[derive(Default)]
-struct Builder {
-    users: Vec<User>,
-    channels: Vec<Channel>,
-}
+    /// The first channel to open on a server.
+    pub fn first_text_channel(&self, guild: Id) -> Option<Id> {
+        let guild = self.guild(guild)?;
+        let (loose, categories) = self.layout(guild);
+        loose
+            .into_iter()
+            .chain(categories.into_iter().flat_map(|(_, list)| list))
+            .find(|id| self.channel(*id).is_some_and(|c| c.kind.is_textual()))
+    }
 
-impl Builder {
-    fn user(
-        &mut self,
-        name: &str,
-        username: &str,
-        avatar: u32,
-        status: Status,
-        activity: Option<&str>,
-    ) -> UserId {
-        self.users.push(User {
-            name: name.into(),
-            username: username.into(),
-            avatar: Color32::from_rgb((avatar >> 16) as u8, (avatar >> 8) as u8, avatar as u8),
-            picture: None,
-            status,
-            activity: activity.map(Into::into),
+    /// Unread dot and mention count for the rail.
+    pub fn guild_unread(&self, guild: &Guild) -> (bool, u32) {
+        guild
+            .channels
+            .iter()
+            .filter_map(|id| self.channel(*id))
+            .filter(|c| c.kind.is_textual() && self.can_view(c))
+            .fold((false, 0), |(unread, mentions), c| {
+                (unread || c.unread(), mentions + c.mentions)
+            })
+    }
+
+    /// Direct messages, the most recent conversation first.
+    pub fn sorted_direct(&self) -> Vec<Id> {
+        let mut list = self.direct.clone();
+        list.sort_by_key(|id| {
+            std::cmp::Reverse(
+                self.channel(*id)
+                    .and_then(|c| c.last_message)
+                    .unwrap_or(*id),
+            )
         });
-        self.users.len() - 1
-    }
-
-    fn channel(
-        &mut self,
-        name: &str,
-        kind: ChannelKind,
-        topic: Option<&str>,
-        messages: Vec<Message>,
-    ) -> ChannelId {
-        self.channels.push(Channel {
-            name: name.into(),
-            kind,
-            topic: topic.map(Into::into),
-            unread: false,
-            mentions: 0,
-            messages,
-            voice: vec![],
-        });
-        self.channels.len() - 1
+        list
     }
 }

@@ -26,7 +26,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     ui.add_space(12.0);
-                    let unread_dms: u32 = app.model.direct.iter().map(|dm| dm.unread).sum();
+                    let unread_dms: u32 = app
+                        .model
+                        .direct
+                        .iter()
+                        .filter_map(|id| app.model.channel(*id))
+                        .map(|c| c.mentions)
+                        .sum();
                     let home = item(
                         ui,
                         app,
@@ -53,41 +59,51 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     );
                     ui.add_space(GAP);
 
-                    for id in 0..app.model.servers.len() {
-                        let server = &app.model.servers[id];
-                        let (name, color, unread, mentions) = (
-                            server.name.clone(),
-                            server.icon,
-                            server.unread,
-                            server.mentions,
-                        );
-                        let selected = app.place == Place::Server(id);
+                    let mut open = None;
+                    for guild in &app.model.guilds {
+                        let (unread, mentions) = app.model.guild_unread(guild);
+                        let selected = app.place == Place::Server(guild.id);
+                        let icon = app.picture(guild.icon.as_deref());
                         let clicked = item(
                             ui,
                             app,
                             selected,
                             unread,
                             mentions,
-                            &name,
-                            |ui, rect, lit| {
-                                // The colour stands in for the server's icon
-                                // until icons are downloaded.
-                                ui.painter().rect_filled(rect, radius(lit), color);
-                                let text = acronym(&name);
-                                let size = if text.chars().count() > 2 { 14.0 } else { 18.0 };
-                                ui.painter().text(
-                                    rect.center(),
-                                    Align2::CENTER_CENTER,
-                                    text,
-                                    font(Weight::Medium, size),
-                                    Color32::WHITE,
-                                );
+                            &guild.name,
+                            |ui, rect, lit| match icon {
+                                Some(uri) => {
+                                    egui::Image::new(uri)
+                                        .corner_radius(radius(lit))
+                                        .paint_at(ui, rect);
+                                }
+                                None => {
+                                    let fill = if lit { palette.accent } else { palette.chat };
+                                    ui.painter().rect_filled(rect, radius(lit), fill);
+                                    let text = acronym(&guild.name);
+                                    let size = match text.chars().count() {
+                                        0..=2 => 18.0,
+                                        3 => 14.0,
+                                        _ => 11.0,
+                                    };
+                                    let tint = if lit { Color32::WHITE } else { palette.text };
+                                    ui.painter().text(
+                                        rect.center(),
+                                        Align2::CENTER_CENTER,
+                                        text,
+                                        font(Weight::Medium, size),
+                                        tint,
+                                    );
+                                }
                             },
                         );
                         if clicked {
-                            app.actions.push(Action::OpenServer(id));
+                            open = Some(guild.id);
                         }
                         ui.add_space(GAP);
+                    }
+                    if let Some(id) = open {
+                        app.actions.push(Action::OpenServer(id));
                     }
 
                     for (icon, hint) in [
@@ -170,6 +186,6 @@ fn item(
 fn acronym(name: &str) -> String {
     name.split_whitespace()
         .filter_map(|word| word.chars().next())
-        .take(3)
+        .take(5)
         .collect()
 }

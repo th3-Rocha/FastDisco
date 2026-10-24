@@ -17,7 +17,7 @@ pub fn show(app: &App, stats: &Stats, ui: &Ui) {
     let (frame_avg, frame_max) = stats.frame_ms();
     let textures = ctx.tex_manager().read().num_allocated();
     let uptime = stats.uptime().as_secs();
-    let messages: usize = app.model.channels.iter().map(|c| c.messages.len()).sum();
+    let messages: usize = app.model.channels.values().map(|c| c.messages.len()).sum();
 
     egui::Area::new(egui::Id::new("stats-overlay"))
         .order(egui::Order::Foreground)
@@ -95,7 +95,7 @@ pub fn show(app: &App, stats: &Stats, ui: &Ui) {
                             row(ui, "Threads", process.threads.to_string(), white);
                             row(ui, "Núcleos", process.cores.to_string(), white);
                             row(ui, "Texturas", textures.to_string(), white);
-                            row(ui, "Servidores", app.model.servers.len().to_string(), white);
+                            row(ui, "Servidores", app.model.guilds.len().to_string(), white);
                             row(ui, "Canais", app.model.channels.len().to_string(), white);
                             row(ui, "Mensagens", messages.to_string(), white);
                             row(

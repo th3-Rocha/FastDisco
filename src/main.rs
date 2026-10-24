@@ -8,6 +8,7 @@ mod login;
 mod model;
 mod session;
 mod stats;
+mod text;
 mod theme;
 mod ui;
 
@@ -52,6 +53,8 @@ fn setup(ctx: &egui::Context) {
 }
 
 fn main() -> anyhow::Result<()> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("fastdisco=info"))
+        .init();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("FastDisco")
@@ -66,7 +69,7 @@ fn main() -> anyhow::Result<()> {
         Box::new(|cc| {
             setup(&cc.egui_ctx);
             Ok(Box::new(Shell {
-                app: App::new(&cc.egui_ctx, model::Model::sample()),
+                app: App::new(&cc.egui_ctx),
                 stats: stats::Stats::start(),
             }))
         }),

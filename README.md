@@ -11,8 +11,8 @@ the left, channels beside it with your user panel at the foot, the
 conversation in the middle and the member list on the right. Every button
 sits where Discord users expect it.
 
-> **Status:** early development. Login works against Discord; servers and
-> messages still come from sample data until the gateway lands.
+> **Status:** early development. Login, servers, channels, direct messages
+> and chatting work against Discord.
 
 Signing in with email and password from outside a browser usually makes
 Discord ask for an hCaptcha, which FastDisco cannot show. Use the QR code
@@ -36,11 +36,12 @@ cargo run
 - [x] Unread dots, mention badges, collapsible categories, mute and deafen
 - [x] Sending a message shows it at once
 - [x] Login: QR code from the phone app, email and password with two-factor code, or token; the token is kept in the OS keyring
-- [ ] Gateway: servers, channels, members and presence
-- [ ] Message history and sending through the REST API
-- [ ] Direct messages
+- [x] Gateway: servers, channels, unread state, member list and presence, with heartbeat, resume and reconnect
+- [x] Message history, live messages, edits and deletions, sending with optimistic display
+- [x] Direct messages and groups
 - [ ] Notifications and tray
-- [ ] Avatars and server icons
+- [x] Avatars and server icons
+- [x] F12 performance overlay (FPS, frame time, RAM, CPU, threads)
 
 ## License
 
