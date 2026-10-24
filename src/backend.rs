@@ -31,13 +31,35 @@ pub enum Command {
     },
     StartQr,
     Logout,
-    /// The newest messages of a channel.
-    LoadMessages(u64),
+    /// The newest messages of a channel, or those before a message.
+    LoadMessages {
+        channel: u64,
+        before: Option<u64>,
+    },
     Send {
         channel: u64,
-        content: String,
-        nonce: String,
+        message: rest::Outgoing,
     },
+    Edit {
+        channel: u64,
+        message: u64,
+        content: String,
+    },
+    Delete {
+        channel: u64,
+        message: u64,
+    },
+    React {
+        channel: u64,
+        message: u64,
+        emoji: String,
+        add: bool,
+    },
+    Typing(u64),
+    /// Trending GIFs, or a search.
+    Gifs(Option<String>),
+    /// The system's file picker, for files to send.
+    PickFiles,
     Ack {
         channel: u64,
         message: u64,
@@ -81,16 +103,25 @@ pub enum Event {
     Messages {
         channel: u64,
         list: Vec<Value>,
+        older: bool,
     },
     SendFailed {
         channel: u64,
         nonce: String,
+        reason: String,
     },
-    /// An image for `ctx.include_bytes`.
+    Gifs {
+        query: Option<String>,
+        list: Vec<rest::Gif>,
+    },
+    FilesPicked(Vec<std::path::PathBuf>),
+    /// A downloaded picture, `ext` from its content type.
     Image {
-        uri: String,
+        url: String,
         bytes: Vec<u8>,
+        ext: &'static str,
     },
+    ImageFailed(String),
 }
 
 pub struct Backend {
@@ -250,37 +281,96 @@ impl Worker {
                     qr.clone(),
                 )));
             }
-            Command::LoadMessages(channel) => {
-                let Some(token) = self.token.clone() else {
-                    return;
-                };
-                let (client, events, ctx) =
-                    (self.client.clone(), self.events.clone(), self.ctx.clone());
-                tokio::spawn(async move {
-                    match rest::messages(&client, &token, channel).await {
+            Command::LoadMessages { channel, before } => {
+                self.spawn(move |client, token, events| async move {
+                    match rest::messages(&client, &token, channel, before).await {
                         Ok(list) => {
-                            let _ = events.send(Event::Messages { channel, list });
-                            ctx.request_repaint();
+                            let _ = events.send(Event::Messages {
+                                channel,
+                                list,
+                                older: before.is_some(),
+                            });
                         }
                         Err(error) => log::warn!("history of {channel}: {error}"),
                     }
                 });
             }
-            Command::Send {
+            Command::Send { channel, message } => {
+                self.spawn(move |client, token, events| async move {
+                    let nonce = message.nonce.clone();
+                    if let Err(reason) = rest::send(&client, &token, channel, message).await {
+                        log::warn!("send to {channel}: {reason}");
+                        let _ = events.send(Event::SendFailed {
+                            channel,
+                            nonce,
+                            reason,
+                        });
+                    }
+                });
+            }
+            Command::Edit {
                 channel,
+                message,
                 content,
-                nonce,
             } => {
-                let Some(token) = self.token.clone() else {
-                    return;
-                };
-                let (client, events, ctx) =
-                    (self.client.clone(), self.events.clone(), self.ctx.clone());
-                tokio::spawn(async move {
-                    if let Err(error) = rest::send(&client, &token, channel, &content, &nonce).await
+                self.spawn(move |client, token, _| async move {
+                    if let Err(error) =
+                        rest::edit(&client, &token, channel, message, &content).await
                     {
-                        log::warn!("send to {channel}: {error}");
-                        let _ = events.send(Event::SendFailed { channel, nonce });
+                        log::warn!("edit {message}: {error}");
+                    }
+                });
+            }
+            Command::Delete { channel, message } => {
+                self.spawn(move |client, token, _| async move {
+                    if let Err(error) = rest::delete(&client, &token, channel, message).await {
+                        log::warn!("delete {message}: {error}");
+                    }
+                });
+            }
+            Command::React {
+                channel,
+                message,
+                emoji,
+                add,
+            } => {
+                self.spawn(move |client, token, _| async move {
+                    if let Err(error) =
+                        rest::react(&client, &token, channel, message, &emoji, add).await
+                    {
+                        log::warn!("reaction on {message}: {error}");
+                    }
+                });
+            }
+            Command::Typing(channel) => {
+                self.spawn(move |client, token, _| async move {
+                    rest::typing(&client, &token, channel).await
+                });
+            }
+            Command::Gifs(query) => {
+                self.spawn(move |client, token, events| async move {
+                    match rest::gifs(&client, &token, query.as_deref()).await {
+                        Ok(list) => {
+                            let _ = events.send(Event::Gifs { query, list });
+                        }
+                        Err(error) => log::warn!("gifs: {error}"),
+                    }
+                });
+            }
+            Command::PickFiles => {
+                let (events, ctx) = (self.events.clone(), self.ctx.clone());
+                tokio::spawn(async move {
+                    let picked = rfd::AsyncFileDialog::new()
+                        .set_title("Enviar arquivos")
+                        .pick_files()
+                        .await;
+                    let paths: Vec<_> = picked
+                        .into_iter()
+                        .flatten()
+                        .map(|f| f.path().to_owned())
+                        .collect();
+                    if !paths.is_empty() {
+                        let _ = events.send(Event::FilesPicked(paths));
                         ctx.request_repaint();
                     }
                 });
@@ -378,24 +468,82 @@ impl Worker {
         }
     }
 
+    /// Runs a request with the session's token; whatever it sends
+    /// repaints the window.
+    fn spawn<F, Fut>(&self, task: F)
+    where
+        F: FnOnce(reqwest::Client, String, Repaint) -> Fut,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let Some(token) = self.token.clone() else {
+            return;
+        };
+        let events = Repaint {
+            events: self.events.clone(),
+            ctx: self.ctx.clone(),
+        };
+        tokio::spawn(task(self.client.clone(), token, events));
+    }
+
     fn fetch_image(&self, url: String) {
         let client = self.client.clone();
         let events = self.events.clone();
         let ctx = self.ctx.clone();
         tokio::spawn(async move {
-            let Ok(response) = client.get(&url).send().await else {
-                return;
+            let event = match download(&client, &url).await {
+                Some((bytes, ext)) => Event::Image { url, bytes, ext },
+                None => Event::ImageFailed(url),
             };
-            let Ok(bytes) = response.bytes().await else {
-                return;
-            };
-            let _ = events.send(Event::Image {
-                uri: url,
-                bytes: bytes.to_vec(),
-            });
+            let _ = events.send(event);
             ctx.request_repaint();
         });
     }
+}
+
+/// An event sender that wakes the window.
+#[derive(Clone)]
+pub struct Repaint {
+    events: std_mpsc::Sender<Event>,
+    ctx: egui::Context,
+}
+
+impl Repaint {
+    fn send(&self, event: Event) -> Result<(), std_mpsc::SendError<Event>> {
+        let result = self.events.send(event);
+        self.ctx.request_repaint();
+        result
+    }
+}
+
+/// Pictures larger than this are not shown inline.
+const IMAGE_LIMIT: usize = 40 << 20;
+
+async fn download(client: &reqwest::Client, url: &str) -> Option<(Vec<u8>, &'static str)> {
+    let response = client.get(url).send().await.ok()?.error_for_status().ok()?;
+    let kind = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    if response
+        .content_length()
+        .is_some_and(|l| l as usize > IMAGE_LIMIT)
+    {
+        return None;
+    }
+    let bytes = response.bytes().await.ok()?;
+    let ext = match kind.as_str() {
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/jpeg" => "jpg",
+        "image/svg+xml" => "svg",
+        _ if bytes.starts_with(b"GIF8") => "gif",
+        _ if bytes.starts_with(&[0xff, 0xd8]) => "jpg",
+        _ if bytes.len() > 12 && &bytes[8..12] == b"WEBP" => "webp",
+        _ => "png",
+    };
+    Some((bytes.to_vec(), ext))
 }
 
 async fn forget() {

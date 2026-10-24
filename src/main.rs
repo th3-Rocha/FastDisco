@@ -2,9 +2,12 @@
 
 mod app;
 mod backend;
+mod chat;
 mod discord;
 mod icons;
 mod login;
+mod markdown;
+mod media;
 mod model;
 mod session;
 mod stats;

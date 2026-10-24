@@ -120,6 +120,10 @@ pub struct Channel {
     pub messages: Vec<Message>,
     /// The history has been asked for.
     pub requested: bool,
+    /// Older messages may exist before the first loaded one.
+    pub more: bool,
+    /// Older messages are on their way.
+    pub loading: bool,
     /// For direct messages and groups.
     pub recipients: Vec<Id>,
 }
@@ -140,14 +144,227 @@ pub struct Message {
     pub nonce: Option<String>,
     pub author: Id,
     pub time: jiff::Timestamp,
+    /// The raw content, markdown and all.
     pub text: String,
+    /// Discord's message type: 0 normal, 19 reply, 7 join, 6 pin, ...
+    pub kind: i64,
     pub mentions_me: bool,
     pub edited: bool,
     /// Sent but not yet confirmed.
     pub pending: bool,
     pub failed: bool,
-    /// Names of files, until attachments are drawn.
-    pub attachments: Vec<String>,
+    /// A voice message: one audio attachment with a waveform.
+    pub voice: bool,
+    pub attachments: Vec<Attachment>,
+    pub embeds: Vec<Embed>,
+    pub stickers: Vec<Sticker>,
+    pub reactions: Vec<Reaction>,
+    /// The message this one answers.
+    pub reply: Option<Reply>,
+    /// The slash command a bot answered, as "/name".
+    pub command: Option<String>,
+}
+
+impl Message {
+    pub fn plain(author: Id, time: jiff::Timestamp, text: String) -> Self {
+        Self {
+            id: 0,
+            nonce: None,
+            author,
+            time,
+            text,
+            kind: 0,
+            mentions_me: false,
+            edited: false,
+            pending: false,
+            failed: false,
+            voice: false,
+            attachments: Vec::new(),
+            embeds: Vec::new(),
+            stickers: Vec::new(),
+            reactions: Vec::new(),
+            reply: None,
+            command: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Attachment {
+    pub url: String,
+    pub proxy: String,
+    pub name: String,
+    pub size: u64,
+    pub content_type: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub spoiler: bool,
+    pub duration: Option<f32>,
+    /// A voice message's waveform: 0 to 255 per bar.
+    pub waveform: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaKind {
+    Image,
+    Gif,
+    Video,
+    Audio,
+    File,
+}
+
+impl Attachment {
+    pub fn kind(&self) -> MediaKind {
+        let lower = self.name.to_lowercase();
+        let content = self.content_type.as_deref().unwrap_or_default();
+        if content == "image/gif" || lower.ends_with(".gif") {
+            MediaKind::Gif
+        } else if content.starts_with("image/")
+            || [".png", ".jpg", ".jpeg", ".webp"]
+                .iter()
+                .any(|e| lower.ends_with(e))
+        {
+            MediaKind::Image
+        } else if content.starts_with("video/")
+            || [".mp4", ".webm", ".mov", ".mkv"]
+                .iter()
+                .any(|e| lower.ends_with(e))
+        {
+            MediaKind::Video
+        } else if content.starts_with("audio/")
+            || [".mp3", ".ogg", ".wav", ".flac", ".m4a", ".opus"]
+                .iter()
+                .any(|e| lower.ends_with(e))
+        {
+            MediaKind::Audio
+        } else {
+            MediaKind::File
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct EmbedMedia {
+    pub url: String,
+    /// Discord's media proxy, which can resize.
+    pub proxy: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct EmbedField {
+    pub name: String,
+    pub value: String,
+    pub inline: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Embed {
+    /// "rich", "image", "video", "gifv", "article", "link".
+    pub kind: String,
+    pub url: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub color: Option<egui::Color32>,
+    pub provider: Option<String>,
+    pub author: Option<String>,
+    pub author_url: Option<String>,
+    pub author_icon: Option<String>,
+    pub footer: Option<String>,
+    pub footer_icon: Option<String>,
+    pub timestamp: Option<jiff::Timestamp>,
+    pub fields: Vec<EmbedField>,
+    pub image: Option<EmbedMedia>,
+    pub thumbnail: Option<EmbedMedia>,
+    pub video: Option<EmbedMedia>,
+}
+
+impl Embed {
+    pub fn is_youtube(&self) -> bool {
+        self.provider.as_deref() == Some("YouTube")
+            || self
+                .url
+                .as_deref()
+                .is_some_and(|u| u.contains("youtube.com/") || u.contains("youtu.be/"))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Sticker {
+    pub id: Id,
+    pub name: String,
+    /// 1 PNG, 2 APNG, 3 Lottie, 4 GIF.
+    pub format: i64,
+}
+
+impl Sticker {
+    pub fn url(&self) -> Option<String> {
+        match self.format {
+            1 | 2 => Some(format!(
+                "https://media.discordapp.net/stickers/{}.png?size=160",
+                self.id
+            )),
+            4 => Some(format!(
+                "https://media.discordapp.net/stickers/{}.gif?size=160",
+                self.id
+            )),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReactionEmoji {
+    Unicode(String),
+    Custom {
+        id: Id,
+        name: String,
+        animated: bool,
+    },
+}
+
+impl ReactionEmoji {
+    /// The form the reactions endpoint takes in its path.
+    pub fn path(&self) -> String {
+        match self {
+            ReactionEmoji::Unicode(text) => percent_encode(text),
+            ReactionEmoji::Custom { id, name, .. } => format!("{name}:{id}"),
+        }
+    }
+}
+
+fn percent_encode(text: &str) -> String {
+    text.bytes().map(|b| format!("%{b:02X}")).collect()
+}
+
+#[derive(Clone, Debug)]
+pub struct Reaction {
+    pub emoji: ReactionEmoji,
+    pub count: u32,
+    pub me: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct Reply {
+    /// The quoted message, when Discord sent it along.
+    pub author: Option<Id>,
+    pub text: Option<String>,
+    pub has_media: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct CustomEmoji {
+    pub id: Id,
+    pub name: String,
+    pub animated: bool,
+}
+
+impl CustomEmoji {
+    pub fn url(id: Id, animated: bool) -> String {
+        let ext = if animated { "gif" } else { "png" };
+        format!("https://cdn.discordapp.com/emojis/{id}.{ext}?size=48")
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -176,6 +393,8 @@ pub struct Guild {
     pub list: Vec<ListItem>,
     /// The member list has been asked for.
     pub subscribed: bool,
+    pub emojis: Vec<CustomEmoji>,
+    pub stickers: Vec<Sticker>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -187,9 +406,27 @@ pub struct Model {
     pub channels: HashMap<Id, Channel>,
     /// Direct messages and groups.
     pub direct: Vec<Id>,
+    /// 0 none, 1 Nitro Classic, 2 Nitro, 3 Nitro Basic.
+    pub premium: u8,
 }
 
 const VIEW_CHANNEL: u64 = 1 << 10;
+
+impl Model {
+    /// The longest message the user may send.
+    pub fn max_message(&self) -> usize {
+        if self.premium == 2 { 4000 } else { 2000 }
+    }
+
+    /// The largest upload, in bytes, for the user's plan.
+    pub fn max_upload(&self) -> u64 {
+        match self.premium {
+            2 => 500 << 20,
+            1 | 3 => 50 << 20,
+            _ => 10 << 20,
+        }
+    }
+}
 const ADMINISTRATOR: u64 = 1 << 3;
 
 impl Model {

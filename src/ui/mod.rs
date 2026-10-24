@@ -2,8 +2,11 @@
 //! Discord's arrangement.
 
 mod chat;
+mod composer;
 mod login;
+mod message;
 pub mod overlay;
+mod player;
 mod rail;
 mod sidebar;
 mod widgets;
@@ -15,6 +18,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         Screen::Connecting => login::loading(app, ui),
         Screen::Login => login::show(app, ui),
         Screen::Main => {
+            if let Some(player) = &mut app.chat.player {
+                player.update();
+            }
+            composer::type_anywhere(app, ui.ctx());
             rail::show(app, ui);
             sidebar::show(app, ui);
             chat::show(app, ui);

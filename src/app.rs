@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use crate::backend::{Backend, Command, Connection, Event};
+use crate::chat::{Chat, ChatAction};
 use crate::discord::parse;
 use crate::login::{Login, Qr, View};
 use crate::model::{ChannelKind, Id, Message, Model, Status};
@@ -51,12 +52,15 @@ pub enum Action {
     AskLogout,
     CancelLogout,
     Logout,
+    Chat(ChatAction),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum Picture {
     Requested,
-    Loaded,
+    /// The URI egui's loaders know the bytes by.
+    Loaded(String),
+    Failed,
 }
 
 pub struct App {
@@ -78,7 +82,11 @@ pub struct App {
     /// What the user is typing, per channel.
     pub drafts: HashMap<Id, String>,
     pub actions: Vec<Action>,
+    pub chat: Chat,
+    pub ctx: egui::Context,
     pictures: RefCell<HashMap<String, Picture>>,
+    /// Numbers each loaded picture's URI.
+    loaded: u64,
 }
 
 impl App {
@@ -102,8 +110,15 @@ impl App {
             deafened: false,
             drafts: HashMap::new(),
             actions: Vec::new(),
+            chat: Chat::default(),
+            ctx: ctx.clone(),
             pictures: RefCell::new(HashMap::new()),
+            loaded: 0,
         }
+    }
+
+    pub fn backend(&self) -> &Backend {
+        &self.backend
     }
 
     pub fn server(&self) -> Option<Id> {
@@ -113,13 +128,14 @@ impl App {
         }
     }
 
-    /// The picture at `url` once it has loaded; the first ask downloads it.
-    pub fn picture<'a>(&self, url: Option<&'a str>) -> Option<&'a str> {
+    /// The picture at `url`, as a URI for `egui::Image`, once it has
+    /// loaded; the first ask downloads it.
+    pub fn picture(&self, url: Option<&str>) -> Option<String> {
         let url = url?;
         let mut pictures = self.pictures.borrow_mut();
         match pictures.get(url) {
-            Some(Picture::Loaded) => Some(url),
-            Some(Picture::Requested) => None,
+            Some(Picture::Loaded(uri)) => Some(uri.clone()),
+            Some(Picture::Requested | Picture::Failed) => None,
             None => {
                 pictures.insert(url.to_owned(), Picture::Requested);
                 self.backend.send(Command::FetchImage(url.to_owned()));
@@ -145,8 +161,21 @@ impl App {
                 Event::Connection(state) => self.connection = state,
                 Event::Ready(model) => self.ready(*model),
                 Event::Dispatch { kind, data } => self.dispatch(&kind, data),
-                Event::Messages { channel, list } => self.history(channel, &list),
-                Event::SendFailed { channel, nonce } => {
+                Event::Messages {
+                    channel,
+                    list,
+                    older: false,
+                } => self.history(channel, &list),
+                Event::Messages {
+                    channel,
+                    list,
+                    older: true,
+                } => self.older(channel, &list),
+                Event::SendFailed {
+                    channel,
+                    nonce,
+                    reason,
+                } => {
                     if let Some(message) = self.model.channels.get_mut(&channel).and_then(|c| {
                         c.messages
                             .iter_mut()
@@ -155,12 +184,26 @@ impl App {
                         message.pending = false;
                         message.failed = true;
                     }
+                    self.chat.dialog = Some(crate::chat::Dialog::Failed(reason));
                 }
-                Event::Image { uri, bytes } => {
-                    self.pictures
-                        .borrow_mut()
-                        .insert(uri.clone(), Picture::Loaded);
+                Event::Gifs { query, list } => {
+                    let current = self.chat.picker.as_ref().and_then(|p| p.searched.clone());
+                    if current.as_deref().unwrap_or_default()
+                        == query.as_deref().unwrap_or_default()
+                    {
+                        self.chat.gifs = list;
+                    }
+                }
+                Event::FilesPicked(paths) => self.apply_chat(ChatAction::AddFiles(paths)),
+                Event::Image { url, bytes, ext } => {
+                    let mut pictures = self.pictures.borrow_mut();
+                    self.loaded += 1;
+                    let uri = format!("bytes://fastdisco/{}.{ext}", self.loaded);
+                    pictures.insert(url, Picture::Loaded(uri.clone()));
                     ctx.include_bytes(uri, bytes);
+                }
+                Event::ImageFailed(url) => {
+                    self.pictures.borrow_mut().insert(url, Picture::Failed);
                 }
                 event => {
                     if self.login.handle(ctx, event) {
@@ -184,8 +227,45 @@ impl App {
                 Some(guild) => self.open_server(guild),
                 None => self.go_home(),
             }
+            self.open_named();
         } else if let Some(channel) = self.channel {
             self.open_channel(channel);
+        }
+    }
+
+    /// Development aid: `FASTDISCO_OPEN=name` opens the first text channel
+    /// whose name contains it, to check a screen without clicking there.
+    fn open_named(&mut self) {
+        let Ok(wanted) = std::env::var("FASTDISCO_OPEN") else {
+            return;
+        };
+        let wanted = crate::text::hyphens(&wanted).into_owned();
+        let found = self.model.guilds.iter().find_map(|g| {
+            g.channels
+                .iter()
+                .copied()
+                .find(|c| {
+                    self.model.channel(*c).is_some_and(|c| {
+                        c.kind.is_textual() && c.name.contains(&wanted) && self.model.can_view(c)
+                    })
+                })
+                .map(|c| (g.id, c))
+        });
+        if let Some((guild, channel)) = found {
+            self.place = Place::Server(guild);
+            self.open_channel(channel);
+        }
+        let tab = match std::env::var("FASTDISCO_PICKER").as_deref() {
+            Ok("emoji") => Some(crate::chat::PickerTab::Emoji),
+            Ok("gif") => Some(crate::chat::PickerTab::Gif),
+            Ok("sticker") => Some(crate::chat::PickerTab::Sticker),
+            _ => None,
+        };
+        if let Some(tab) = tab {
+            self.apply_chat(ChatAction::OpenPicker {
+                tab,
+                target: crate::chat::PickerTarget::Composer,
+            });
         }
     }
 
@@ -272,7 +352,8 @@ impl App {
                     }
                 }
                 Action::ToggleMembers => self.show_members = !self.show_members,
-                Action::Send => self.send(),
+                Action::Send => self.send_draft(),
+                Action::Chat(action) => self.apply_chat(action),
                 Action::ToggleMute => {
                     self.muted = !self.muted;
                     if !self.muted {
@@ -318,10 +399,19 @@ impl App {
         if !channel.kind.is_textual() {
             return;
         }
+        if self.channel != Some(id) {
+            self.chat.player = None;
+            self.chat.picker = None;
+            self.chat.editing = None;
+        }
         self.channel = Some(id);
+        self.chat.focus_composer = true;
         if !channel.requested {
             channel.requested = true;
-            self.backend.send(Command::LoadMessages(id));
+            self.backend.send(Command::LoadMessages {
+                channel: id,
+                before: None,
+            });
         }
         let guild = channel.guild;
         if let Some(guild) = guild {
@@ -353,51 +443,18 @@ impl App {
         }
     }
 
-    /// The message shows at once, greyed until the gateway echoes it.
-    fn send(&mut self) {
-        let Some(id) = self.channel else { return };
-        let Some(draft) = self.drafts.get_mut(&id) else {
-            return;
-        };
-        let text = draft.trim().to_owned();
-        if text.is_empty() {
-            return;
-        }
-        draft.clear();
-        let now = jiff::Timestamp::now();
-        let nonce = snowflake(now).to_string();
-        if let Some(channel) = self.model.channels.get_mut(&id) {
-            channel.messages.push(Message {
-                id: u64::MAX,
-                nonce: Some(nonce.clone()),
-                author: self.model.me,
-                time: now,
-                text: text.clone(),
-                mentions_me: false,
-                edited: false,
-                pending: true,
-                failed: false,
-                attachments: Vec::new(),
-            });
-        }
-        self.backend.send(Command::Send {
-            channel: id,
-            content: text,
-            nonce,
-        });
-    }
-
     fn history(&mut self, id: Id, list: &[Value]) {
         let me = self.model.me;
         let guild = self.model.channel(id).and_then(|c| c.guild);
         let mut messages: Vec<Message> = Vec::new();
         for value in list.iter().rev() {
-            self.learn_author(guild, value);
+            self.learn(guild, value);
             if let Some(m) = parse::message(value, me) {
                 messages.push(m);
             }
         }
         if let Some(channel) = self.model.channels.get_mut(&id) {
+            channel.more = list.len() >= 50;
             // Keep anything that arrived live while the history loaded.
             let newest = messages.last().map_or(0, |m| m.id);
             let live: Vec<Message> = channel
@@ -410,21 +467,6 @@ impl App {
         }
     }
 
-    /// Remembers a message's author and their roles on the server.
-    fn learn_author(&mut self, guild: Option<Id>, value: &Value) {
-        let Some(user) = parse::user(&value["author"]) else {
-            return;
-        };
-        let id = user.id;
-        self.model.users.entry(id).or_insert(user);
-        if let Some(guild) = guild
-            && value["member"].is_object()
-            && let Some(g) = self.model.guild_mut(guild)
-        {
-            g.members.insert(id, parse::member(&value["member"]));
-        }
-    }
-
     fn dispatch(&mut self, kind: &str, data: Value) {
         let me = self.model.me;
         match kind {
@@ -434,10 +476,11 @@ impl App {
                     return;
                 };
                 let guild = parse::id(&data["guild_id"]);
-                self.learn_author(guild, &data);
+                self.learn(guild, &data);
                 let Some(message) = parse::message(&data, me) else {
                     return;
                 };
+                self.stopped_typing(channel_id, message.author);
                 let open = self.channel == Some(channel_id);
                 let Some(channel) = self.model.channels.get_mut(&channel_id) else {
                     return;
@@ -472,15 +515,47 @@ impl App {
                 else {
                     return;
                 };
-                if let Some(content) = data["content"].as_str()
-                    && let Some(m) = self
-                        .model
-                        .channels
-                        .get_mut(&channel)
-                        .and_then(|c| c.messages.iter_mut().find(|m| m.id == id))
+                let guild = parse::id(&data["guild_id"]);
+                // A full message replaces ours; a partial one (embeds that
+                // just resolved) only adds what it carries.
+                let full = data["author"]
+                    .is_object()
+                    .then(|| parse::message(&data, me))
+                    .flatten();
+                if full.is_some() {
+                    self.learn(guild, &data);
+                }
+                let partial = parse::message(
+                    &serde_json::json!({
+                        "id": data["id"], "author": { "id": "0" }, "timestamp": "2015-01-01T00:00:00Z",
+                        "embeds": data["embeds"],
+                    }),
+                    me,
+                );
+                if let Some(m) = self
+                    .model
+                    .channels
+                    .get_mut(&channel)
+                    .and_then(|c| c.messages.iter_mut().find(|m| m.id == id))
                 {
-                    m.text = content.to_owned();
-                    m.edited = true;
+                    match full {
+                        Some(mut new) => {
+                            // Reactions come by their own events.
+                            new.reactions = std::mem::take(&mut m.reactions);
+                            *m = new;
+                        }
+                        None => {
+                            if let Some(content) = data["content"].as_str() {
+                                m.text = content.to_owned();
+                                m.edited = true;
+                            }
+                            if data["embeds"].is_array()
+                                && let Some(partial) = partial
+                            {
+                                m.embeds = partial.embeds;
+                            }
+                        }
+                    }
                 }
             }
             "MESSAGE_DELETE" => {
@@ -578,6 +653,10 @@ impl App {
                 }
             }
             "GUILD_MEMBER_LIST_UPDATE" => parse::member_list(&data, &mut self.model),
+            "MESSAGE_REACTION_ADD"
+            | "MESSAGE_REACTION_REMOVE"
+            | "MESSAGE_REACTION_REMOVE_ALL"
+            | "TYPING_START" => self.chat_dispatch(kind, &data),
             "SESSIONS_REPLACE" => {
                 if let Some(me) = self.model.users.get_mut(&me)
                     && let Some(first) = data.as_array().and_then(|l| l.first())
@@ -591,7 +670,7 @@ impl App {
 }
 
 /// A snowflake for now, used as a message nonce as Discord's clients do.
-fn snowflake(time: jiff::Timestamp) -> u64 {
+pub fn snowflake(time: jiff::Timestamp) -> u64 {
     const DISCORD_EPOCH: i64 = 1_420_070_400_000;
     ((time.as_millisecond() - DISCORD_EPOCH) as u64) << 22
 }

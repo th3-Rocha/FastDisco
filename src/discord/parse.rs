@@ -7,8 +7,9 @@ use serde_json::Value;
 
 use super::{CDN, avatar_url};
 use crate::model::{
-    Channel, ChannelKind, Guild, Id, ListItem, Member, Message, Model, Overwrite, Role, Status,
-    User,
+    Attachment, Channel, ChannelKind, CustomEmoji, Embed, EmbedField, EmbedMedia, Guild, Id,
+    ListItem, Member, Message, Model, Overwrite, Reaction, ReactionEmoji, Reply, Role, Status,
+    Sticker, User,
 };
 
 pub fn id(value: &Value) -> Option<Id> {
@@ -118,6 +119,8 @@ pub fn channel(value: &Value, guild: Option<Id>) -> Option<Channel> {
         mentions: 0,
         messages: Vec::new(),
         requested: false,
+        more: true,
+        loading: false,
         recipients,
     })
 }
@@ -176,6 +179,14 @@ pub fn guild(value: &Value, model: &mut Model) -> Option<Guild> {
         owner: self::id(&properties["owner_id"]).unwrap_or(0),
         roles,
         channels,
+        emojis: value["emojis"]
+            .as_array()
+            .map(|l| l.iter().filter_map(custom_emoji).collect())
+            .unwrap_or_default(),
+        stickers: value["stickers"]
+            .as_array()
+            .map(|l| l.iter().filter_map(sticker).collect())
+            .unwrap_or_default(),
         ..Default::default()
     };
     for m in value["members"].as_array().into_iter().flatten() {
@@ -194,20 +205,25 @@ pub fn message(value: &Value, me: Id) -> Option<Message> {
         || value["mentions"]
             .as_array()
             .is_some_and(|l| l.iter().any(|u| id(&u["id"]) == Some(me)));
-    let mut content = text(&value["content"]).unwrap_or_default();
-    // Mentions arrive as <@id>; show the name, as Discord does.
-    for user in value["mentions"].as_array().into_iter().flatten() {
-        if let (Some(uid), Some(u)) = (id(&user["id"]), self::user(user)) {
-            let name = text(&user["member"]["nick"]).unwrap_or(u.name);
-            content = content
-                .replace(&format!("<@{uid}>"), &format!("@{name}"))
-                .replace(&format!("<@!{uid}>"), &format!("@{name}"));
-        }
-    }
-    let attachments = value["attachments"]
-        .as_array()
-        .map(|l| l.iter().filter_map(|a| text(&a["filename"])).collect())
-        .unwrap_or_default();
+    let flags = value["flags"].as_u64().unwrap_or(0);
+    let reply = value["message_reference"]["message_id"]
+        .is_string()
+        .then(|| {
+            let quoted = &value["referenced_message"];
+            Some(Reply {
+                author: id(&quoted["author"]["id"]),
+                text: text(&quoted["content"]),
+                has_media: quoted["attachments"]
+                    .as_array()
+                    .is_some_and(|l| !l.is_empty())
+                    || quoted["embeds"].as_array().is_some_and(|l| !l.is_empty()),
+            })
+        })
+        .flatten();
+    let command = value["interaction_metadata"]["name"]
+        .as_str()
+        .or_else(|| value["interaction"]["name"].as_str())
+        .map(|name| format!("/{name}"));
     Some(Message {
         id: id(&value["id"])?,
         nonce: match &value["nonce"] {
@@ -217,12 +233,145 @@ pub fn message(value: &Value, me: Id) -> Option<Message> {
         },
         author: id(&author["id"])?,
         time,
-        text: content,
+        text: value["content"].as_str().unwrap_or_default().to_owned(),
+        kind: value["type"].as_i64().unwrap_or(0),
         mentions_me,
         edited: !value["edited_timestamp"].is_null(),
         pending: false,
         failed: false,
-        attachments,
+        voice: flags & (1 << 13) != 0,
+        attachments: value["attachments"]
+            .as_array()
+            .map(|l| l.iter().filter_map(attachment).collect())
+            .unwrap_or_default(),
+        embeds: value["embeds"]
+            .as_array()
+            .map(|l| l.iter().map(embed).collect())
+            .unwrap_or_default(),
+        stickers: value["sticker_items"]
+            .as_array()
+            .map(|l| l.iter().filter_map(sticker).collect())
+            .unwrap_or_default(),
+        reactions: value["reactions"]
+            .as_array()
+            .map(|l| l.iter().filter_map(reaction).collect())
+            .unwrap_or_default(),
+        reply,
+        command,
+    })
+}
+
+/// Everyone a message names, to learn their names.
+pub fn mentioned_users(value: &Value) -> Vec<User> {
+    value["mentions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(user)
+        .collect()
+}
+
+fn attachment(value: &Value) -> Option<Attachment> {
+    let name = value["filename"].as_str()?.to_owned();
+    let waveform = value["waveform"]
+        .as_str()
+        .and_then(|w| base64::Engine::decode(&base64::engine::general_purpose::STANDARD, w).ok())
+        .unwrap_or_default();
+    Some(Attachment {
+        url: value["url"].as_str()?.to_owned(),
+        proxy: value["proxy_url"]
+            .as_str()
+            .or(value["url"].as_str())?
+            .to_owned(),
+        spoiler: name.starts_with("SPOILER_"),
+        name,
+        size: value["size"].as_u64().unwrap_or(0),
+        content_type: text(&value["content_type"]),
+        width: value["width"].as_u64().map(|v| v as u32),
+        height: value["height"].as_u64().map(|v| v as u32),
+        duration: value["duration_secs"].as_f64().map(|v| v as f32),
+        waveform,
+    })
+}
+
+fn media(value: &Value) -> Option<EmbedMedia> {
+    Some(EmbedMedia {
+        url: value["url"].as_str()?.to_owned(),
+        proxy: text(&value["proxy_url"]),
+        width: value["width"].as_u64().map(|v| v as u32),
+        height: value["height"].as_u64().map(|v| v as u32),
+    })
+}
+
+fn embed(value: &Value) -> Embed {
+    let color = value["color"]
+        .as_u64()
+        .map(|c| Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8));
+    Embed {
+        kind: value["type"].as_str().unwrap_or("rich").to_owned(),
+        url: text(&value["url"]),
+        title: text(&value["title"]),
+        description: text(&value["description"]),
+        color,
+        provider: text(&value["provider"]["name"]),
+        author: text(&value["author"]["name"]),
+        author_url: text(&value["author"]["url"]),
+        author_icon: text(&value["author"]["proxy_icon_url"])
+            .or_else(|| text(&value["author"]["icon_url"])),
+        footer: text(&value["footer"]["text"]),
+        footer_icon: text(&value["footer"]["proxy_icon_url"])
+            .or_else(|| text(&value["footer"]["icon_url"])),
+        timestamp: value["timestamp"].as_str().and_then(|t| t.parse().ok()),
+        fields: value["fields"]
+            .as_array()
+            .map(|l| {
+                l.iter()
+                    .map(|f| EmbedField {
+                        name: f["name"].as_str().unwrap_or_default().to_owned(),
+                        value: f["value"].as_str().unwrap_or_default().to_owned(),
+                        inline: f["inline"].as_bool().unwrap_or(false),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        image: media(&value["image"]),
+        thumbnail: media(&value["thumbnail"]),
+        video: media(&value["video"]),
+    }
+}
+
+pub fn sticker(value: &Value) -> Option<Sticker> {
+    Some(Sticker {
+        id: id(&value["id"])?,
+        name: value["name"].as_str().unwrap_or_default().to_owned(),
+        format: value["format_type"].as_i64().unwrap_or(1),
+    })
+}
+
+pub fn reaction_emoji(value: &Value) -> Option<ReactionEmoji> {
+    match id(&value["id"]) {
+        Some(id) => Some(ReactionEmoji::Custom {
+            id,
+            name: value["name"].as_str().unwrap_or("emoji").to_owned(),
+            animated: value["animated"].as_bool().unwrap_or(false),
+        }),
+        None => Some(ReactionEmoji::Unicode(value["name"].as_str()?.to_owned())),
+    }
+}
+
+fn reaction(value: &Value) -> Option<Reaction> {
+    Some(Reaction {
+        emoji: reaction_emoji(&value["emoji"])?,
+        count: value["count"].as_u64().unwrap_or(1) as u32,
+        me: value["me"].as_bool().unwrap_or(false),
+    })
+}
+
+fn custom_emoji(value: &Value) -> Option<CustomEmoji> {
+    Some(CustomEmoji {
+        id: id(&value["id"])?,
+        name: value["name"].as_str()?.to_owned(),
+        animated: value["animated"].as_bool().unwrap_or(false),
     })
 }
 
@@ -232,7 +381,12 @@ pub fn ready(value: &Value) -> Model {
     if let Some(mut me) = user(&value["user"]) {
         model.me = me.id;
         // The status the user chose; "invisible" shows as offline.
-        me.status = Status::parse(value["user_settings"]["status"].as_str().unwrap_or("online"));
+        me.status = Status::parse(
+            value["user_settings"]["status"]
+                .as_str()
+                .unwrap_or("online"),
+        );
+        model.premium = value["user"]["premium_type"].as_u64().unwrap_or(0) as u8;
         model.users.insert(me.id, me);
     }
     for u in value["users"].as_array().into_iter().flatten() {

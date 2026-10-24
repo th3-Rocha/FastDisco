@@ -24,7 +24,9 @@ with the Discord phone app instead.
 
 ## Build
 
-Requires Rust 1.98+.
+Requires Rust 1.98+. Video, audio and YouTube playback use `ffmpeg`,
+`ffprobe` and `yt-dlp` when they are installed; without them the media
+opens in the browser.
 
 ```sh
 cargo run
@@ -39,6 +41,14 @@ cargo run
 - [x] Gateway: servers, channels, unread state, member list and presence, with heartbeat, resume and reconnect
 - [x] Message history, live messages, edits and deletions, sending with optimistic display
 - [x] Direct messages and groups
+- [x] Markdown: bold, italic, underline, strikethrough, code, code blocks, quotes, headings, lists, subtext, spoilers, masked links, mentions, timestamps
+- [x] Custom and Unicode emoji, jumbo emoji, emoji picker, `:shortcode:` on send
+- [x] Images, animated GIFs (Tenor and Giphy too), stickers, picture viewer
+- [x] Video, audio and voice messages played in the app; YouTube inline through yt-dlp
+- [x] Link previews and bot embeds with fields, images, thumbnails and footers
+- [x] Replies, edits, deletion, reactions, typing indicator, older history on scroll
+- [x] Sending files by picker or drag and drop, with spoilers; GIF and sticker pickers
+- [x] Discord's limits: character counter, "message too long" (send as file), upload size by plan
 - [ ] Notifications and tray
 - [x] Avatars and server icons
 - [x] F12 performance overlay (FPS, frame time, RAM, CPU, threads)
