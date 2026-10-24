@@ -33,11 +33,11 @@ impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.stats.frame(frame.info().cpu_usage);
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F12)) {
-            self.stats.visible = !self.stats.visible;
+            self.app.show_stats = !self.app.show_stats;
         }
         self.app.poll(ui.ctx());
         ui::show(&mut self.app, ui);
-        if self.stats.visible {
+        if self.app.show_stats {
             ui::overlay::show(&self.app, &self.stats, ui);
         }
         ui::pointing_hand(ui.ctx());

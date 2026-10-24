@@ -438,6 +438,13 @@ pub fn ready(value: &Value) -> Model {
                 .unwrap_or("online"),
         );
         model.premium = value["user"]["premium_type"].as_u64().unwrap_or(0) as u8;
+        let account = &value["user"];
+        model.account = crate::model::Account {
+            email: text(&account["email"]),
+            phone: text(&account["phone"]),
+            mfa: account["mfa_enabled"].as_bool().unwrap_or(false),
+            verified: account["verified"].as_bool().unwrap_or(false),
+        };
         model.users.insert(me.id, me);
     }
     for u in value["users"].as_array().into_iter().flatten() {

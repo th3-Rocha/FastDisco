@@ -388,3 +388,43 @@ pub async fn application_icon(
         "https://cdn.discordapp.com/app-icons/{application}/{icon}.png?size=128"
     ))
 }
+
+/// Changes the display name, the about me and the pronouns.
+pub async fn edit_profile(
+    client: &reqwest::Client,
+    token: &str,
+    display_name: &str,
+    bio: &str,
+    pronouns: &str,
+) -> Result<(), String> {
+    let name = client
+        .patch(format!("{API}/users/@me"))
+        .header("Authorization", token)
+        .json(&json!({ "global_name": if display_name.is_empty() { Value::Null } else { json!(display_name) } }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !name.status().is_success() {
+        let body: Value = name.json().await.unwrap_or(Value::Null);
+        return Err(body["message"]
+            .as_str()
+            .unwrap_or("Não foi possível mudar o nome.")
+            .to_owned());
+    }
+    let profile = client
+        .patch(format!("{API}/users/@me/profile"))
+        .header("Authorization", token)
+        .json(&json!({ "bio": bio, "pronouns": pronouns }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if profile.status().is_success() {
+        Ok(())
+    } else {
+        let body: Value = profile.json().await.unwrap_or(Value::Null);
+        Err(body["message"]
+            .as_str()
+            .unwrap_or("Não foi possível salvar o perfil.")
+            .to_owned())
+    }
+}

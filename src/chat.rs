@@ -224,8 +224,6 @@ pub struct Chat {
     pub card_message: HashMap<Id, String>,
     pending_direct: Option<(Id, String)>,
     pub app_icons: HashMap<Id, Option<String>>,
-    /// The profile panel beside a direct message.
-    pub dm_profile: bool,
     /// Where the unread messages began when a channel was opened, for the
     /// "new" line.
     pub unread_from: HashMap<Id, Id>,
@@ -258,11 +256,7 @@ pub struct Chat {
 
 impl Chat {
     pub fn new() -> Self {
-        // Discord shows the profile beside a direct message at first.
-        Self {
-            dm_profile: true,
-            ..Self::default()
-        }
+        Self::default()
     }
 
     /// Names of who is typing in a channel now, not counting the user.
@@ -630,7 +624,10 @@ impl App {
                     self.chat.cursor_to_end = true;
                 }
             }
-            ChatAction::ToggleDmProfile => self.chat.dm_profile = !self.chat.dm_profile,
+            ChatAction::ToggleDmProfile => {
+                self.settings.dm_profile = !self.settings.dm_profile;
+                self.save_settings();
+            }
             ChatAction::Complete { word, insert, raw } => {
                 let Some(channel) = channel else { return };
                 let draft = self.drafts.entry(channel).or_default();

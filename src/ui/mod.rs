@@ -9,6 +9,7 @@ pub mod overlay;
 mod player;
 mod profile;
 mod rail;
+mod settings;
 mod sidebar;
 mod widgets;
 
@@ -18,6 +19,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     match app.screen {
         Screen::Connecting => login::loading(app, ui),
         Screen::Login => login::show(app, ui),
+        Screen::Main if app.settings_page.is_some() => {
+            settings::show(app, ui);
+            sidebar::logout_dialog(app, ui);
+        }
         Screen::Main => {
             if let Some(player) = &mut app.chat.player {
                 player.update();

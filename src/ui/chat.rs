@@ -31,7 +31,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             };
             header(app, ui, channel);
             // Like Discord, a narrow window gives the room to the messages.
-            if app.show_members
+            if app.settings.show_members
                 && app.server().is_some()
                 && ui.available_width() >= MEMBERS_MIN_CHAT + MEMBERS_WIDTH
             {
@@ -43,7 +43,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 .filter(|c| c.kind == ChannelKind::Direct)
                 .and_then(|c| c.recipients.first().copied());
             if let Some(user) = direct
-                && app.chat.dm_profile
+                && app.settings.dm_profile
                 && ui.available_width() >= MEMBERS_MIN_CHAT + profile::PANEL_WIDTH
             {
                 app.load_profile(user);
@@ -158,7 +158,7 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
             }
 
             let right = Rect::from_min_max(pos2(buttons_left, rect.top()), rect.right_bottom());
-            let show_members = app.show_members;
+            let show_members = app.settings.show_members;
             let in_server = app.server().is_some();
             ui.scope_builder(
                 UiBuilder::new()
@@ -191,7 +191,7 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                         );
                         icon_button(ui, &palette, Icon::Threads, 24.0, false, "Tópicos");
                     } else {
-                        let shown = app.chat.dm_profile;
+                        let shown = app.settings.dm_profile;
                         let hint = if shown {
                             "Ocultar perfil do usuário"
                         } else {

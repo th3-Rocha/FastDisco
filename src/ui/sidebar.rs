@@ -517,7 +517,7 @@ fn user_panel(app: &mut App, ui: &mut Ui) {
             }
             let buttons =
                 Rect::from_min_max(pos2(rect.right() - 98.0, rect.top()), rect.right_bottom());
-            let (muted, deafened) = (app.muted, app.deafened);
+            let (muted, deafened) = (app.settings.muted, app.settings.deafened);
             ui.scope_builder(
                 egui::UiBuilder::new()
                     .max_rect(buttons)
@@ -568,9 +568,9 @@ fn user_panel(app: &mut App, ui: &mut Ui) {
                         false,
                         "Configurações de usuário",
                     );
-                    // Until the settings screen exists, its one entry: logging out.
                     if settings.clicked() {
-                        app.actions.push(Action::AskLogout);
+                        app.actions
+                            .push(Action::OpenSettings(crate::app::SettingsPage::Account));
                     }
                 },
             );

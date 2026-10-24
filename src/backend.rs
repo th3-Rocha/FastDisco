@@ -58,6 +58,14 @@ pub enum Command {
     Typing(u64),
     /// Trending GIFs, or a search.
     Gifs(Option<String>),
+    EditProfile {
+        display_name: String,
+        bio: String,
+        pronouns: String,
+    },
+    /// Starts FastDisco at login, or stops.
+    SetAutostart(bool),
+    AutostartState,
     /// A user's profile and the note about them.
     Profile {
         user: u64,
@@ -132,6 +140,8 @@ pub enum Event {
         reason: String,
     },
     GifHome(rest::GifHome),
+    ProfileSaved(Result<(), String>),
+    Autostart(Option<bool>),
     Profile {
         user: u64,
         profile: Box<crate::model::Profile>,
@@ -378,6 +388,37 @@ impl Worker {
             Command::Typing(channel) => {
                 self.spawn(move |client, token, _| async move {
                     rest::typing(&client, &token, channel).await
+                });
+            }
+            Command::EditProfile {
+                display_name,
+                bio,
+                pronouns,
+            } => {
+                self.spawn(move |client, token, events| async move {
+                    let result =
+                        rest::edit_profile(&client, &token, &display_name, &bio, &pronouns).await;
+                    let _ = events.send(Event::ProfileSaved(result));
+                });
+            }
+            Command::SetAutostart(on) => {
+                let (events, ctx) = (self.events.clone(), self.ctx.clone());
+                tokio::task::spawn_blocking(move || {
+                    let autostart = fastframe_autostart::Autostart::new("fastdisco", "FastDisco");
+                    let start = on.then_some(fastframe_autostart::Start::Window);
+                    if let Err(error) = autostart.set(start) {
+                        log::warn!("autostart: {error}");
+                    }
+                    let _ = events.send(Event::Autostart(autostart_on(&autostart)));
+                    ctx.request_repaint();
+                });
+            }
+            Command::AutostartState => {
+                let (events, ctx) = (self.events.clone(), self.ctx.clone());
+                tokio::task::spawn_blocking(move || {
+                    let autostart = fastframe_autostart::Autostart::new("fastdisco", "FastDisco");
+                    let _ = events.send(Event::Autostart(autostart_on(&autostart)));
+                    ctx.request_repaint();
                 });
             }
             Command::Profile { user, guild } => {
@@ -668,5 +709,14 @@ async fn download(client: &reqwest::Client, url: &str) -> Option<(Vec<u8>, &'sta
 async fn forget() {
     if let Ok(Err(error)) = tokio::task::spawn_blocking(session::forget).await {
         log::warn!("{error:#}");
+    }
+}
+
+/// Whether FastDisco starts at login; `None` where the desktop cannot.
+fn autostart_on(autostart: &fastframe_autostart::Autostart) -> Option<bool> {
+    match autostart.state() {
+        fastframe_autostart::State::Unsupported => None,
+        fastframe_autostart::State::Off => Some(false),
+        _ => Some(true),
     }
 }

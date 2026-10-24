@@ -507,6 +507,16 @@ pub struct Model {
     pub direct: Vec<Id>,
     /// 0 none, 1 Nitro Classic, 2 Nitro, 3 Nitro Basic.
     pub premium: u8,
+    pub account: Account,
+}
+
+/// The signed-in account's private details, from READY.
+#[derive(Clone, Debug, Default)]
+pub struct Account {
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub mfa: bool,
+    pub verified: bool,
 }
 
 const VIEW_CHANNEL: u64 = 1 << 10;

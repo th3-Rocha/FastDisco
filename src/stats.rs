@@ -26,7 +26,6 @@ pub struct Stats {
     frames: VecDeque<Instant>,
     frame_times: VecDeque<f32>,
     started: Instant,
-    pub visible: bool,
 }
 
 impl Stats {
@@ -42,7 +41,6 @@ impl Stats {
             frames: VecDeque::new(),
             frame_times: VecDeque::new(),
             started: Instant::now(),
-            visible: false,
         }
     }
 

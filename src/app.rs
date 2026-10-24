@@ -23,6 +23,40 @@ pub enum Screen {
     Main,
 }
 
+/// A page of the user settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsPage {
+    Account,
+    Profiles,
+    Appearance,
+    Accessibility,
+    Notifications,
+    Keybinds,
+    Linux,
+    Advanced,
+}
+
+/// A switch in the settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Flag {
+    Animate,
+    Embeds,
+    Notifications,
+    NotificationSound,
+    CloseToTray,
+    StartAtLogin,
+    Stats,
+}
+
+/// The profile page's fields while they are edited.
+pub struct ProfileForm {
+    pub name: String,
+    pub bio: String,
+    pub pronouns: String,
+    pub saving: bool,
+    pub message: Option<String>,
+}
+
 /// Where the user is: the home screen with direct messages, or a server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
@@ -53,6 +87,13 @@ pub enum Action {
     CancelLogout,
     Logout,
     Chat(ChatAction),
+    OpenSettings(SettingsPage),
+    CloseSettings,
+    Toggle(Flag),
+    SetTheme(crate::settings::Theme),
+    SetZoom(f32),
+    SaveProfile,
+    AskAutostart,
     MarkRead(Id),
     MarkGuildRead(Id),
     /// Alt+Up and Alt+Down: the channel above or below the open one.
@@ -80,15 +121,19 @@ pub struct App {
     /// The channel last open on each server.
     last_channel: HashMap<Id, Id>,
     pub collapsed: HashSet<Id>,
-    pub show_members: bool,
-    pub muted: bool,
-    pub deafened: bool,
     /// What the user is typing, per channel.
     pub drafts: HashMap<Id, String>,
     pub actions: Vec<Action>,
     pub chat: Chat,
     pub ctx: egui::Context,
     pub settings: crate::settings::Settings,
+    pub settings_page: Option<SettingsPage>,
+    pub profile_form: Option<ProfileForm>,
+    /// Whether FastDisco starts at login; `None` where it cannot.
+    pub autostart: Option<bool>,
+    pub autostart_asked: bool,
+    /// The F12 performance overlay.
+    pub show_stats: bool,
     files: fastframe_file::Writer,
     pub themes: fastframe_theme::Catalog<Palette>,
     pictures: RefCell<HashMap<String, Picture>>,
@@ -115,13 +160,15 @@ impl App {
             channel: None,
             last_channel: HashMap::new(),
             collapsed: HashSet::new(),
-            show_members: true,
-            muted: false,
-            deafened: false,
             drafts: HashMap::new(),
             actions: Vec::new(),
             chat: Chat::new(),
             settings: crate::settings::Settings::load(),
+            settings_page: None,
+            profile_form: None,
+            autostart: None,
+            autostart_asked: false,
+            show_stats: false,
             files: fastframe_file::Writer::new(),
             themes: fastframe_theme::Catalog::default(),
             ctx: ctx.clone(),
@@ -144,6 +191,7 @@ impl App {
             });
         self.scan_themes();
         self.apply_palette();
+        self.ctx.set_zoom_factor(self.settings.zoom);
     }
 
     fn scan_themes(&mut self) {
@@ -164,8 +212,12 @@ impl App {
 
     /// The palette the settings ask for, once the themes are listed.
     pub fn chosen_palette(&self) -> Palette {
+        self.palette_for(&self.settings.theme)
+    }
+
+    pub fn palette_for(&self, theme: &crate::settings::Theme) -> Palette {
         use crate::settings::Theme;
-        match &self.settings.theme {
+        match theme {
             Theme::System => self
                 .themes
                 .follows_omarchy()
@@ -252,6 +304,12 @@ impl App {
     /// Takes what the backend has sent since the last frame.
     pub fn poll(&mut self, ctx: &egui::Context) {
         self.poll_themes();
+        // Ctrl + and Ctrl − change the zoom too; keep the setting with it.
+        let zoom = ctx.zoom_factor();
+        if (zoom - self.settings.zoom).abs() > 0.001 {
+            self.settings.zoom = zoom;
+            self.save_settings();
+        }
         while let Ok(event) = self.backend.events.try_recv() {
             match event {
                 Event::SignedOut => {
@@ -309,6 +367,27 @@ impl App {
                     );
                 }
                 Event::DirectOpened(value) => self.direct_opened(&value),
+                Event::ProfileSaved(result) => {
+                    if let Some(form) = &mut self.profile_form {
+                        form.saving = false;
+                        form.message = Some(match &result {
+                            Ok(()) => "Salvo! Suas alterações já aparecem para todos.".into(),
+                            Err(error) => error.clone(),
+                        });
+                        if result.is_ok() {
+                            let me = self.model.me;
+                            if let Some(user) = self.model.users.get_mut(&me) {
+                                user.name = if form.name.trim().is_empty() {
+                                    user.username.clone()
+                                } else {
+                                    form.name.trim().to_owned()
+                                };
+                            }
+                            self.chat.profiles.remove(&me);
+                        }
+                    }
+                }
+                Event::Autostart(state) => self.autostart = state,
                 Event::ApplicationIcon { application, url } => {
                     self.chat.app_icons.insert(application, url);
                 }
@@ -398,6 +477,18 @@ impl App {
             })
         {
             self.go_direct(first);
+        }
+        if let Ok(page) = std::env::var("FASTDISCO_SETTINGS") {
+            self.settings_page = Some(match page.as_str() {
+                "profiles" => SettingsPage::Profiles,
+                "appearance" => SettingsPage::Appearance,
+                "accessibility" => SettingsPage::Accessibility,
+                "notifications" => SettingsPage::Notifications,
+                "keybinds" => SettingsPage::Keybinds,
+                "linux" => SettingsPage::Linux,
+                "advanced" => SettingsPage::Advanced,
+                _ => SettingsPage::Account,
+            });
         }
         if std::env::var("FASTDISCO_PROFILE").is_ok() {
             let anchor =
@@ -499,9 +590,64 @@ impl App {
                         self.collapsed.insert(id);
                     }
                 }
-                Action::ToggleMembers => self.show_members = !self.show_members,
+                Action::ToggleMembers => {
+                    self.settings.show_members = !self.settings.show_members;
+                    self.save_settings();
+                }
                 Action::Send => self.send_draft(),
                 Action::Chat(action) => self.apply_chat(action),
+                Action::OpenSettings(page) => {
+                    self.chat.popout = None;
+                    self.settings_page = Some(page);
+                }
+                Action::CloseSettings => {
+                    self.settings_page = None;
+                    self.profile_form = None;
+                    self.chat.focus_composer = true;
+                }
+                Action::Toggle(flag) => {
+                    let s = &mut self.settings;
+                    match flag {
+                        Flag::Animate => s.animate = !s.animate,
+                        Flag::Embeds => s.embeds = !s.embeds,
+                        Flag::Notifications => s.notifications = !s.notifications,
+                        Flag::NotificationSound => s.notification_sound = !s.notification_sound,
+                        Flag::CloseToTray => s.close_to_tray = !s.close_to_tray,
+                        Flag::StartAtLogin => {
+                            let on = !self.autostart.unwrap_or(false);
+                            self.autostart = Some(on);
+                            self.backend.send(Command::SetAutostart(on));
+                        }
+                        Flag::Stats => self.show_stats = !self.show_stats,
+                    }
+                    self.save_settings();
+                }
+                Action::SetTheme(theme) => {
+                    self.settings.theme = theme;
+                    self.save_settings();
+                    self.scan_themes();
+                    self.apply_palette();
+                }
+                Action::SetZoom(zoom) => {
+                    self.settings.zoom = zoom;
+                    self.ctx.set_zoom_factor(zoom);
+                    self.save_settings();
+                }
+                Action::SaveProfile => {
+                    if let Some(form) = &mut self.profile_form {
+                        form.saving = true;
+                        form.message = None;
+                        self.backend.send(Command::EditProfile {
+                            display_name: form.name.trim().to_owned(),
+                            bio: form.bio.clone(),
+                            pronouns: form.pronouns.trim().to_owned(),
+                        });
+                    }
+                }
+                Action::AskAutostart => {
+                    self.autostart_asked = true;
+                    self.backend.send(Command::AutostartState);
+                }
                 Action::MarkRead(id) => self.mark_read(id),
                 Action::MarkGuildRead(guild) => {
                     let channels = self
@@ -521,14 +667,16 @@ impl App {
                 }
                 Action::StepChannel(step) => self.step_channel(step),
                 Action::ToggleMute => {
-                    self.muted = !self.muted;
-                    if !self.muted {
-                        self.deafened = false;
+                    self.settings.muted = !self.settings.muted;
+                    if !self.settings.muted {
+                        self.settings.deafened = false;
                     }
+                    self.save_settings();
                 }
                 Action::ToggleDeafen => {
-                    self.deafened = !self.deafened;
-                    self.muted = self.deafened;
+                    self.settings.deafened = !self.settings.deafened;
+                    self.settings.muted = self.settings.deafened;
+                    self.save_settings();
                 }
             }
         }
