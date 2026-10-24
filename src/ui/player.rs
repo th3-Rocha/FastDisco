@@ -14,8 +14,6 @@ use crate::icons::Icon;
 use crate::media::{self, Player, State};
 use crate::model::Attachment;
 
-const CARD: Color32 = Color32::from_rgb(0x2b, 0x2d, 0x31);
-const BORDER: Color32 = Color32::from_rgb(0x1e, 0x1f, 0x22);
 const LINK: Color32 = Color32::from_rgb(0x00, 0xa8, 0xfc);
 
 fn active<'a>(row: &Row<'a>, key: &str) -> Option<&'a Player> {
@@ -106,7 +104,8 @@ pub fn video(
                     image.paint_at(ui, rect);
                 }
                 None => {
-                    ui.painter().rect_filled(rect, radius, CARD);
+                    ui.painter()
+                        .rect_filled(rect, radius, crate::theme::current().sidebar);
                 }
             }
             if hidden {
@@ -267,8 +266,8 @@ pub fn audio(row: &mut Row<'_>, ui: &mut Ui, file: &Attachment) {
     let palette = app.palette;
     let width = 432.0_f32.min(ui.available_width());
     Frame::new()
-        .fill(CARD)
-        .stroke(Stroke::new(1.0, BORDER))
+        .fill(crate::theme::current().sidebar)
+        .stroke(Stroke::new(1.0, crate::theme::current().divider))
         .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::same(14))
         .show(ui, |ui| {
@@ -354,7 +353,11 @@ pub fn voice(row: &mut Row<'_>, ui: &mut Ui, file: &Attachment) {
         vec2(300.0_f32.min(ui.available_width()), 48.0),
         Sense::hover(),
     );
-    ui.painter().rect_filled(rect, CornerRadius::same(24), CARD);
+    ui.painter().rect_filled(
+        rect,
+        CornerRadius::same(24),
+        crate::theme::current().sidebar,
+    );
     let player = active(row, &file.url);
     let button =
         Rect::from_center_size(pos2(rect.left() + 26.0, rect.center().y), Vec2::splat(32.0));

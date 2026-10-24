@@ -22,7 +22,6 @@ const CARD_WIDTH: f32 = 300.0;
 pub const PANEL_WIDTH: f32 = 340.0;
 const BANNER: f32 = 105.0;
 const AVATAR: f32 = 80.0;
-const SECTION: Color32 = Color32::from_rgb(0x11, 0x12, 0x14);
 
 /// The card beside what was clicked; a click elsewhere or Escape closes it.
 pub fn popout(app: &mut App, ui: &mut Ui) {
@@ -181,8 +180,11 @@ fn card(
             pos2(banner.right() - 16.0 - pill_w, banner.bottom() + 12.0),
             vec2(pill_w, size + 8.0),
         );
-        ui.painter()
-            .rect_filled(pill, CornerRadius::same(8), SECTION.gamma_multiply(0.6));
+        ui.painter().rect_filled(
+            pill,
+            CornerRadius::same(8),
+            crate::theme::current().rail.gamma_multiply(0.6),
+        );
         for (i, badge) in badges.iter().enumerate() {
             let rect = Rect::from_min_size(
                 pos2(
@@ -349,7 +351,7 @@ fn card(
                             ui.painter().rect_filled(
                                 rect,
                                 CornerRadius::same(4),
-                                SECTION.gamma_multiply(0.7),
+                                crate::theme::current().rail.gamma_multiply(0.7),
                             );
                             ui.painter().circle_filled(
                                 pos2(rect.left() + 11.0, rect.center().y),
@@ -428,7 +430,7 @@ fn activity_title(activity: &Activity) -> String {
 fn custom_status(app: &App, ui: &mut Ui, custom: &Activity) {
     let palette = app.palette;
     Frame::new()
-        .fill(SECTION.gamma_multiply(0.6))
+        .fill(crate::theme::current().rail.gamma_multiply(0.6))
         .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::symmetric(10, 6))
         .show(ui, |ui| {
@@ -469,7 +471,7 @@ fn activity_card(app: &App, ui: &mut Ui, activity: &Activity) {
     let now = jiff::Timestamp::now().as_millisecond();
     ui.add_space(4.0);
     Frame::new()
-        .fill(SECTION.gamma_multiply(0.6))
+        .fill(crate::theme::current().rail.gamma_multiply(0.6))
         .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::same(10))
         .show(ui, |ui| {

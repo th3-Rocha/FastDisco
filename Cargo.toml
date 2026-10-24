@@ -27,6 +27,12 @@ fastframe-icons = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" 
 # Colour emoji in the platform's own style, in every text through its egui
 # plugin.
 fastframe-emoji = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+# Palette files, and following the Omarchy desktop's theme live.
+fastframe-theme = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+# Settings written whole, never half, off the interface thread.
+fastframe-file = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+# The per-user config, state and cache folders.
+fastframe-dirs = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"

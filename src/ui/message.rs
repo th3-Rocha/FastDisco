@@ -23,12 +23,6 @@ use crate::model::{
 
 pub const GUTTER: f32 = 72.0;
 const LINK: Color32 = Color32::from_rgb(0x00, 0xa8, 0xfc);
-const EMBED_BG: Color32 = Color32::from_rgb(0x2b, 0x2d, 0x31);
-const CODE_BG: Color32 = Color32::from_rgb(0x2b, 0x2d, 0x31);
-const CODE_BORDER: Color32 = Color32::from_rgb(0x1e, 0x1f, 0x22);
-const SPOILER: Color32 = Color32::from_rgb(0x1e, 0x1f, 0x22);
-const MENTION_BG: Color32 = Color32::from_rgba_premultiplied(0x2c, 0x31, 0x6e, 0x4d);
-const MENTION_TEXT: Color32 = Color32::from_rgb(0xc9, 0xcd, 0xfb);
 const MEDIA_W: f32 = 400.0;
 const MEDIA_H: f32 = 300.0;
 
@@ -624,8 +618,8 @@ pub fn blocks(
             Block::Code { text: code, .. } => {
                 ui.add_space(4.0);
                 Frame::new()
-                    .fill(CODE_BG)
-                    .stroke(Stroke::new(1.0, CODE_BORDER))
+                    .fill(crate::theme::current().sidebar)
+                    .stroke(Stroke::new(1.0, crate::theme::current().divider))
                     .corner_radius(CornerRadius::same(4))
                     .inner_margin(Margin::same(8))
                     .show(ui, |ui| {
@@ -687,7 +681,11 @@ fn text(
             .is_some_and(|i| !app.chat.revealed.contains(&(message, i)));
         TextFormat {
             font_id,
-            color: if hidden { SPOILER } else { color },
+            color: if hidden {
+                crate::theme::current().rail
+            } else {
+                color
+            },
             italics: s.italic,
             underline: if s.underline {
                 Stroke::new(1.0, color)
@@ -700,11 +698,11 @@ fn text(
                 Stroke::NONE
             },
             background: if hidden {
-                SPOILER
+                crate::theme::current().rail
             } else if s.spoiler.is_some() {
                 Color32::from_white_alpha(20)
             } else if s.code {
-                CODE_BG
+                crate::theme::current().sidebar
             } else {
                 Color32::TRANSPARENT
             },
@@ -743,9 +741,9 @@ fn text(
                     &mut job,
                     &format!("@{name}"),
                     TextFormat {
-                        color: MENTION_TEXT,
-                        background: MENTION_BG,
-                        ..format(s, MENTION_TEXT)
+                        color: mention_text(),
+                        background: mention_bg(),
+                        ..format(s, mention_text())
                     },
                 );
                 targets.push((range, Target::User(*id)));
@@ -755,9 +753,9 @@ fn text(
                     &mut job,
                     word,
                     TextFormat {
-                        color: MENTION_TEXT,
-                        background: MENTION_BG,
-                        ..format(s, MENTION_TEXT)
+                        color: mention_text(),
+                        background: mention_bg(),
+                        ..format(s, mention_text())
                     },
                 );
             }
@@ -768,7 +766,7 @@ fn text(
                     .and_then(|g| g.roles.iter().find(|r| r.id == *id));
                 let name =
                     role.map_or_else(|| "@cargo-desconhecido".into(), |r| format!("@{}", r.name));
-                let color = role.and_then(|r| r.color).unwrap_or(MENTION_TEXT);
+                let color = role.and_then(|r| r.color).unwrap_or(mention_text());
                 push(
                     &mut job,
                     &name,
@@ -788,9 +786,9 @@ fn text(
                     &mut job,
                     &name,
                     TextFormat {
-                        color: MENTION_TEXT,
-                        background: MENTION_BG,
-                        ..format(s, MENTION_TEXT)
+                        color: mention_text(),
+                        background: mention_bg(),
+                        ..format(s, mention_text())
                     },
                 );
                 targets.push((range, Target::Channel(*id)));
@@ -1080,8 +1078,11 @@ fn media(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
                 egui::Image::new(uri).paint_at(ui, rect);
             }
             None => {
-                ui.painter()
-                    .rect_filled(rect, CornerRadius::same(8), EMBED_BG);
+                ui.painter().rect_filled(
+                    rect,
+                    CornerRadius::same(8),
+                    crate::theme::current().sidebar,
+                );
                 ui.painter().text(
                     rect.center(),
                     Align2::CENTER_CENTER,
@@ -1172,7 +1173,8 @@ fn picture(row: &mut Row<'_>, ui: &mut Ui, url: &str, full: &str, size: Vec2, sp
             image.paint_at(ui, rect);
         }
         None => {
-            ui.painter().rect_filled(rect, radius, EMBED_BG);
+            ui.painter()
+                .rect_filled(rect, radius, crate::theme::current().sidebar);
             paint_icon(ui, Icon::Image, rect.center(), 32.0, app.palette.muted);
         }
     }
@@ -1198,7 +1200,7 @@ pub fn spoiler_pill(ui: &Ui, rect: Rect) {
     ui.painter().text(
         pill.center(),
         Align2::CENTER_CENTER,
-        "SPOILER",
+        "crate::theme::current().rail",
         font(Weight::Bold, 12.0),
         Color32::WHITE,
     );
@@ -1219,8 +1221,8 @@ fn file_card(row: &mut Row<'_>, ui: &mut Ui, file: &Attachment, sending: bool) {
     let palette = app.palette;
     let width = 432.0_f32.min(ui.available_width());
     Frame::new()
-        .fill(EMBED_BG)
-        .stroke(Stroke::new(1.0, CODE_BORDER))
+        .fill(crate::theme::current().sidebar)
+        .stroke(Stroke::new(1.0, crate::theme::current().divider))
         .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::same(14))
         .show(ui, |ui| {
@@ -1290,7 +1292,8 @@ fn looping(row: &mut Row<'_>, ui: &mut Ui, video: &str, poster: Option<&str>, si
                     .paint_at(ui, rect);
             }
             None => {
-                ui.painter().rect_filled(rect, radius, EMBED_BG);
+                ui.painter()
+                    .rect_filled(rect, radius, crate::theme::current().sidebar);
             }
         },
     }
@@ -1342,13 +1345,13 @@ fn embed(row: &mut Row<'_>, ui: &mut Ui, embed: &Embed) {
     let bar = embed.color.unwrap_or(if embed.is_youtube() {
         Color32::from_rgb(0xff, 0x00, 0x00)
     } else {
-        CODE_BORDER
+        crate::theme::current().divider
     });
     let has_large = embed.image.is_some() || embed.video.is_some();
     let width = if has_large { 432.0_f32 } else { 520.0 }.min(ui.available_width());
     let start = ui.cursor().min;
     let response = Frame::new()
-        .fill(EMBED_BG)
+        .fill(crate::theme::current().sidebar)
         .corner_radius(CornerRadius::same(4))
         .inner_margin(Margin {
             left: 16,
@@ -1587,7 +1590,7 @@ fn reactions(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
                 count,
                 font(Weight::Medium, 14.0),
                 if reaction.me {
-                    MENTION_TEXT
+                    mention_text()
                 } else {
                     palette.text
                 },
@@ -1597,7 +1600,7 @@ fn reactions(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
             let fill = if reaction.me {
                 Color32::from_rgba_unmultiplied(0x58, 0x65, 0xf2, 0x26)
             } else {
-                EMBED_BG
+                crate::theme::current().sidebar
             };
             ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
             let border = if reaction.me {
@@ -1634,7 +1637,7 @@ fn reactions(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
                 }
             }
             let color = if reaction.me {
-                MENTION_TEXT
+                mention_text()
             } else {
                 palette.text
             };
@@ -1658,7 +1661,7 @@ fn reactions(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
         let (rect, response) = ui.allocate_exact_size(vec2(32.0, 26.0), Sense::click());
         if response.hovered() || ui.rect_contains_pointer(ui.min_rect()) {
             ui.painter()
-                .rect_filled(rect, CornerRadius::same(8), EMBED_BG);
+                .rect_filled(rect, CornerRadius::same(8), crate::theme::current().sidebar);
             paint_icon(ui, Icon::ReactAdd, rect.center(), 16.0, palette.icon);
         }
         if response.clicked() {
@@ -1770,4 +1773,16 @@ fn toolbar(row: &mut Row<'_>, ui: &mut Ui, message: &Message, rect: Rect) {
         }
         x += size;
     }
+}
+
+/// A mention's tint: the accent, see-through.
+fn mention_bg() -> Color32 {
+    let a = crate::theme::current().accent;
+    Color32::from_rgba_unmultiplied(a.r(), a.g(), a.b(), 0x4d)
+}
+
+/// A mention's text: the accent, lightened toward the text colour.
+fn mention_text() -> Color32 {
+    let p = crate::theme::current();
+    crate::theme::mix(p.accent, p.strong, 0.6)
 }

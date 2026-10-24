@@ -88,8 +88,13 @@ pub struct App {
     pub actions: Vec<Action>,
     pub chat: Chat,
     pub ctx: egui::Context,
+    pub settings: crate::settings::Settings,
+    files: fastframe_file::Writer,
+    pub themes: fastframe_theme::Catalog<Palette>,
     pictures: RefCell<HashMap<String, Picture>>,
     animations: RefCell<crate::animation::Animations>,
+    /// egui's own widgets have been given the palette.
+    styled: bool,
     /// Numbers each loaded picture's URI.
     loaded: u64,
 }
@@ -116,11 +121,91 @@ impl App {
             drafts: HashMap::new(),
             actions: Vec::new(),
             chat: Chat::new(),
+            settings: crate::settings::Settings::load(),
+            files: fastframe_file::Writer::new(),
+            themes: fastframe_theme::Catalog::default(),
             ctx: ctx.clone(),
             pictures: RefCell::new(HashMap::new()),
             animations: RefCell::new(crate::animation::Animations::default()),
             loaded: 0,
+            styled: false,
         }
+    }
+
+    /// Lists the palettes, Omarchy's among them on an Omarchy desktop, and
+    /// watches them for changes.
+    pub fn start_themes(&mut self) {
+        self.themes
+            .enable_desktop_themes(fastframe_theme::DesktopThemes {
+                slug: "fastdisco",
+                omarchy_template: fastframe_theme::omarchy::BASE_TEMPLATE,
+                omarchy_previous_templates: &[],
+                presets: true,
+            });
+        self.scan_themes();
+        self.apply_palette();
+    }
+
+    fn scan_themes(&mut self) {
+        let Some(dir) = crate::settings::config_dir() else {
+            return;
+        };
+        let selected = match &self.settings.theme {
+            crate::settings::Theme::File(name) => Some(name.clone()),
+            _ => None,
+        };
+        let ctx = self.ctx.clone();
+        self.themes.start(
+            dir.join("themes"),
+            selected,
+            &fastframe_theme::Waker::new(move || ctx.request_repaint()),
+        );
+    }
+
+    /// The palette the settings ask for, once the themes are listed.
+    pub fn chosen_palette(&self) -> Palette {
+        use crate::settings::Theme;
+        match &self.settings.theme {
+            Theme::System => self
+                .themes
+                .follows_omarchy()
+                .then(|| self.themes.system_theme().map(|t| t.palette))
+                .flatten()
+                .unwrap_or_else(Palette::dark),
+            Theme::Dark => Palette::dark(),
+            Theme::Light => Palette::light(),
+            Theme::File(name) => self
+                .themes
+                .find(name)
+                .map_or_else(Palette::dark, |t| t.palette),
+        }
+    }
+
+    fn apply_palette(&mut self) {
+        let palette = self.chosen_palette();
+        if palette != self.palette || !self.styled {
+            self.palette = palette;
+            self.styled = true;
+            crate::theme::apply(&self.ctx, &palette);
+        }
+    }
+
+    /// Follows changed palette files and Omarchy theme switches.
+    fn poll_themes(&mut self) {
+        if self.themes.needs_reload() {
+            self.scan_themes();
+        }
+        if self.themes.poll() {
+            self.apply_palette();
+        }
+    }
+
+    pub fn save_settings(&self) {
+        self.settings.save(&self.files);
+    }
+
+    pub fn flush_files(&self) {
+        self.files.flush(fastframe_file::FLUSH_TIMEOUT);
     }
 
     pub fn backend(&self) -> &Backend {
@@ -166,6 +251,7 @@ impl App {
 
     /// Takes what the backend has sent since the last frame.
     pub fn poll(&mut self, ctx: &egui::Context) {
+        self.poll_themes();
         while let Ok(event) = self.backend.events.try_recv() {
             match event {
                 Event::SignedOut => {

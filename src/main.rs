@@ -11,6 +11,7 @@ mod markdown;
 mod media;
 mod model;
 mod session;
+mod settings;
 mod stats;
 mod text;
 mod theme;
@@ -24,6 +25,11 @@ struct Shell {
 }
 
 impl eframe::App for Shell {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.app.save_settings();
+        self.app.flush_files();
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.stats.frame(frame.info().cpu_usage);
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F12)) {
@@ -50,28 +56,7 @@ fn setup(ctx: &egui::Context) {
     rendering.apply_to(&mut fonts);
     ctx.set_fonts(fonts);
     ctx.all_styles_mut(|style| {
-        style.visuals = egui::Visuals::dark();
         rendering.apply_to_visuals(&mut style.visuals);
-        style.visuals.selection.bg_fill = theme::Palette::dark().accent;
-        style.visuals.text_cursor.stroke.color = theme::Palette::dark().text;
-        // Discord's tooltips and menus: near-black, rounded, no border,
-        // shown at once.
-        let floating = egui::Color32::from_rgb(0x11, 0x12, 0x14);
-        style.visuals.window_fill = floating;
-        style.visuals.panel_fill = theme::Palette::dark().chat;
-        style.visuals.window_stroke = egui::Stroke::NONE;
-        style.visuals.window_corner_radius = egui::CornerRadius::same(6);
-        style.visuals.menu_corner_radius = egui::CornerRadius::same(6);
-        style.visuals.popup_shadow = egui::Shadow {
-            offset: [0, 4],
-            blur: 12,
-            spread: 0,
-            color: egui::Color32::from_black_alpha(100),
-        };
-        style.visuals.widgets.hovered.weak_bg_fill = theme::Palette::dark().accent;
-        style.visuals.widgets.hovered.bg_fill = theme::Palette::dark().accent;
-        style.visuals.widgets.hovered.fg_stroke.color = egui::Color32::WHITE;
-        style.visuals.widgets.inactive.fg_stroke.color = theme::Palette::dark().text;
         style.spacing.menu_margin = egui::Margin::same(8);
         style.spacing.button_padding = egui::vec2(8.0, 6.0);
         style.interaction.tooltip_delay = 0.0;
@@ -105,8 +90,13 @@ fn main() -> anyhow::Result<()> {
         options,
         Box::new(|cc| {
             setup(&cc.egui_ctx);
+            fastframe_file::mark_ui_thread();
             Ok(Box::new(Shell {
-                app: App::new(&cc.egui_ctx),
+                app: {
+                    let mut app = App::new(&cc.egui_ctx);
+                    app.start_themes();
+                    app
+                },
                 stats: stats::Stats::start(),
             }))
         }),
