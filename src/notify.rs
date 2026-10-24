@@ -17,13 +17,13 @@ pub struct Notifier {
     shown: Vec<Handle>,
     clicks: Sender<Id>,
     clicked: Receiver<Id>,
-    ctx: egui::Context,
+    ctx: fastframe_shell::Waker,
 }
 
 impl Notifier {
     /// Connects to the desktop's notification service off the interface
     /// thread; until then, nothing is shown.
-    pub fn start(ctx: &egui::Context) -> Self {
+    pub fn start(waker: &fastframe_shell::Waker) -> Self {
         let client = Arc::new(Mutex::new(None));
         let slot = client.clone();
         std::thread::Builder::new()
@@ -44,7 +44,7 @@ impl Notifier {
             shown: Vec::new(),
             clicks,
             clicked,
-            ctx: ctx.clone(),
+            ctx: waker.clone(),
         }
     }
 
@@ -62,7 +62,7 @@ impl Notifier {
         match client.show_with(notification, move |event| {
             if event == Event::Activated {
                 let _ = clicks.send(channel);
-                ctx.request_repaint();
+                ctx.wake();
             }
         }) {
             Ok(handle) => {

@@ -31,6 +31,10 @@ fastframe-emoji = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" 
 fastframe-theme = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Settings written whole, never half, off the interface thread.
 fastframe-file = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+# Keeps FastDisco running without a window, in the tray, and recreates
+# the window on demand (Wayland cannot hide one).
+fastframe-shell = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+fastframe-tray = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Desktop notifications for direct messages and mentions.
 fastframe-notifications = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Starting at login, through the desktop's own autostart.

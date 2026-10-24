@@ -173,7 +173,7 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn start(ctx: egui::Context) -> Self {
+    pub fn start(ctx: fastframe_shell::Waker) -> Self {
         let (commands, receiver) = mpsc::unbounded_channel();
         let (sender, events) = std_mpsc::channel();
         std::thread::Builder::new()
@@ -198,7 +198,7 @@ impl Backend {
 }
 
 struct Worker {
-    ctx: egui::Context,
+    ctx: fastframe_shell::Waker,
     events: std_mpsc::Sender<Event>,
     client: reqwest::Client,
     qr: Option<JoinHandle<()>>,
@@ -209,7 +209,7 @@ struct Worker {
 
 impl Worker {
     fn new(
-        ctx: egui::Context,
+        ctx: fastframe_shell::Waker,
         events: std_mpsc::Sender<Event>,
         gateway_events: mpsc::UnboundedSender<Incoming>,
     ) -> Self {
@@ -226,7 +226,7 @@ impl Worker {
 
     fn emit(&self, event: Event) {
         let _ = self.events.send(event);
-        self.ctx.request_repaint();
+        self.ctx.wake();
     }
 
     async fn run(
@@ -410,7 +410,7 @@ impl Worker {
                         log::warn!("autostart: {error}");
                     }
                     let _ = events.send(Event::Autostart(autostart_on(&autostart)));
-                    ctx.request_repaint();
+                    ctx.wake();
                 });
             }
             Command::AutostartState => {
@@ -418,7 +418,7 @@ impl Worker {
                 tokio::task::spawn_blocking(move || {
                     let autostart = fastframe_autostart::Autostart::new("fastdisco", "FastDisco");
                     let _ = events.send(Event::Autostart(autostart_on(&autostart)));
-                    ctx.request_repaint();
+                    ctx.wake();
                 });
             }
             Command::Profile { user, guild } => {
@@ -531,7 +531,7 @@ impl Worker {
                         .collect();
                     if !paths.is_empty() {
                         let _ = events.send(Event::FilesPicked(paths));
-                        ctx.request_repaint();
+                        ctx.wake();
                     }
                 });
             }
@@ -655,7 +655,7 @@ impl Worker {
                 None => Event::ImageFailed(url),
             };
             let _ = events.send(event);
-            ctx.request_repaint();
+            ctx.wake();
         });
     }
 }
@@ -664,13 +664,13 @@ impl Worker {
 #[derive(Clone)]
 pub struct Repaint {
     events: std_mpsc::Sender<Event>,
-    ctx: egui::Context,
+    ctx: fastframe_shell::Waker,
 }
 
 impl Repaint {
     fn send(&self, event: Event) -> Result<(), std_mpsc::SendError<Event>> {
         let result = self.events.send(event);
-        self.ctx.request_repaint();
+        self.ctx.wake();
         result
     }
 }

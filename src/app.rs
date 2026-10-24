@@ -128,6 +128,15 @@ pub struct App {
     pub ctx: egui::Context,
     pub settings: crate::settings::Settings,
     notifier: crate::notify::Notifier,
+    pub waker: fastframe_shell::Waker,
+    pub tray: Option<fastframe_tray::Tray>,
+    /// Closing the window keeps the app in the tray.
+    pub hide_intent: bool,
+    /// The tray asked for the window while there was none.
+    pub wants_show: bool,
+    pub quit_requested: bool,
+    pub window_open: bool,
+    pub stats: crate::stats::Stats,
     /// The unread count last put in the window title.
     title_count: u32,
     pub settings_page: Option<SettingsPage>,
@@ -148,8 +157,8 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(ctx: &egui::Context) -> Self {
-        let backend = Backend::start(ctx.clone());
+    pub fn new(waker: &fastframe_shell::Waker) -> Self {
+        let backend = Backend::start(waker.clone());
         backend.send(Command::Resume);
         Self {
             screen: Screen::Connecting,
@@ -167,7 +176,14 @@ impl App {
             actions: Vec::new(),
             chat: Chat::new(),
             settings: crate::settings::Settings::load(),
-            notifier: crate::notify::Notifier::start(ctx),
+            notifier: crate::notify::Notifier::start(waker),
+            waker: waker.clone(),
+            tray: crate::resident::tray(waker),
+            hide_intent: false,
+            wants_show: false,
+            quit_requested: false,
+            window_open: false,
+            stats: crate::stats::Stats::start(),
             title_count: 0,
             settings_page: None,
             profile_form: None,
@@ -176,7 +192,8 @@ impl App {
             show_stats: false,
             files: fastframe_file::Writer::new(),
             themes: fastframe_theme::Catalog::default(),
-            ctx: ctx.clone(),
+            // Replaced by each window's context in `attach`.
+            ctx: egui::Context::default(),
             pictures: RefCell::new(HashMap::new()),
             animations: RefCell::new(crate::animation::Animations::default()),
             loaded: 0,
@@ -195,8 +212,23 @@ impl App {
                 presets: true,
             });
         self.scan_themes();
+    }
+
+    /// A new window: its context, the palette and zoom on it, and the
+    /// pictures and players of the last window let go.
+    pub fn attach(&mut self, ctx: &egui::Context) {
+        self.ctx = ctx.clone();
+        self.window_open = true;
+        self.pictures.borrow_mut().clear();
+        *self.animations.borrow_mut() = crate::animation::Animations::default();
+        self.chat.player = None;
+        self.styled = false;
+        self.title_count = u32::MAX;
         self.apply_palette();
-        self.ctx.set_zoom_factor(self.settings.zoom);
+        ctx.set_zoom_factor(self.settings.zoom);
+        if let Some(tray) = &mut self.tray {
+            tray.attach();
+        }
     }
 
     fn scan_themes(&mut self) {
@@ -207,11 +239,12 @@ impl App {
             crate::settings::Theme::File(name) => Some(name.clone()),
             _ => None,
         };
-        let ctx = self.ctx.clone();
+        // An Omarchy theme switch wakes the app, window or not.
+        let waker = self.waker.clone();
         self.themes.start(
             dir.join("themes"),
             selected,
-            &fastframe_theme::Waker::new(move || ctx.request_repaint()),
+            &fastframe_theme::Waker::new(move || waker.wake()),
         );
     }
 
@@ -268,6 +301,7 @@ impl App {
                 "FastDisco".to_owned()
             };
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+            crate::resident::show_unread(self.tray.as_mut(), count);
         }
     }
 
