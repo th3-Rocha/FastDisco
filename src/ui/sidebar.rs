@@ -483,7 +483,7 @@ fn user_panel(app: &mut App, ui: &mut Ui) {
                     if ears.clicked() {
                         app.actions.push(Action::ToggleDeafen);
                     }
-                    icon_button(
+                    let settings = icon_button(
                         ui,
                         &palette,
                         Icon::Settings,
@@ -491,6 +491,10 @@ fn user_panel(app: &mut App, ui: &mut Ui) {
                         false,
                         "Configurações de usuário",
                     );
+                    // Until the settings screen exists, its one entry: logging out.
+                    if settings.clicked() {
+                        app.actions.push(Action::AskLogout);
+                    }
                 },
             );
         });
@@ -503,4 +507,95 @@ fn strike(ui: &Ui, rect: Rect, color: Color32) {
         [c + vec2(-9.0, -9.0), c + vec2(9.0, 9.0)],
         Stroke::new(2.0, color),
     );
+}
+
+/// Discord's "Log Out" confirmation.
+pub fn logout_dialog(app: &mut App, ui: &mut Ui) {
+    if !app.confirm_logout {
+        return;
+    }
+    let palette = app.palette;
+    let modal = egui::Modal::new(egui::Id::new("logout"))
+        .backdrop_color(Color32::from_black_alpha(180))
+        .frame(
+            Frame::new()
+                .fill(palette.chat)
+                .corner_radius(CornerRadius::same(8)),
+        )
+        .show(ui.ctx(), |ui| {
+            ui.set_width(440.0);
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Sair")
+                        .font(font(Weight::SemiBold, 20.0))
+                        .color(palette.strong),
+                );
+                ui.add_space(16.0);
+                ui.label(
+                    egui::RichText::new("Tem certeza que deseja sair?")
+                        .font(font(Weight::Regular, 16.0))
+                        .color(palette.text),
+                );
+                ui.add_space(8.0);
+            });
+            Frame::new()
+                .fill(palette.sidebar)
+                .corner_radius(CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: 8,
+                    se: 8,
+                })
+                .inner_margin(Margin::same(16))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+                        let (rect, out) = ui.allocate_exact_size(vec2(96.0, 38.0), Sense::click());
+                        let fill = if out.hovered() {
+                            Color32::from_rgb(0xa1, 0x28, 0x29)
+                        } else {
+                            palette.danger
+                        };
+                        ui.painter().rect_filled(rect, CornerRadius::same(3), fill);
+                        ui.painter().text(
+                            rect.center(),
+                            Align2::CENTER_CENTER,
+                            "Sair",
+                            font(Weight::Medium, 14.0),
+                            Color32::WHITE,
+                        );
+                        if out.clicked() {
+                            app.actions.push(Action::Logout);
+                        }
+                        let (rect, cancel) =
+                            ui.allocate_exact_size(vec2(96.0, 38.0), Sense::click());
+                        let text = ui.painter().layout_no_wrap(
+                            "Cancelar".into(),
+                            font(Weight::Medium, 14.0),
+                            palette.strong,
+                        );
+                        let width = text.size().x;
+                        ui.painter().galley(
+                            rect.center() - text.size() / 2.0,
+                            text,
+                            palette.strong,
+                        );
+                        if cancel.hovered() {
+                            ui.painter().hline(
+                                (rect.center().x - width / 2.0)..=(rect.center().x + width / 2.0),
+                                rect.center().y + 9.0,
+                                Stroke::new(1.0, palette.strong),
+                            );
+                        }
+                        if cancel.clicked() {
+                            app.actions.push(Action::CancelLogout);
+                        }
+                    });
+                });
+        });
+    if modal.should_close() {
+        app.actions.push(Action::CancelLogout);
+    }
 }

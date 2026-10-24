@@ -1,8 +1,12 @@
 //! FastDisco: Discord, native and fast.
 
 mod app;
+mod backend;
+mod discord;
 mod icons;
+mod login;
 mod model;
+mod session;
 mod theme;
 mod ui;
 
@@ -14,6 +18,7 @@ struct Shell {
 
 impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.app.poll(ui.ctx());
         ui::show(&mut self.app, ui);
         self.app.apply();
     }
@@ -52,7 +57,7 @@ fn main() -> anyhow::Result<()> {
         Box::new(|cc| {
             setup(&cc.egui_ctx);
             Ok(Box::new(Shell {
-                app: App::new(model::Model::sample()),
+                app: App::new(&cc.egui_ctx, model::Model::sample()),
             }))
         }),
     )

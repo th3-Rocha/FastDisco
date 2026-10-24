@@ -11,6 +11,29 @@ pub fn font(weight: Weight, size: f32) -> FontId {
     weight.font_id(size)
 }
 
+/// Inter draws U+002D as wide as a minus sign, so "Boas-vindas" gets gaps
+/// around the dash. A dash touching a letter is a hyphen: draw U+2010.
+pub fn hyphens(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('-') {
+        return text.into();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let letter = |i: Option<usize>| {
+        i.and_then(|i| chars.get(i))
+            .is_some_and(|c| c.is_alphabetic())
+    };
+    (0..chars.len())
+        .map(|i| {
+            if chars[i] == '-' && (letter(i.checked_sub(1)) || letter(Some(i + 1))) {
+                '\u{2010}'
+            } else {
+                chars[i]
+            }
+        })
+        .collect::<String>()
+        .into()
+}
+
 pub fn paint_icon(ui: &Ui, icon: Icon, center: Pos2, size: f32, tint: Color32) {
     let rect = Rect::from_center_size(center, Vec2::splat(size));
     icon.image(tint, size).paint_at(ui, rect);
@@ -61,14 +84,24 @@ pub fn avatar(
 ) {
     let painter = ui.painter();
     painter.circle_filled(center, radius, user.avatar);
-    let initial: String = user.name.chars().take(1).collect();
-    painter.text(
-        center,
-        Align2::CENTER_CENTER,
-        initial,
-        font(Weight::SemiBold, radius * 0.9),
-        Color32::WHITE,
-    );
+    match &user.picture {
+        Some(uri) => {
+            let rect = Rect::from_center_size(center, Vec2::splat(radius * 2.0));
+            egui::Image::new(uri.as_str())
+                .corner_radius(CornerRadius::same(radius as u8))
+                .paint_at(ui, rect);
+        }
+        None => {
+            let initial: String = user.name.chars().take(1).collect();
+            painter.text(
+                center,
+                Align2::CENTER_CENTER,
+                initial,
+                font(Weight::SemiBold, radius * 0.9),
+                Color32::WHITE,
+            );
+        }
+    }
     if let Some(behind) = status {
         let dot = (radius * 0.3).max(4.0);
         let at = center + vec2(radius * 0.7, radius * 0.7);

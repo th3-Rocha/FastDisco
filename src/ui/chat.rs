@@ -8,7 +8,7 @@ use egui::{
 };
 use fastframe_fonts::Weight;
 
-use super::widgets::{avatar, clock, font, icon_button, paint_icon, timestamp};
+use super::widgets::{avatar, clock, font, hyphens, icon_button, paint_icon, timestamp};
 use crate::app::{Action, App, Place};
 use crate::icons::Icon;
 use crate::model::{ChannelId, Message, Status};
@@ -356,7 +356,7 @@ fn welcome(app: &App, ui: &mut Ui, id: ChannelId, width: f32) {
                 palette.strong,
             );
             (
-                format!("Boas-vindas a #{}!", channel.name),
+                format!("Boas\u{2010}vindas a #{}!", channel.name),
                 format!("Este é o começo do canal #{}.", channel.name),
             )
         }
@@ -469,6 +469,7 @@ fn row(
 
 /// The message text, with mentions on their tinted background.
 fn rich(app: &App, text: &str, wrap: f32) -> LayoutJob {
+    let text = &*hyphens(text);
     let palette = app.palette;
     let body = TextFormat {
         font_id: font(Weight::Regular, 16.0),

@@ -4,8 +4,19 @@
 
 use std::collections::HashSet;
 
+use crate::backend::{Backend, Command, Event};
+use crate::login::{Login, Qr, View};
 use crate::model::{ChannelId, Message, Model, ServerId};
 use crate::theme::Palette;
+
+/// What fills the window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Screen {
+    /// Checking the saved token.
+    Connecting,
+    Login,
+    Main,
+}
 
 /// Where the user is: the home screen with direct messages, or a server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,9 +35,25 @@ pub enum Action {
     Send,
     ToggleMute,
     ToggleDeafen,
+    LoginSubmit,
+    MfaSubmit,
+    TokenSubmit,
+    Forgot,
+    Register,
+    ShowToken,
+    LoginBack,
+    RetryQr,
+    /// Asks before logging out.
+    AskLogout,
+    CancelLogout,
+    Logout,
 }
 
 pub struct App {
+    pub screen: Screen,
+    pub login: Login,
+    pub confirm_logout: bool,
+    backend: Backend,
     pub model: Model,
     pub palette: Palette,
     pub place: Place,
@@ -43,10 +70,16 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(model: Model) -> Self {
+    pub fn new(ctx: &egui::Context, model: Model) -> Self {
         let channels = model.channels.len();
         let servers = model.servers.len();
+        let backend = Backend::start(ctx.clone());
+        backend.send(Command::Resume);
         let mut app = Self {
+            screen: Screen::Connecting,
+            login: Login::default(),
+            confirm_logout: false,
+            backend,
             model,
             palette: Palette::dark(),
             place: Place::Home,
@@ -72,9 +105,107 @@ impl App {
         }
     }
 
+    /// Takes what the backend has sent since the last frame.
+    pub fn poll(&mut self, ctx: &egui::Context) {
+        while let Ok(event) = self.backend.events.try_recv() {
+            match event {
+                Event::SignedOut => {
+                    self.screen = Screen::Login;
+                    self.login = Login::default();
+                    self.backend.send(Command::StartQr);
+                }
+                Event::SignedIn(me) => {
+                    let user = &mut self.model.users[self.model.me];
+                    user.name = me.display_name().to_owned();
+                    user.username = me.username.clone();
+                    user.picture = me.avatar_url();
+                    self.login = Login::default();
+                    self.screen = Screen::Main;
+                }
+                Event::Image { uri, bytes } => ctx.include_bytes(uri, bytes),
+                event => {
+                    if self.login.handle(ctx, event) {
+                        self.backend.send(Command::StartQr);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn apply(&mut self) {
         for action in std::mem::take(&mut self.actions) {
             match action {
+                Action::LoginSubmit => {
+                    let login = &mut self.login;
+                    login.clear_errors();
+                    let required = "Este campo é obrigatório";
+                    if login.email.trim().is_empty() {
+                        login.login_error = Some(required.into());
+                    }
+                    if login.password.is_empty() {
+                        login.password_error = Some(required.into());
+                    }
+                    if login.login_error.is_none() && login.password_error.is_none() {
+                        login.busy = true;
+                        self.backend.send(Command::Login {
+                            login: login.email.trim().to_owned(),
+                            password: login.password.clone(),
+                        });
+                    }
+                }
+                Action::MfaSubmit => {
+                    let login = &mut self.login;
+                    login.clear_errors();
+                    if let View::Mfa { ticket } = &login.view {
+                        if login.code.trim().is_empty() {
+                            login.code_error = Some("Este campo é obrigatório".into());
+                        } else {
+                            login.busy = true;
+                            self.backend.send(Command::Mfa {
+                                ticket: ticket.clone(),
+                                code: login.code.clone(),
+                            });
+                        }
+                    }
+                }
+                Action::TokenSubmit => {
+                    let login = &mut self.login;
+                    login.clear_errors();
+                    if login.token.trim().is_empty() {
+                        login.token_error = Some("Este campo é obrigatório".into());
+                    } else {
+                        login.busy = true;
+                        self.backend
+                            .send(Command::Token(std::mem::take(&mut login.token)));
+                    }
+                }
+                Action::Forgot => {
+                    let login = &mut self.login;
+                    login.clear_errors();
+                    if login.email.trim().is_empty() {
+                        login.login_error = Some("Este campo é obrigatório".into());
+                    } else {
+                        self.backend.send(Command::Forgot {
+                            login: login.email.trim().to_owned(),
+                        });
+                    }
+                }
+                Action::Register => {
+                    let _ = open::that_detached("https://discord.com/register");
+                }
+                Action::ShowToken => self.login.go(View::Token),
+                Action::LoginBack => self.login.go(View::Form),
+                Action::RetryQr => {
+                    self.login.qr = Qr::Waiting;
+                    self.backend.send(Command::StartQr);
+                }
+                Action::AskLogout => self.confirm_logout = true,
+                Action::CancelLogout => self.confirm_logout = false,
+                Action::Logout => {
+                    self.confirm_logout = false;
+                    self.screen = Screen::Connecting;
+                    self.backend.send(Command::Logout);
+                }
                 Action::GoHome => {
                     self.place = Place::Home;
                     self.channel = self.model.direct.first().map(|dm| dm.channel);

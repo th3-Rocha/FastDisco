@@ -2,14 +2,22 @@
 //! Discord's arrangement.
 
 mod chat;
+mod login;
 mod rail;
 mod sidebar;
 mod widgets;
 
-use crate::app::App;
+use crate::app::{App, Screen};
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    rail::show(app, ui);
-    sidebar::show(app, ui);
-    chat::show(app, ui);
+    match app.screen {
+        Screen::Connecting => login::loading(app, ui),
+        Screen::Login => login::show(app, ui),
+        Screen::Main => {
+            rail::show(app, ui);
+            sidebar::show(app, ui);
+            chat::show(app, ui);
+            sidebar::logout_dialog(app, ui);
+        }
+    }
 }

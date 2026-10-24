@@ -21,6 +21,8 @@ pub struct User {
     pub username: String,
     /// The fill behind the initial, until avatars are downloaded.
     pub avatar: Color32,
+    /// The avatar picture's URI, once it is loaded.
+    pub picture: Option<String>,
     pub status: Status,
     /// "Playing ..." or a custom status, under the name in lists.
     pub activity: Option<String>,
@@ -407,6 +409,7 @@ impl Builder {
             name: name.into(),
             username: username.into(),
             avatar: Color32::from_rgb((avatar >> 16) as u8, (avatar >> 8) as u8, avatar as u8),
+            picture: None,
             status,
             activity: activity.map(Into::into),
         });
