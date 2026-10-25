@@ -1,0 +1,137 @@
+name: Release
+
+# Every push to main whose Cargo.toml version has no tag yet builds
+# FastDisco for Linux, Windows and macOS and publishes a GitHub release
+# tagged v<version>. Bumping the version is what makes a release.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: new version?
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: check
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag is already released."
+          else
+            echo "Releasing $tag."
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: version
+    if: needs.version.outputs.tag != ''
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The binary needs the glibc it was built against or newer.
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the compiler; rustup installs it on first
+      # use, then the target's standard library is added to it.
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: rustup target add ${{ matrix.target }}
+      - name: GUI build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev libdbus-1-dev clang cmake perl
+      - run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          name="fastdisco-${{ needs.version.outputs.tag }}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/fastdisco.exe" "dist/$name/"
+          else
+            cp "target/${{ matrix.target }}/release/fastdisco" "dist/$name/"
+          fi
+          cp README.md LICENSE "dist/$name/"
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cp contrib/fastdisco.desktop "dist/$name/"
+          fi
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$name.zip" "$name"
+          else
+            tar czf "$name.tar.gz" "$name"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: GitHub release
+    needs: [version, build]
+    # A platform that fails to build leaves the others still released.
+    if: ${{ !cancelled() && needs.version.outputs.tag != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release notes
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          ls dist/* >/dev/null
+          previous=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          range=${previous:+$previous..}HEAD
+          {
+            echo "## What's new"
+            echo
+            git log --no-merges --format='- %s' $range
+            echo
+            echo "> **Warning:** Discord's Terms of Service do not allow third-party clients that log in with a user account. Use FastDisco at your own risk."
+          } > notes.md
+          cat notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: FastDisco ${{ needs.version.outputs.tag }}
+          body_path: notes.md
+          files: dist/*
+          make_latest: true

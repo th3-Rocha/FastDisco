@@ -13,3 +13,9 @@
   and ZapFast.
 - Never log tokens or credentials.
 - Never use em dashes in prose.
+- The README is in English. Its Roadmap checklist says what works and what
+  is missing; tick or add items in the same commit as the change.
+- Releases are automatic: a push to main whose `Cargo.toml` version has no
+  tag publishes `v<version>`. Bump the minor version for a feature and the
+  patch for a fix, in the commit that makes the change, and run
+  `cargo check` so `Cargo.lock` follows.
