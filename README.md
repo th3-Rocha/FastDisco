@@ -29,8 +29,8 @@ Every version is built for Linux, Windows and macOS and published on the
 
 - **Arch Linux**: `yay -S fastdisco-bin` (or any other AUR helper).
 - **Ubuntu and other Linux desktops**: download
-  `FastDisco-<version>-x86_64.AppImage`, then
-  `chmod +x FastDisco-*.AppImage` and run it. Needs Ubuntu 24.04 or newer.
+  `fastdisco-<version>-x86_64.AppImage`, then
+  `chmod +x fastdisco-*.AppImage` and run it. Needs Ubuntu 24.04 or newer.
 - **Linux, by hand**: the `x86_64-unknown-linux-gnu` archive has the
   binary, the launcher entry and the icons.
 - **Windows** (x86_64) and **macOS** (Apple Silicon): unpack the archive
@@ -48,6 +48,17 @@ cargo run
 
 `scripts/install.sh` builds a release and installs it for the current
 user, with the launcher entry and icons.
+
+## Updates
+
+FastDisco checks GitHub for a newer release when it opens and once a
+day, downloads it in the background, and shows a green arrow in the
+header when it is ready; clicking it restarts into the new version, and
+a version that does not start is rolled back. Only copies that can
+replace themselves do this: the AppImage and the unpacked Linux and
+Windows archives. The AUR package updates through `yay`, and copies
+built from source are left alone. Each release's `checksums.txt` is
+signed with the key in `assets/update-public-key.hex`.
 
 ## Releases
 
@@ -159,7 +170,7 @@ everything Discord's desktop app does.
 - [x] Starting at login
 - [x] F12 performance overlay (FPS, frame time, RAM, CPU, threads)
 - [x] Automatic releases for Linux, Windows and macOS
-- [ ] Updating itself from the releases page
+- [x] Updating itself from the releases page (the AppImage, and the Linux and Windows archives; the AUR updates through yay)
 - [x] AppImage for Ubuntu and other Linux desktops
 - [x] AUR package (`fastdisco-bin`)
 - [ ] Flatpak

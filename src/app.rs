@@ -112,6 +112,10 @@ pub enum Action {
     Nav(crate::nav::NavAction),
     /// Forwarding, pins, polls, bots' components and commands.
     Interact(crate::interact::InteractAction),
+    /// Looks for a newer FastDisco now.
+    CheckUpdate,
+    /// Restarts into the downloaded update.
+    InstallUpdate,
     JoinVoice(Id),
     LeaveVoice,
     /// The call's tiles, or back to the text channel.
@@ -170,6 +174,11 @@ pub struct App {
     /// The call's tiles fill the middle instead of a text channel.
     pub call_view: bool,
     sounds: crate::sounds::Sounds,
+    /// Where updating FastDisco stands.
+    pub update: crate::updates::Status,
+    /// Given to a copy the updater just installed, to say it started.
+    pub update_receipt: Option<fastframe_update::Receipt>,
+    last_update_check: std::time::Instant,
     pub profile_form: Option<ProfileForm>,
     /// Whether FastDisco starts at login; `None` where it cannot.
     pub autostart: Option<bool>,
@@ -192,6 +201,7 @@ impl App {
     pub fn new(waker: &fastframe_shell::Waker) -> Self {
         let backend = Backend::start(waker.clone());
         backend.send(Command::Resume);
+        backend.send(Command::CheckUpdate);
         let settings = crate::settings::Settings::load();
         if settings.spellcheck {
             backend.send(Command::LoadSpeller);
@@ -230,6 +240,9 @@ impl App {
             call: None,
             call_view: false,
             sounds: crate::sounds::Sounds::default(),
+            update: crate::updates::Status::Idle,
+            update_receipt: None,
+            last_update_check: std::time::Instant::now(),
             profile_form: None,
             autostart: None,
             autostart_asked: false,
@@ -481,6 +494,16 @@ impl App {
             self.open_channel(channel);
         }
         self.update_title(ctx);
+        // The window is up: the update that started it worked.
+        if let Some(receipt) = self.update_receipt.take()
+            && let Err(error) = receipt.acknowledge()
+        {
+            log::warn!("update receipt: {error}");
+        }
+        if self.last_update_check.elapsed() >= fastframe_update::CHECK_INTERVAL {
+            self.last_update_check = std::time::Instant::now();
+            self.backend.send(Command::CheckUpdate);
+        }
         // Ctrl + and Ctrl − change the zoom too; keep the setting with it.
         let zoom = ctx.zoom_factor();
         if (zoom - self.settings.zoom).abs() > 0.001 {
@@ -529,6 +552,14 @@ impl App {
                 }
                 Event::GifHome(home) => self.chat.gif_home = Some(home),
                 Event::VoiceConnected => self.voice_connected(Ok(())),
+                Event::Update(status) => self.update = status,
+                Event::UpdateHandedOff => {
+                    // The helper installs once FastDisco is gone.
+                    self.leave_voice();
+                    self.flush_files();
+                    self.quit_requested = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
                 Event::VoiceFailed(error) => self.voice_connected(Err(error)),
                 Event::Speller(result) => match result {
                     Ok(speller) => self.speller = Some(speller),
@@ -804,6 +835,8 @@ impl App {
                         call.shared.filter.set(&self.settings);
                     }
                 }
+                Action::CheckUpdate => self.backend.send(Command::CheckUpdate),
+                Action::InstallUpdate => self.backend.send(Command::InstallUpdate),
                 Action::JoinVoice(channel) => self.join_voice(channel),
                 Action::LeaveVoice => self.leave_voice(),
                 Action::ShowCall(shown) => self.call_view = shown && self.call.is_some(),

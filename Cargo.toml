@@ -1,6 +1,6 @@
 [package]
 name = "fastdisco"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -41,6 +41,9 @@ fastframe-instance = { git = "https://github.com/crmne/fastframe", tag = "v0.14.
 fastframe-notifications = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Starting at login, through the desktop's own autostart.
 fastframe-autostart = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
+# Updating itself from GitHub releases: signed checksums, a helper that
+# swaps the executable, and going back if the new one does not start.
+fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1", features = ["reqwest"] }
 # The per-user config, state and cache folders.
 fastframe-dirs = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 serde = { version = "1", features = ["derive"] }
@@ -50,7 +53,7 @@ base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 # rustls everywhere, so the client builds without OpenSSL on every platform.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json", "gzip", "http2", "multipart", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json", "gzip", "http2", "multipart", "stream", "blocking"] }
 tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 # The QR login: Discord encrypts the nonce, the user and the token to an
 # RSA-OAEP key made for that one login.

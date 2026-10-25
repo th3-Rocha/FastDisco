@@ -127,6 +127,10 @@ pub enum Command {
     FetchImage(String),
     /// The spell checker's dictionaries, downloaded the first time.
     LoadSpeller,
+    /// Looks for a newer FastDisco and downloads it.
+    CheckUpdate,
+    /// Installs the downloaded update; FastDisco quits after.
+    InstallUpdate,
     /// Tells the gateway which voice channel the user is in, if any, and
     /// whether muted and deafened.
     VoiceState {
@@ -186,6 +190,9 @@ pub enum Event {
     GifHome(rest::GifHome),
     Speller(Result<std::sync::Arc<crate::spell::Speller>, String>),
     VoiceConnected,
+    Update(crate::updates::Status),
+    /// The helper has the update: time to quit.
+    UpdateHandedOff,
     /// The call could not connect, or dropped.
     VoiceFailed(String),
     Api {
@@ -259,6 +266,8 @@ struct Worker {
     token: Option<String>,
     gateway: Option<(JoinHandle<()>, mpsc::UnboundedSender<Outgoing>)>,
     gateway_events: mpsc::UnboundedSender<Incoming>,
+    /// A downloaded update waiting for the user.
+    update: std::sync::Arc<crate::updates::Pending>,
     /// The voice call's driver, once connected.
     call: std::sync::Arc<tokio::sync::Mutex<Option<songbird::Driver>>>,
 }
@@ -277,6 +286,7 @@ impl Worker {
             token: None,
             gateway: None,
             call: Default::default(),
+            update: Default::default(),
             gateway_events,
         }
     }
@@ -651,6 +661,22 @@ impl Worker {
                 }
             }
             Command::FetchImage(url) => self.fetch_image(url),
+            Command::CheckUpdate => {
+                let ctx = self.ctx.clone();
+                crate::updates::check(
+                    self.events.clone(),
+                    move || ctx.wake(),
+                    std::sync::Arc::clone(&self.update),
+                );
+            }
+            Command::InstallUpdate => {
+                let event = match crate::updates::install(&self.update) {
+                    Ok(()) => Event::UpdateHandedOff,
+                    Err(error) => Event::Update(crate::updates::Status::Failed(error)),
+                };
+                let _ = self.events.send(event);
+                self.ctx.wake();
+            }
             Command::VoiceState {
                 guild,
                 channel,

@@ -177,6 +177,22 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                     .layout(Layout::right_to_left(Align::Center)),
                 |ui| {
                     ui.spacing_mut().item_spacing = vec2(12.0, 0.0);
+                    // Discord's green arrow when an update is ready.
+                    if let crate::updates::Status::Ready(version) = &app.update {
+                        let hint =
+                            format!("Atualização pronta: versão {version}. Clique para reiniciar.");
+                        let (rect, response) =
+                            ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
+                        let tint = if response.hovered() {
+                            palette.online.gamma_multiply(1.2)
+                        } else {
+                            palette.online
+                        };
+                        paint_icon(ui, Icon::Download, rect.center(), 22.0, tint);
+                        if response.on_hover_text(hint).clicked() {
+                            app.actions.push(Action::InstallUpdate);
+                        }
+                    }
                     if icon_button(ui, &palette, Icon::Help, 24.0, false, "Ajuda").clicked() {
                         app.actions
                             .push(Action::Chat(crate::chat::ChatAction::OpenUrl(

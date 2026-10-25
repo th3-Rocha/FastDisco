@@ -25,6 +25,7 @@ mod stats;
 mod text;
 mod theme;
 mod ui;
+mod updates;
 mod voice;
 
 use app::App;
@@ -108,6 +109,15 @@ fn options() -> eframe::NativeOptions {
 const SLOT: &str = "io.github.th3_rocha.FastDisco";
 
 fn main() -> anyhow::Result<()> {
+    // First of all: the update helper runs here when asked
+    // (`--apply-update`) and exits, and the restarted copy learns how the
+    // update went.
+    let launch = fastframe_update::intercept(&updates::CONFIG);
+    // The updater asks a downloaded copy for its version before trusting it.
+    if launch.arguments.get(1).and_then(|a| a.to_str()) == Some("--version") {
+        println!("fastdisco {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("fastdisco=info"))
         .init();
     let slot = fastframe_instance::Slot::new(SLOT);
@@ -150,6 +160,10 @@ fn main() -> anyhow::Result<()> {
     };
     let mut app = App::new(&waker);
     app.requests = requests;
+    app.update_receipt = launch.receipt;
+    if let Some(error) = launch.error {
+        app.update = updates::Status::Failed(error);
+    }
     app.start_themes();
     fastframe_shell::Shell::new(app, &waker)
         .idle(fastframe_tray::idle)

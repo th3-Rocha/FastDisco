@@ -86,6 +86,10 @@ jobs:
             cp "target/${{ matrix.target }}/release/fastdisco" "dist/$name/"
           fi
           cp README.md LICENSE "dist/$name/"
+          # Marks an unpacked copy as one that may update itself.
+          if [ "${{ runner.os }}" != "macOS" ]; then
+            echo "fastdisco-portable-v1" > "dist/$name/fastdisco-portable.txt"
+          fi
           if [ "${{ runner.os }}" = "Linux" ]; then
             binary="target/${{ matrix.target }}/release/fastdisco"
             cp contrib/fastdisco.desktop "dist/$name/"
@@ -94,7 +98,9 @@ jobs:
               "$binary" write-icon "dist/$name/icons/$size.png" "$size"
             done
             # One file for Ubuntu and other desktops: download, chmod +x, run.
-            scripts/appimage.sh "$binary" "dist/FastDisco-${{ needs.version.outputs.tag }}-x86_64.AppImage"
+            # The name the updater looks for: no "v", the processor alone.
+            tag="${{ needs.version.outputs.tag }}"
+            scripts/appimage.sh "$binary" "dist/fastdisco-${tag#v}-x86_64.AppImage"
           fi
           cd dist
           if [ "${{ runner.os }}" = "Windows" ]; then
@@ -127,6 +133,24 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # What FastDisco's updater checks: every file's SHA-256, signed with
+      # the key whose public half is in assets/update-public-key.hex.
+      - name: Checksums
+        env:
+          SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          cd dist
+          sha256sum -- * > checksums.txt
+          cat checksums.txt
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::warning::No UPDATE_SIGNING_KEY secret: this release is not signed, and installed copies will not update to it."
+            exit 0
+          fi
+          key=$(mktemp)
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          openssl pkeyutl -sign -inkey "$key" -rawin -in checksums.txt -out checksums.txt.sig
+          rm -f "$key"
+          test "$(stat -c %s checksums.txt.sig)" = 64
       - name: Release notes
         env:
           TAG: ${{ needs.version.outputs.tag }}

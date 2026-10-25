@@ -921,6 +921,68 @@ fn linux(app: &mut App, ui: &mut Ui) {
     }
 }
 
+/// The version, where updating stands, and the buttons for it.
+fn updates(app: &mut App, ui: &mut Ui) {
+    use crate::updates::Status;
+    let palette = app.palette;
+    ui.label(
+        RichText::new(format!("FastDisco {}", env!("CARGO_PKG_VERSION")))
+            .font(font(Weight::Medium, 15.0))
+            .color(palette.strong),
+    );
+    let (text, color) = match &app.update {
+        Status::Idle => ("Ainda não verificado.".to_owned(), palette.muted),
+        Status::Checking => ("Procurando atualizações…".to_owned(), palette.muted),
+        Status::UpToDate => (
+            "Você está na versão mais recente.".to_owned(),
+            palette.online,
+        ),
+        Status::Unsupported(why) => (
+            format!("Esta cópia não se atualiza sozinha: {why}"),
+            palette.muted,
+        ),
+        Status::Downloading(version, share) => (
+            format!("Baixando a versão {version}… {:.0}%", share * 100.0),
+            palette.text,
+        ),
+        Status::Ready(version) => (
+            format!("A versão {version} está pronta. Reinicie para atualizar."),
+            palette.online,
+        ),
+        Status::Failed(error) => (format!("A atualização falhou: {error}"), palette.danger),
+    };
+    ui.label(
+        RichText::new(text)
+            .font(font(Weight::Regular, 14.0))
+            .color(color),
+    );
+    ui.horizontal(|ui| {
+        let ready = matches!(app.update, Status::Ready(_));
+        let busy = matches!(app.update, Status::Checking | Status::Downloading(..));
+        if ready {
+            let restart = egui::Button::new(
+                RichText::new("Reiniciar para atualizar")
+                    .font(font(Weight::Medium, 14.0))
+                    .color(Color32::WHITE),
+            )
+            .fill(palette.online)
+            .corner_radius(CornerRadius::same(4))
+            .min_size(vec2(180.0, 34.0));
+            if ui.add(restart).clicked() {
+                app.actions.push(Action::InstallUpdate);
+            }
+        } else if ui
+            .add_enabled(
+                !busy,
+                egui::Button::new("Verificar atualizações").min_size(vec2(180.0, 34.0)),
+            )
+            .clicked()
+        {
+            app.actions.push(Action::CheckUpdate);
+        }
+    });
+}
+
 fn advanced(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
     title(ui, &palette, "Avançado");
@@ -933,6 +995,8 @@ fn advanced(app: &mut App, ui: &mut Ui) {
         "FPS, memória, CPU e mais no canto da janela. F12 também liga e desliga.",
         overlay,
     );
+    heading(ui, &palette, "ATUALIZAÇÕES");
+    updates(app, ui);
     heading(ui, &palette, "ARQUIVOS");
     if let Some(dir) = crate::settings::config_dir() {
         ui.label(
