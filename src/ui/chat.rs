@@ -25,6 +25,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     egui::CentralPanel::default()
         .frame(Frame::new().fill(palette.chat).inner_margin(Margin::ZERO))
         .show(ui, |ui| {
+            if app.call_view && app.call.is_some() {
+                super::call::view(app, ui);
+                return;
+            }
             if super::nav::is_friends(app) {
                 super::friends::show(app, ui);
                 return;

@@ -4,6 +4,7 @@ mod admin;
 mod animation;
 mod app;
 mod backend;
+mod call;
 mod chat;
 mod discord;
 mod folders;

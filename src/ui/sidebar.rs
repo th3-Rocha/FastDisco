@@ -25,6 +25,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         )
         .show(ui, |ui| {
             user_panel(app, ui);
+            super::call::panel(app, ui);
             header(app, ui);
             egui::CentralPanel::default()
                 .frame(Frame::new().inner_margin(Margin::ZERO))
@@ -125,6 +126,7 @@ fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
     for id in loose {
         let rect = channel_row(app, ui, id, movable);
         rows.push((rect, None, Some(id), false));
+        super::call::members(app, ui, id);
     }
     for (category, list) in categories {
         ui.add_space(16.0);
@@ -181,6 +183,7 @@ fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
             }
             let rect = channel_row(app, ui, id, movable);
             rows.push((rect, Some(category), Some(id), false));
+            super::call::members(app, ui, id);
         }
     }
     ui.add_space(8.0);
@@ -358,6 +361,10 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     let textual = channel.kind.is_textual();
     if response.clicked() && textual {
         app.actions.push(Action::OpenChannel(id));
+    }
+    // A click on a voice channel joins it, as Discord.
+    if response.clicked() && channel.kind == ChannelKind::Voice {
+        app.actions.push(Action::JoinVoice(id));
     }
     let mut chosen = None;
     response.context_menu(|ui| {

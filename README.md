@@ -119,7 +119,7 @@ everything Discord's desktop app does.
 - [ ] Threads: list, open, create, reply
 - [ ] Forum and media channels
 - [ ] Stage channels
-- [ ] Voice channels: joining, speaking, mute and deafen that reach Discord
+- [x] Voice channels: joining, speaking and hearing, mute and deafen, who is talking, with Discord's DAVE end-to-end encryption
 - [ ] Video calls and screen sharing
 - [ ] Direct message calls
 - [ ] Scheduled events

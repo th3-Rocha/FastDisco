@@ -157,10 +157,10 @@ where
 /// An OGG/Opus file from mono samples at [`RATE`].
 pub fn encode(samples: &[f32]) -> Result<Vec<u8>, String> {
     use ogg::PacketWriteEndInfo::{EndPage, EndStream, NormalPacket};
-    let mut encoder = opus::Encoder::new(RATE, opus::Channels::Mono, opus::Application::Voip)
+    let mut encoder = opus2::Encoder::new(RATE, opus2::Channels::Mono, opus2::Application::Voip)
         .map_err(|e| e.to_string())?;
     encoder
-        .set_bitrate(opus::Bitrate::Bits(BITRATE))
+        .set_bitrate(opus2::Bitrate::Bits(BITRATE))
         .map_err(|e| e.to_string())?;
     let pre_skip = encoder.get_lookahead().map_err(|e| e.to_string())?.max(0) as usize;
     let serial = 0x4644_4953;

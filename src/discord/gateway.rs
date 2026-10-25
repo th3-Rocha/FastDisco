@@ -31,6 +31,14 @@ pub enum Incoming {
 pub enum Outgoing {
     /// Ask for a server's member list, as seen from a channel.
     Subscribe { guild: u64, channel: u64 },
+    /// Join a voice channel (or a direct message call when `guild` is
+    /// none), change mute and deafen, or leave with no channel.
+    Voice {
+        guild: Option<u64>,
+        channel: Option<u64>,
+        mute: bool,
+        deaf: bool,
+    },
 }
 
 struct Session {
@@ -122,6 +130,19 @@ async fn connect(
                                 "activities": true,
                                 "threads": false,
                                 "channels": { channel.to_string(): [[0, 99]] },
+                            }
+                        });
+                        send(&mut sink, payload).await?;
+                    }
+                    Some(Outgoing::Voice { guild, channel, mute, deaf }) => {
+                        let payload = json!({
+                            "op": 4,
+                            "d": {
+                                "guild_id": guild.map(|g| g.to_string()),
+                                "channel_id": channel.map(|c| c.to_string()),
+                                "self_mute": mute,
+                                "self_deaf": deaf,
+                                "self_video": false,
                             }
                         });
                         send(&mut sink, payload).await?;

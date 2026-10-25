@@ -105,6 +105,10 @@ pub enum Action {
     Nav(crate::nav::NavAction),
     /// Forwarding, pins, polls, bots' components and commands.
     Interact(crate::interact::InteractAction),
+    JoinVoice(Id),
+    LeaveVoice,
+    /// The call's tiles, or back to the text channel.
+    ShowCall(bool),
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -154,6 +158,10 @@ pub struct App {
     pub interact: crate::interact::Interact,
     /// The spell checker, once its dictionaries are loaded.
     pub speller: Option<std::sync::Arc<crate::spell::Speller>>,
+    /// The voice call the user is in.
+    pub call: Option<crate::call::Session>,
+    /// The call's tiles fill the middle instead of a text channel.
+    pub call_view: bool,
     pub profile_form: Option<ProfileForm>,
     /// Whether FastDisco starts at login; `None` where it cannot.
     pub autostart: Option<bool>,
@@ -209,6 +217,8 @@ impl App {
             nav: crate::nav::Nav::default(),
             interact: crate::interact::Interact::default(),
             speller: None,
+            call: None,
+            call_view: false,
             profile_form: None,
             autostart: None,
             autostart_asked: false,
@@ -491,6 +501,8 @@ impl App {
                     self.chat.dialog = Some(crate::chat::Dialog::Failed(reason));
                 }
                 Event::GifHome(home) => self.chat.gif_home = Some(home),
+                Event::VoiceConnected => self.voice_connected(Ok(())),
+                Event::VoiceFailed(error) => self.voice_connected(Err(error)),
                 Event::Speller(result) => match result {
                     Ok(speller) => self.speller = Some(speller),
                     Err(error) => log::warn!("spell checking off: {error}"),
@@ -749,6 +761,9 @@ impl App {
                 Action::Admin(action) => self.apply_admin(action),
                 Action::Nav(action) => self.apply_nav(action),
                 Action::Interact(action) => self.apply_interact(action),
+                Action::JoinVoice(channel) => self.join_voice(channel),
+                Action::LeaveVoice => self.leave_voice(),
+                Action::ShowCall(shown) => self.call_view = shown && self.call.is_some(),
                 Action::OpenSettings(page) => {
                     self.chat.popout = None;
                     self.settings_page = Some(page);
@@ -831,11 +846,13 @@ impl App {
                         self.settings.deafened = false;
                     }
                     self.save_settings();
+                    self.send_voice_state();
                 }
                 Action::ToggleDeafen => {
                     self.settings.deafened = !self.settings.deafened;
                     self.settings.muted = self.settings.deafened;
                     self.save_settings();
+                    self.send_voice_state();
                 }
             }
         }
@@ -921,6 +938,7 @@ impl App {
                 Place::Home
             }
         };
+        self.call_view = false;
         if self.channel != Some(id) {
             self.chat.player = None;
             self.chat.popout = None;
@@ -1006,6 +1024,8 @@ impl App {
         let me = self.model.me;
         match kind {
             "READY_SUPPLEMENTAL" => parse::supplemental(&data, &mut self.model),
+            "VOICE_STATE_UPDATE" => self.voice_state_event(&data),
+            "VOICE_SERVER_UPDATE" => self.voice_server_event(&data),
             "MESSAGE_POLL_VOTE_ADD" => self.poll_vote(&data, true),
             "MESSAGE_POLL_VOTE_REMOVE" => self.poll_vote(&data, false),
             "INTERACTION_SUCCESS" => self.interaction_done(&data, true),

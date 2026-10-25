@@ -1,6 +1,6 @@
 [package]
 name = "fastdisco"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -69,9 +69,19 @@ rodio = "0.21"
 # brings, so one copy plays and records.
 cpal = "0.16"
 # Voice messages are Opus in OGG, as Discord's phone app records them.
-# libopus is built into the app.
-opus = "0.3"
+# opus2 is the binding songbird uses, so one libopus is built into the app
+# for both.
+opus2 = { version = "0.4", features = ["bundled"] }
 ogg = "0.9"
+# Voice channels: Discord's voice gateway, UDP, encryption, the DAVE
+# end-to-end protocol, Opus and mixing. Only its driver, which FastDisco
+# feeds from its own gateway. ("gateway" only because its driver needs
+# dashmap from it.)
+songbird = { version = "0.6.1", default-features = false, features = ["driver", "gateway", "rustls", "tungstenite", "receive"] }
+# songbird's event handlers are async traits.
+async-trait = "0.1"
+# The microphone reaches songbird as a symphonia media source.
+symphonia-core = "0.5"
 emojis = "0.9.1"
 # Spell checking in the message field, with Hunspell dictionaries.
 spellbook = "0.4.2"

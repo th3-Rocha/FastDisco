@@ -203,6 +203,9 @@ pub fn member(value: &Value) -> Member {
 /// `properties`.
 pub fn guild(value: &Value, model: &mut Model) -> Option<Guild> {
     let id = id(&value["id"])?;
+    for state in value["voice_states"].as_array().into_iter().flatten() {
+        voice_state(state, Some(id), model);
+    }
     let properties = if value["properties"].is_object() {
         &value["properties"]
     } else {
@@ -670,6 +673,35 @@ pub fn ready(value: &Value) -> Model {
         }
     }
     model
+}
+
+/// Someone joining, changing or leaving a voice channel. Returns who.
+pub fn voice_state(value: &Value, guild: Option<Id>, model: &mut Model) -> Option<Id> {
+    let user = id(&value["user_id"])?;
+    let guild = id(&value["guild_id"]).or(guild);
+    if let Some(u) = self::user(&value["member"]["user"]) {
+        model.users.entry(u.id).or_insert(u);
+    }
+    match id(&value["channel_id"]) {
+        Some(channel) => {
+            let flag = |key: &str| value[key].as_bool().unwrap_or(false);
+            model.voice.insert(
+                (guild, user),
+                crate::model::VoiceMember {
+                    channel,
+                    self_mute: flag("self_mute"),
+                    self_deaf: flag("self_deaf"),
+                    mute: flag("mute"),
+                    deaf: flag("deaf"),
+                    stream: flag("self_stream"),
+                },
+            );
+        }
+        None => {
+            model.voice.remove(&(guild, user));
+        }
+    }
+    Some(user)
 }
 
 /// The rail's folders from the user's settings; servers alone are

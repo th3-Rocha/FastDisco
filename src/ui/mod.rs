@@ -3,6 +3,7 @@
 
 mod admin;
 mod bots;
+mod call;
 mod chat;
 mod composer;
 mod friends;
@@ -37,6 +38,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
             app.update_animations();
             nav::keys(app, ui.ctx());
+            // Who talks changes the rings in the channel list.
+            if app.call.is_some() {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(100));
+            }
             // Alt+Up and Alt+Down move between channels, as in Discord.
             let alt = egui::Modifiers::ALT;
             if ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowUp)) {

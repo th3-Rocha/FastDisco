@@ -632,6 +632,40 @@ pub struct Model {
     pub folders: Vec<Folder>,
     /// The gateway session, which interactions name.
     pub session: String,
+    /// Who is in which voice channel: by server (none for direct message
+    /// calls) and person.
+    pub voice: HashMap<(Option<Id>, Id), VoiceMember>,
+}
+
+/// Someone in a voice channel, and how.
+#[derive(Clone, Debug, Default)]
+pub struct VoiceMember {
+    pub channel: Id,
+    pub self_mute: bool,
+    pub self_deaf: bool,
+    /// Muted or deafened by the server.
+    pub mute: bool,
+    pub deaf: bool,
+    /// Sharing their screen: "AO VIVO" beside the name.
+    pub stream: bool,
+}
+
+impl Model {
+    /// The people in a voice channel, in the order they would be listed.
+    pub fn in_voice(&self, channel: Id) -> Vec<(Id, VoiceMember)> {
+        let mut list: Vec<(Id, VoiceMember)> = self
+            .voice
+            .iter()
+            .filter(|(_, v)| v.channel == channel)
+            .map(|((_, user), v)| (*user, v.clone()))
+            .collect();
+        list.sort_by_cached_key(|(user, _)| {
+            self.user(*user)
+                .map(|u| u.name.to_lowercase())
+                .unwrap_or_default()
+        });
+        list
+    }
 }
 
 /// A folder of servers in the rail; one without an id is a server alone.

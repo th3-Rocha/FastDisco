@@ -127,6 +127,22 @@ pub enum Command {
     FetchImage(String),
     /// The spell checker's dictionaries, downloaded the first time.
     LoadSpeller,
+    /// Tells the gateway which voice channel the user is in, if any, and
+    /// whether muted and deafened.
+    VoiceState {
+        guild: Option<u64>,
+        channel: Option<u64>,
+        mute: bool,
+        deaf: bool,
+    },
+    /// Connects to the voice server the gateway named.
+    ConnectVoice {
+        server: discord::call::Server,
+        shared: std::sync::Arc<crate::call::Shared>,
+    },
+    /// Stops or starts sending the microphone.
+    VoiceMute(bool),
+    LeaveVoice,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -169,6 +185,9 @@ pub enum Event {
     },
     GifHome(rest::GifHome),
     Speller(Result<std::sync::Arc<crate::spell::Speller>, String>),
+    VoiceConnected,
+    /// The call could not connect, or dropped.
+    VoiceFailed(String),
     Api {
         tag: Tag,
         result: Result<Value, String>,
@@ -238,6 +257,8 @@ struct Worker {
     token: Option<String>,
     gateway: Option<(JoinHandle<()>, mpsc::UnboundedSender<Outgoing>)>,
     gateway_events: mpsc::UnboundedSender<Incoming>,
+    /// The voice call's driver, once connected.
+    call: std::sync::Arc<tokio::sync::Mutex<Option<songbird::Driver>>>,
 }
 
 impl Worker {
@@ -253,6 +274,7 @@ impl Worker {
             qr: None,
             token: None,
             gateway: None,
+            call: Default::default(),
             gateway_events,
         }
     }
@@ -627,6 +649,68 @@ impl Worker {
                 }
             }
             Command::FetchImage(url) => self.fetch_image(url),
+            Command::VoiceState {
+                guild,
+                channel,
+                mute,
+                deaf,
+            } => {
+                if let Some((_, outgoing)) = &self.gateway {
+                    let _ = outgoing.send(Outgoing::Voice {
+                        guild,
+                        channel,
+                        mute,
+                        deaf,
+                    });
+                }
+            }
+            Command::ConnectVoice { server, shared } => {
+                let call = std::sync::Arc::clone(&self.call);
+                let events = self.events.clone();
+                let ctx = self.ctx.clone();
+                tokio::spawn(async move {
+                    if let Some(mut old) = call.lock().await.take() {
+                        old.leave();
+                    }
+                    let (wake_ctx, gone_events, gone_ctx) =
+                        (ctx.clone(), events.clone(), ctx.clone());
+                    let result = discord::call::connect(
+                        server,
+                        shared,
+                        move || wake_ctx.wake(),
+                        move |reason| {
+                            let _ = gone_events.send(Event::VoiceFailed(reason));
+                            gone_ctx.wake();
+                        },
+                    )
+                    .await;
+                    let event = match result {
+                        Ok(driver) => {
+                            *call.lock().await = Some(driver);
+                            Event::VoiceConnected
+                        }
+                        Err(error) => Event::VoiceFailed(error),
+                    };
+                    let _ = events.send(event);
+                    ctx.wake();
+                });
+            }
+            Command::VoiceMute(mute) => {
+                let call = std::sync::Arc::clone(&self.call);
+                tokio::spawn(async move {
+                    if let Some(driver) = call.lock().await.as_mut() {
+                        driver.mute(mute);
+                    }
+                });
+            }
+            Command::LeaveVoice => {
+                let call = std::sync::Arc::clone(&self.call);
+                tokio::spawn(async move {
+                    if let Some(mut driver) = call.lock().await.take() {
+                        driver.leave();
+                    }
+                });
+            }
             Command::LoadSpeller => {
                 let client = self.client.clone();
                 let events = self.events.clone();

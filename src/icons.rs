@@ -55,6 +55,8 @@ fastframe_icons::icons! {
         Check => lucide "check",
         MessageCircle => "message-circle",
         Folder => "folder",
+        PhoneOff => "phone-off",
+        Signal => "signal",
         Send => "send-horizontal",
     }
 }
