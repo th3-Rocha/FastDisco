@@ -19,6 +19,7 @@ pub enum Tag {
     Admin(crate::admin::Tag),
     Nav(crate::nav::Tag),
     Folders(crate::folders::Tag),
+    Interact(crate::interact::Tag),
 }
 
 #[derive(Debug)]

@@ -2,6 +2,7 @@
 //! Discord's arrangement.
 
 mod admin;
+mod bots;
 mod chat;
 mod composer;
 mod friends;
@@ -54,6 +55,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             nav::popout(app, ui);
             nav::switcher(app, ui);
             nav::shortcuts(app, ui);
+            bots::modal(app, ui);
+            bots::forward_dialog(app, ui);
+            bots::poll_dialog(app, ui);
             let wanted: Vec<crate::model::Id> =
                 ui.data_mut(|d| {
                     std::mem::take(d.get_temp_mut_or_default::<Vec<crate::model::Id>>(

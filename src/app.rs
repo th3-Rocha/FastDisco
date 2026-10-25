@@ -102,6 +102,8 @@ pub enum Action {
     Admin(crate::admin::AdminAction),
     /// The switcher, the inbox, pins, search, friends and jumping.
     Nav(crate::nav::NavAction),
+    /// Forwarding, pins, polls, bots' components and commands.
+    Interact(crate::interact::InteractAction),
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -148,6 +150,7 @@ pub struct App {
     pub settings_page: Option<SettingsPage>,
     pub admin: crate::admin::Admin,
     pub nav: crate::nav::Nav,
+    pub interact: crate::interact::Interact,
     pub profile_form: Option<ProfileForm>,
     /// Whether FastDisco starts at login; `None` where it cannot.
     pub autostart: Option<bool>,
@@ -197,6 +200,7 @@ impl App {
             settings_page: None,
             admin: crate::admin::Admin::default(),
             nav: crate::nav::Nav::default(),
+            interact: crate::interact::Interact::default(),
             profile_form: None,
             autostart: None,
             autostart_asked: false,
@@ -483,6 +487,7 @@ impl App {
                     crate::backend::Tag::Admin(tag) => self.api_result(tag, result),
                     crate::backend::Tag::Nav(tag) => self.nav_result(tag, result),
                     crate::backend::Tag::Folders(tag) => self.folders_result(tag, result),
+                    crate::backend::Tag::Interact(tag) => self.interact_result(tag, result),
                 },
                 Event::Profile { user, profile } => {
                     self.chat.profiles.insert(
@@ -731,6 +736,7 @@ impl App {
                 Action::Chat(action) => self.apply_chat(action),
                 Action::Admin(action) => self.apply_admin(action),
                 Action::Nav(action) => self.apply_nav(action),
+                Action::Interact(action) => self.apply_interact(action),
                 Action::OpenSettings(page) => {
                     self.chat.popout = None;
                     self.settings_page = Some(page);
@@ -929,6 +935,7 @@ impl App {
             }
         }
         self.mark_read(id);
+        self.want_commands(id);
     }
 
     fn mark_read(&mut self, id: Id) {
@@ -981,6 +988,19 @@ impl App {
         let me = self.model.me;
         match kind {
             "READY_SUPPLEMENTAL" => parse::supplemental(&data, &mut self.model),
+            "MESSAGE_POLL_VOTE_ADD" => self.poll_vote(&data, true),
+            "MESSAGE_POLL_VOTE_REMOVE" => self.poll_vote(&data, false),
+            "INTERACTION_SUCCESS" => self.interaction_done(&data, true),
+            "INTERACTION_FAILURE" => self.interaction_done(&data, false),
+            "INTERACTION_MODAL_CREATE" => {
+                self.interaction_done(&data, true);
+                self.modal_from(&data);
+            }
+            "CHANNEL_PINS_UPDATE" => {
+                if let Some(channel) = parse::id(&data["channel_id"]) {
+                    self.nav.pins.remove(&channel);
+                }
+            }
             "RELATIONSHIP_ADD" | "RELATIONSHIP_UPDATE" => {
                 parse::relationship(&data, &mut self.model);
             }

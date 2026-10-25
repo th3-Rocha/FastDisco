@@ -7,9 +7,10 @@ use serde_json::Value;
 
 use super::{CDN, avatar_url};
 use crate::model::{
-    Activity, ActivityKind, Attachment, Badge, Channel, ChannelKind, CustomEmoji, Embed,
-    EmbedField, EmbedMedia, Guild, Id, ListItem, Member, Message, Model, Overwrite, Presence,
-    Profile, Reaction, ReactionEmoji, Reply, Role, Status, Sticker, User,
+    Activity, ActivityKind, Attachment, Badge, Button, Channel, ChannelKind, Component,
+    CustomEmoji, Embed, EmbedField, EmbedMedia, Forward, Guild, Id, ListItem, Member, Message,
+    Model, Overwrite, Poll, PollAnswer, Presence, Profile, Reaction, ReactionEmoji, Reply, Role,
+    Select, SelectOption, Status, Sticker, User,
 };
 
 pub fn id(value: &Value) -> Option<Id> {
@@ -309,6 +310,154 @@ pub fn message(value: &Value, me: Id) -> Option<Message> {
             .unwrap_or_default(),
         reply,
         command,
+        flags,
+        application: id(&value["application_id"]).or_else(|| {
+            author["bot"]
+                .as_bool()
+                .unwrap_or(false)
+                .then(|| id(&author["id"]))
+                .flatten()
+        }),
+        forward: forward(value).map(Box::new),
+        poll: poll(&value["poll"]),
+        components: components(&value["components"]),
+        pinned: value["pinned"].as_bool().unwrap_or(false),
+    })
+}
+
+/// A forwarded message's snapshot, when this message is a forward.
+fn forward(value: &Value) -> Option<Forward> {
+    if value["message_reference"]["type"].as_i64() != Some(1) {
+        return None;
+    }
+    let snapshot = &value["message_snapshots"][0]["message"];
+    let reference = &value["message_reference"];
+    Some(Forward {
+        text: snapshot["content"].as_str().unwrap_or_default().to_owned(),
+        time: snapshot["timestamp"].as_str().and_then(|t| t.parse().ok()),
+        attachments: snapshot["attachments"]
+            .as_array()
+            .map(|l| l.iter().filter_map(attachment).collect())
+            .unwrap_or_default(),
+        embeds: snapshot["embeds"]
+            .as_array()
+            .map(|l| l.iter().map(embed).collect())
+            .unwrap_or_default(),
+        guild: id(&reference["guild_id"]),
+        channel: id(&reference["channel_id"]),
+        message: id(&reference["message_id"]),
+    })
+}
+
+fn poll(value: &Value) -> Option<Poll> {
+    let question = value["question"]["text"].as_str()?.to_owned();
+    let counts = value["results"]["answer_counts"].as_array();
+    let answers = value["answers"]
+        .as_array()?
+        .iter()
+        .filter_map(|a| {
+            let id = a["answer_id"].as_u64()? as u32;
+            let count =
+                counts.and_then(|l| l.iter().find(|c| c["id"].as_u64() == Some(u64::from(id))));
+            Some(PollAnswer {
+                id,
+                text: a["poll_media"]["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                emoji: a["poll_media"]["emoji"]
+                    .is_object()
+                    .then(|| reaction_emoji(&a["poll_media"]["emoji"]))
+                    .flatten(),
+                count: count.and_then(|c| c["count"].as_u64()).unwrap_or(0) as u32,
+                me: count.and_then(|c| c["me_voted"].as_bool()).unwrap_or(false),
+            })
+        })
+        .collect();
+    Some(Poll {
+        question,
+        answers,
+        multiple: value["allow_multiselect"].as_bool().unwrap_or(false),
+        expiry: value["expiry"].as_str().and_then(|t| t.parse().ok()),
+        finalized: value["results"]["is_finalized"].as_bool().unwrap_or(false),
+    })
+}
+
+/// A message's components, whatever their nesting.
+pub fn components(value: &Value) -> Vec<Component> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(component)
+        .collect()
+}
+
+fn component(value: &Value) -> Option<Component> {
+    let emoji = |v: &Value| v.is_object().then(|| reaction_emoji(v)).flatten();
+    Some(match value["type"].as_u64()? {
+        1 => Component::Row(components(&value["components"])),
+        2 => Component::Button(Button {
+            style: value["style"].as_u64().unwrap_or(2) as u8,
+            label: text(&value["label"]),
+            emoji: emoji(&value["emoji"]),
+            custom_id: text(&value["custom_id"]),
+            url: text(&value["url"]),
+            disabled: value["disabled"].as_bool().unwrap_or(false),
+        }),
+        kind @ (3 | 5 | 6 | 7 | 8) => Component::Select(Select {
+            kind: kind as u8,
+            custom_id: text(&value["custom_id"])?,
+            placeholder: text(&value["placeholder"]),
+            options: value["options"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|o| {
+                    Some(SelectOption {
+                        label: o["label"].as_str()?.to_owned(),
+                        value: o["value"].as_str()?.to_owned(),
+                        description: text(&o["description"]),
+                        emoji: emoji(&o["emoji"]),
+                        default: o["default"].as_bool().unwrap_or(false),
+                    })
+                })
+                .collect(),
+            min: value["min_values"].as_u64().unwrap_or(1) as u32,
+            max: value["max_values"].as_u64().unwrap_or(1) as u32,
+            disabled: value["disabled"].as_bool().unwrap_or(false),
+        }),
+        9 => Component::Section {
+            texts: value["components"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| text(&c["content"]))
+                .collect(),
+            accessory: component(&value["accessory"]).map(Box::new),
+        },
+        10 => Component::Text(text(&value["content"])?),
+        11 => Component::Thumbnail(text(&value["media"]["url"])?),
+        12 => Component::Gallery(
+            value["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|i| text(&i["media"]["url"]))
+                .collect(),
+        ),
+        13 => Component::File(text(&value["file"]["url"])?),
+        14 => Component::Separator {
+            divider: value["divider"].as_bool().unwrap_or(true),
+            large: value["spacing"].as_u64() == Some(2),
+        },
+        17 => Component::Container {
+            accent: value["accent_color"]
+                .as_u64()
+                .map(|c| egui::Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)),
+            children: components(&value["components"]),
+        },
+        _ => return None,
     })
 }
 
@@ -485,6 +634,7 @@ pub fn ready(value: &Value) -> Model {
         });
     }
     model.guilds = guilds;
+    model.session = value["session_id"].as_str().unwrap_or_default().to_owned();
     model.folders = folders(&value["user_settings"]["guild_folders"]);
     model.settle_folders();
 

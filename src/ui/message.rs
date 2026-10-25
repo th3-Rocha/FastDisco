@@ -16,6 +16,7 @@ use super::widgets::{avatar, clock, font, hyphens, paint_icon, timestamp};
 use crate::app::{Action, App};
 use crate::chat::{ChatAction, PickerTab, PickerTarget};
 use crate::icons::Icon;
+use crate::interact::InteractAction;
 use crate::markdown::{self, Block, Inline, Style};
 use crate::model::{
     Attachment, CustomEmoji, Embed, EmbedMedia, Id, MediaKind, Message, ReactionEmoji,
@@ -96,7 +97,10 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
             } else {
                 body(row, ui, message);
             }
+            super::bots::forwarded(row, ui, message);
             media(row, ui, message);
+            super::bots::poll(row, ui, message);
+            super::bots::components(row, ui, message);
             if !message.reactions.is_empty() {
                 ui.add_space(4.0);
                 reactions(row, ui, message);
@@ -192,6 +196,29 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
     let text = message.text.clone();
     let mut chosen = None;
     let mut unread = false;
+    let mut extra = None;
+    let pinned = message.pinned;
+    // Pins: anyone in a direct message, and those who manage messages on
+    // a server.
+    let can_pin = match row.guild {
+        Some(guild) => app.model.can(guild, crate::interact::MANAGE_MESSAGES),
+        None => true,
+    };
+    // The bots' message commands, under "Apps".
+    let apps: Vec<(usize, String)> = app
+        .interact
+        .commands
+        .get(&app.command_scope(channel))
+        .map(|index| {
+            index
+                .commands
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.kind == 3)
+                .map(|(i, c)| (i, c.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
     row_response.context_menu(|ui| {
         ui.set_min_width(180.0);
         if ui.button("Adicionar reação").clicked() {
@@ -222,13 +249,68 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
             chosen = Some(ChatAction::Copy(text.clone()));
             ui.close();
         }
+        if ui.button("Encaminhar").clicked() {
+            extra = Some(InteractAction::OpenForward {
+                channel,
+                message: id,
+            });
+            ui.close();
+        }
+        if can_pin {
+            let label = if pinned {
+                "Desafixar mensagem"
+            } else {
+                "Fixar mensagem"
+            };
+            if ui.button(label).clicked() {
+                extra = Some(InteractAction::Pin {
+                    channel,
+                    message: id,
+                    pin: !pinned,
+                });
+                ui.close();
+            }
+        }
+        if !apps.is_empty() {
+            ui.menu_button("Apps", |ui| {
+                for (index, name) in &apps {
+                    if ui.button(name).clicked() {
+                        extra = Some(InteractAction::MessageApp {
+                            channel,
+                            message: id,
+                            command: *index,
+                        });
+                        ui.close();
+                    }
+                }
+            });
+        }
         if ui.button("Marcar como não lida").clicked() {
             unread = true;
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Copiar link da mensagem").clicked() {
+            extra = Some(InteractAction::CopyLink {
+                channel,
+                message: id,
+            });
             ui.close();
         }
         if ui.button("Copiar ID da mensagem").clicked() {
             chosen = Some(ChatAction::Copy(id.to_string()));
             ui.close();
+        }
+        if !own {
+            let report =
+                egui::Button::new(egui::RichText::new("Denunciar mensagem").color(palette.danger));
+            if ui.add(report).clicked() {
+                extra = Some(InteractAction::Report {
+                    channel,
+                    message: id,
+                });
+                ui.close();
+            }
         }
         if own {
             ui.separator();
@@ -251,6 +333,9 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
             channel,
             message: id,
         }));
+    }
+    if let Some(action) = extra {
+        row.out.push(Action::Interact(action));
     }
 }
 
@@ -510,7 +595,7 @@ pub fn user_menu(row: &mut Row<'_>, response: &egui::Response, user: Id) {
 }
 
 /// The text, unless it is only the link of an embed that shows instead.
-fn body(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
+pub(super) fn body(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
     let app = row.app;
     let trimmed = message.text.trim();
     let hidden = message
@@ -551,7 +636,7 @@ pub struct TextStyle {
 }
 
 impl TextStyle {
-    fn message(app: &App, message: &Message, jumbo: bool) -> Self {
+    pub fn message(app: &App, message: &Message, jumbo: bool) -> Self {
         let color = if message.failed {
             app.palette.danger
         } else if message.pending {
@@ -1068,7 +1153,7 @@ fn edit_box(row: &mut Row<'_>, ui: &mut Ui) {
 }
 
 /// Attachments, embeds and stickers.
-fn media(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
+pub(super) fn media(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
     let images: Vec<&Attachment> = message
         .attachments
         .iter()

@@ -262,6 +262,15 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
         recording_bar(app, ui);
         return;
     }
+    if app
+        .interact
+        .active
+        .as_ref()
+        .is_some_and(|a| a.channel == channel)
+    {
+        super::bots::command_bar(app, ui);
+        return;
+    }
     let palette = app.palette;
     let id = composer_id(channel);
     let focused = ui.memory(|m| m.has_focus(id));
@@ -281,15 +290,8 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
             i.consume_key(Modifiers::NONE, Key::Tab) || i.consume_key(Modifiers::NONE, Key::Enter)
         });
         if accept {
-            let chosen = &list[app.chat.suggestion.min(count - 1)];
-            act(
-                app,
-                ChatAction::Complete {
-                    word: word.clone(),
-                    insert: chosen.insert.clone(),
-                    raw: chosen.raw.clone(),
-                },
-            );
+            let chosen = list[app.chat.suggestion.min(count - 1)].action(word);
+            app.actions.push(chosen);
         }
         if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
             app.chat.dismissed = Some(word.clone());
@@ -319,17 +321,29 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
         ui.add_space(0.0);
         ui.vertical(|ui| {
             ui.add_space(10.0);
-            if icon_button(
-                ui,
-                &palette,
-                Icon::PlusCircle,
-                24.0,
-                false,
-                "Enviar um arquivo",
-            )
-            .clicked()
-            {
-                act(app, ChatAction::AttachFiles);
+            // Discord's "+": a file, a poll, or the apps' commands.
+            let plus = icon_button(ui, &palette, Icon::PlusCircle, 24.0, false, "Mais opções");
+            let mut chosen = None;
+            egui::Popup::menu(&plus)
+                .align(egui::RectAlign::TOP_START)
+                .show(|ui| {
+                    ui.set_min_width(200.0);
+                    if ui.button("Enviar um arquivo").clicked() {
+                        chosen = Some(Action::Chat(ChatAction::AttachFiles));
+                    }
+                    if ui.button("Criar enquete").clicked() {
+                        chosen = Some(Action::Interact(
+                            crate::interact::InteractAction::OpenPollDraft,
+                        ));
+                    }
+                    if ui.button("Usar apps").clicked() {
+                        app.drafts.insert(channel, "/".into());
+                        app.chat.focus_composer = true;
+                        app.chat.cursor_to_end = true;
+                    }
+                });
+            if let Some(action) = chosen {
+                app.actions.push(action);
             }
         });
         let buttons = 5.0 * 24.0 + 4.0 * 16.0;
@@ -1596,6 +1610,8 @@ pub struct Suggestion {
 }
 
 enum Hint {
+    /// A slash command: its entry in the channel's command list.
+    Command(usize),
     User(Id),
     Emoji(String),
     Custom(String),
@@ -1618,6 +1634,53 @@ fn last_word(draft: &str) -> Option<&str> {
 /// #channels. Returns the list's title, the word and the rows.
 fn suggestions(app: &App, channel: Id) -> Option<(String, String, Vec<Suggestion>)> {
     let draft = app.drafts.get(&channel)?;
+    // "/" at the start lists the apps' commands, as Discord.
+    if let Some(query) = draft.strip_prefix('/')
+        && !draft.contains(char::is_whitespace)
+        && app.chat.dismissed.as_deref() != Some(draft.as_str())
+    {
+        let index = app.interact.commands.get(&app.command_scope(channel))?;
+        let query = query.to_lowercase();
+        let mut list: Vec<(u8, Suggestion)> = index
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, entry)| {
+                let command = index.commands.get(entry.command)?;
+                let name = std::iter::once(command.name.as_str())
+                    .chain(entry.path.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let lower = name.to_lowercase();
+                let rank = if lower.starts_with(&query) {
+                    0
+                } else if lower.contains(&query) {
+                    1
+                } else {
+                    return None;
+                };
+                let app_name = index.apps.get(&command.application);
+                let detail = match (app_name, entry.description.is_empty()) {
+                    (Some(a), false) => format!("{}  •  {a}", entry.description),
+                    (Some(a), true) => a.clone(),
+                    (None, _) => entry.description.clone(),
+                };
+                Some((
+                    rank,
+                    Suggestion {
+                        label: format!("/{name}"),
+                        detail: Some(detail),
+                        hint: Hint::Command(i),
+                        insert: String::new(),
+                        raw: None,
+                    },
+                ))
+            })
+            .collect();
+        list.sort_by(|a, b| (a.0, &a.1.label).cmp(&(b.0, &b.1.label)));
+        let list = list.into_iter().map(|(_, s)| s).take(25).collect();
+        return Some(("COMANDOS DE APPS".into(), draft.clone(), list));
+    }
     let word = last_word(draft)?.to_owned();
     if app.chat.dismissed.as_deref() == Some(word.as_str()) {
         return None;
@@ -1825,6 +1888,15 @@ fn autocomplete(app: &mut App, ui: &mut Ui, channel: Id, field: Rect) {
                                 }
                             }
                             Hint::Channel => paint_icon(ui, Icon::Hash, icon, 20.0, palette.muted),
+                            Hint::Command(_) => {
+                                ui.painter().text(
+                                    icon,
+                                    Align2::CENTER_CENTER,
+                                    "/",
+                                    font(Weight::Bold, 18.0),
+                                    palette.muted,
+                                );
+                            }
                             Hint::Everyone => {
                                 ui.painter().text(
                                     icon,
@@ -1855,16 +1927,29 @@ fn autocomplete(app: &mut App, ui: &mut Ui, channel: Id, field: Rect) {
                             app.chat.suggestion = i;
                         }
                         if response.clicked() {
-                            chosen = Some(ChatAction::Complete {
-                                word: word.clone(),
-                                insert: s.insert.clone(),
-                                raw: s.raw.clone(),
-                            });
+                            chosen = Some(s.action(&word));
                         }
                     }
                 });
         });
     if let Some(action) = chosen {
-        app.actions.push(Action::Chat(action));
+        app.actions.push(action);
+    }
+}
+
+impl Suggestion {
+    /// Picking it: a command opens its form, anything else goes into the
+    /// draft.
+    fn action(&self, word: &str) -> Action {
+        match self.hint {
+            Hint::Command(entry) => {
+                Action::Interact(crate::interact::InteractAction::StartCommand(entry))
+            }
+            _ => Action::Chat(ChatAction::Complete {
+                word: word.to_owned(),
+                insert: self.insert.clone(),
+                raw: self.raw.clone(),
+            }),
+        }
     }
 }

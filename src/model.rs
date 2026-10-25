@@ -262,6 +262,117 @@ pub struct Message {
     pub reply: Option<Reply>,
     /// The slash command a bot answered, as "/name".
     pub command: Option<String>,
+    /// Discord's message flags: 64 is only visible to the user.
+    pub flags: u64,
+    /// The bot behind the message, for its buttons and menus.
+    pub application: Option<Id>,
+    /// A message forwarded from elsewhere, shown inside this one.
+    pub forward: Option<Box<Forward>>,
+    pub poll: Option<Poll>,
+    /// Bots' buttons, menus and layout.
+    pub components: Vec<Component>,
+    pub pinned: bool,
+}
+
+/// What a forwarded message carried, and where it came from.
+#[derive(Clone, Debug)]
+pub struct Forward {
+    pub text: String,
+    pub time: Option<jiff::Timestamp>,
+    pub attachments: Vec<Attachment>,
+    pub embeds: Vec<Embed>,
+    pub guild: Option<Id>,
+    pub channel: Option<Id>,
+    pub message: Option<Id>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Poll {
+    pub question: String,
+    pub answers: Vec<PollAnswer>,
+    pub multiple: bool,
+    pub expiry: Option<jiff::Timestamp>,
+    pub finalized: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct PollAnswer {
+    pub id: u32,
+    pub text: String,
+    pub emoji: Option<ReactionEmoji>,
+    pub count: u32,
+    pub me: bool,
+}
+
+impl Poll {
+    pub fn total(&self) -> u32 {
+        self.answers.iter().map(|a| a.count).sum()
+    }
+
+    pub fn voted(&self) -> bool {
+        self.answers.iter().any(|a| a.me)
+    }
+
+    pub fn closed(&self) -> bool {
+        self.finalized || self.expiry.is_some_and(|e| e <= jiff::Timestamp::now())
+    }
+}
+
+/// A bot's message component, from the first kind (rows of buttons and
+/// menus) and the second (text, sections, containers, galleries).
+#[derive(Clone, Debug)]
+pub enum Component {
+    Row(Vec<Component>),
+    Button(Button),
+    Select(Select),
+    Text(String),
+    Section {
+        texts: Vec<String>,
+        accessory: Option<Box<Component>>,
+    },
+    Thumbnail(String),
+    Gallery(Vec<String>),
+    File(String),
+    Separator {
+        divider: bool,
+        large: bool,
+    },
+    Container {
+        accent: Option<Color32>,
+        children: Vec<Component>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct Button {
+    /// 1 primary, 2 secondary, 3 success, 4 danger, 5 link, 6 premium.
+    pub style: u8,
+    pub label: Option<String>,
+    pub emoji: Option<ReactionEmoji>,
+    pub custom_id: Option<String>,
+    pub url: Option<String>,
+    pub disabled: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct Select {
+    /// 3 text, 5 user, 6 role, 7 mentionable, 8 channel.
+    pub kind: u8,
+    pub custom_id: String,
+    pub placeholder: Option<String>,
+    pub options: Vec<SelectOption>,
+    pub min: u32,
+    pub max: u32,
+    pub disabled: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct SelectOption {
+    pub label: String,
+    pub value: String,
+    pub description: Option<String>,
+    pub emoji: Option<ReactionEmoji>,
+    pub default: bool,
 }
 
 impl Message {
@@ -284,6 +395,12 @@ impl Message {
             reactions: Vec::new(),
             reply: None,
             command: None,
+            flags: 0,
+            application: None,
+            forward: None,
+            poll: None,
+            components: Vec::new(),
+            pinned: false,
         }
     }
 }
@@ -513,6 +630,8 @@ pub struct Model {
     pub relationships: HashMap<Id, u8>,
     /// The rail: servers alone and in folders, in the user's order.
     pub folders: Vec<Folder>,
+    /// The gateway session, which interactions name.
+    pub session: String,
 }
 
 /// A folder of servers in the rail; one without an id is a server alone.

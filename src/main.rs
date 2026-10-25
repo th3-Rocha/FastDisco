@@ -8,6 +8,7 @@ mod chat;
 mod discord;
 mod folders;
 mod icons;
+mod interact;
 mod login;
 mod markdown;
 mod media;
