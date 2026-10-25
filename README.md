@@ -104,7 +104,7 @@ everything Discord's desktop app does.
 - [x] Sending files by picker or drag and drop, with spoilers
 - [x] GIF and sticker pickers
 - [x] Avatars and server icons
-- [ ] Recording and sending voice messages
+- [x] Recording and sending voice messages, from the desktop too (Discord's own app only records on the phone)
 
 ### Channels
 

@@ -56,7 +56,8 @@ fn header(app: &mut App, ui: &mut Ui) {
                 Place::Server(id) => {
                     let response = ui.allocate_rect(rect, Sense::click());
                     if response.clicked() {
-                        app.actions.push(Action::Admin(crate::admin::AdminAction::ToggleMenu));
+                        app.actions
+                            .push(Action::Admin(crate::admin::AdminAction::ToggleMenu));
                     }
                     let open = app.admin.menu;
                     if response.hovered() || open {

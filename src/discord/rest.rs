@@ -431,8 +431,16 @@ pub async fn edit_profile(
 
 /// Any API call: the method, the path under /api/v9 and a JSON body. The
 /// reply's JSON (`null` when empty), or Discord's message on failure.
-pub async fn call(client: &reqwest::Client, token: &str, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<Value, String> {
-    let mut request = client.request(method, format!("{API}{path}")).header("Authorization", token);
+pub async fn call(
+    client: &reqwest::Client,
+    token: &str,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<Value>,
+) -> Result<Value, String> {
+    let mut request = client
+        .request(method, format!("{API}{path}"))
+        .header("Authorization", token);
     if let Some(body) = body {
         request = request.json(&body);
     }
@@ -443,11 +451,102 @@ pub async fn call(client: &reqwest::Client, token: &str, method: reqwest::Method
     if status.is_success() {
         Ok(value)
     } else {
-        let message = value["message"].as_str().map(str::to_owned).unwrap_or_else(|| status.to_string());
+        let message = value["message"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| status.to_string());
         Err(match value["code"].as_i64() {
             Some(50013) => "Você não tem permissão para isso.".into(),
             Some(50001) => "Sem acesso.".into(),
             _ => message,
         })
     }
+}
+
+/// A voice message to send: the OGG file and what Discord's player shows.
+#[derive(Clone, Debug)]
+pub struct Voice {
+    pub nonce: String,
+    pub reply: Option<u64>,
+    pub ogg: Vec<u8>,
+    pub seconds: f32,
+    pub waveform: Vec<u8>,
+}
+
+/// Sends a voice message as the phone app does: the file goes up to the
+/// upload URL Discord hands out, then a message with the voice flag names
+/// it, its length and its waveform.
+pub async fn send_voice(
+    client: &reqwest::Client,
+    token: &str,
+    channel: u64,
+    voice: Voice,
+) -> Result<(), String> {
+    use base64::Engine;
+    const NAME: &str = "voice-message.ogg";
+    const IS_VOICE_MESSAGE: u64 = 1 << 13;
+    let slot: Value = client
+        .post(format!("{API}/channels/{channel}/attachments"))
+        .header("Authorization", token)
+        .json(&json!({ "files": [{ "id": "0", "filename": NAME, "file_size": voice.ogg.len() }] }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let file = &slot["attachments"][0];
+    let (Some(url), Some(uploaded)) = (
+        file["upload_url"].as_str(),
+        file["upload_filename"].as_str(),
+    ) else {
+        return Err(slot["message"]
+            .as_str()
+            .unwrap_or("O Discord recusou o envio do áudio.")
+            .to_owned());
+    };
+    let put = client
+        .put(url)
+        .header("Content-Type", "audio/ogg")
+        .body(voice.ogg)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !put.status().is_success() {
+        return Err(format!("Envio do áudio falhou: {}", put.status()));
+    }
+    let mut payload = json!({
+        "content": "",
+        "nonce": voice.nonce,
+        "flags": IS_VOICE_MESSAGE,
+        "attachments": [{
+            "id": "0",
+            "filename": NAME,
+            "uploaded_filename": uploaded,
+            "duration_secs": voice.seconds,
+            "waveform": base64::engine::general_purpose::STANDARD.encode(&voice.waveform),
+        }],
+    });
+    if let Some(reply) = voice.reply {
+        payload["message_reference"] =
+            json!({ "message_id": reply.to_string(), "channel_id": channel.to_string() });
+    }
+    let response = client
+        .post(format!("{API}/channels/{channel}/messages"))
+        .header("Authorization", token)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    let body: Value = response.json().await.unwrap_or(Value::Null);
+    Err(match body["code"].as_i64() {
+        Some(50013) => "Você não tem permissão para enviar mensagens de voz aqui.".into(),
+        _ => body["message"]
+            .as_str()
+            .map_or_else(|| status.to_string(), str::to_owned),
+    })
 }

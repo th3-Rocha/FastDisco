@@ -1,7 +1,7 @@
 //! FastDisco: Discord, native and fast.
 
-mod animation;
 mod admin;
+mod animation;
 mod app;
 mod backend;
 mod chat;
@@ -19,6 +19,7 @@ mod stats;
 mod text;
 mod theme;
 mod ui;
+mod voice;
 
 use app::App;
 

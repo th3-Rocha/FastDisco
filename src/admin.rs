@@ -43,14 +43,38 @@ pub enum GuildPage {
 /// A dialog over the window.
 #[derive(Clone, Debug)]
 pub enum Modal {
-    Invite { link: Option<String> },
-    Nick { guild: Id, text: String },
-    CreateChannel { guild: Id, voice: bool, name: String, category: Option<Id> },
-    CreateCategory { guild: Id, name: String },
-    Leave { guild: Id },
-    Kick { guild: Id, user: Id },
-    Ban { guild: Id, user: Id },
-    DeleteGuild { guild: Id, typed: String },
+    Invite {
+        link: Option<String>,
+    },
+    Nick {
+        guild: Id,
+        text: String,
+    },
+    CreateChannel {
+        guild: Id,
+        voice: bool,
+        name: String,
+        category: Option<Id>,
+    },
+    CreateCategory {
+        guild: Id,
+        name: String,
+    },
+    Leave {
+        guild: Id,
+    },
+    Kick {
+        guild: Id,
+        user: Id,
+    },
+    Ban {
+        guild: Id,
+        user: Id,
+    },
+    DeleteGuild {
+        guild: Id,
+        typed: String,
+    },
 }
 
 #[derive(Default)]
@@ -96,7 +120,12 @@ pub enum AdminAction {
 
 impl App {
     fn api(&self, tag: Tag, method: Method, path: String, body: Option<Value>) {
-        self.backend().send(Command::Api { tag, method, path, body });
+        self.backend().send(Command::Api {
+            tag,
+            method,
+            path,
+            body,
+        });
     }
 
     pub fn apply_admin(&mut self, action: AdminAction) {
@@ -120,53 +149,113 @@ impl App {
             AdminAction::Submit => self.submit_modal(),
             AdminAction::OpenSettings(guild) => {
                 self.admin.menu = false;
-                let name = self.model.guild(guild).map(|g| g.name.clone()).unwrap_or_default();
-                self.admin.settings = Some(GuildSettings { guild, page: Some(GuildPage::Overview), name, ..Default::default() });
+                let name = self
+                    .model
+                    .guild(guild)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default();
+                self.admin.settings = Some(GuildSettings {
+                    guild,
+                    page: Some(GuildPage::Overview),
+                    name,
+                    ..Default::default()
+                });
             }
             AdminAction::CloseSettings => self.admin.settings = None,
             AdminAction::Page(page) => {
-                let Some(settings) = &mut self.admin.settings else { return };
+                let Some(settings) = &mut self.admin.settings else {
+                    return;
+                };
                 settings.page = Some(page);
                 settings.message = None;
                 let guild = settings.guild;
                 match page {
-                    GuildPage::Invites => self.api(Tag::Invites { guild }, Method::GET, format!("/guilds/{guild}/invites"), None),
-                    GuildPage::Bans => self.api(Tag::Bans { guild }, Method::GET, format!("/guilds/{guild}/bans?limit=1000"), None),
-                    GuildPage::Audit => self.api(Tag::Audit { guild }, Method::GET, format!("/guilds/{guild}/audit-logs?limit=50"), None),
+                    GuildPage::Invites => self.api(
+                        Tag::Invites { guild },
+                        Method::GET,
+                        format!("/guilds/{guild}/invites"),
+                        None,
+                    ),
+                    GuildPage::Bans => self.api(
+                        Tag::Bans { guild },
+                        Method::GET,
+                        format!("/guilds/{guild}/bans?limit=1000"),
+                        None,
+                    ),
+                    GuildPage::Audit => self.api(
+                        Tag::Audit { guild },
+                        Method::GET,
+                        format!("/guilds/{guild}/audit-logs?limit=50"),
+                        None,
+                    ),
                     _ => {}
                 }
             }
             AdminAction::SaveGuild => {
-                let Some(settings) = &self.admin.settings else { return };
+                let Some(settings) = &self.admin.settings else {
+                    return;
+                };
                 let (guild, name) = (settings.guild, settings.name.trim().to_owned());
                 if !name.is_empty() {
-                    self.api(Tag::GuildSaved, Method::PATCH, format!("/guilds/{guild}"), Some(json!({ "name": name })));
+                    self.api(
+                        Tag::GuildSaved,
+                        Method::PATCH,
+                        format!("/guilds/{guild}"),
+                        Some(json!({ "name": name })),
+                    );
                 }
             }
             AdminAction::SelectRole(role) => {
-                let Some(settings) = &mut self.admin.settings else { return };
-                let found = self.model.guild(settings.guild).and_then(|g| g.roles.iter().find(|r| r.id == role)).cloned();
+                let Some(settings) = &mut self.admin.settings else {
+                    return;
+                };
+                let found = self
+                    .model
+                    .guild(settings.guild)
+                    .and_then(|g| g.roles.iter().find(|r| r.id == role))
+                    .cloned();
                 if let Some(r) = found {
                     settings.role = Some(role);
                     settings.role_name = r.name.clone();
-                    settings.role_color = r.color.map_or([0x99, 0xaa, 0xb5], |c| [c.r(), c.g(), c.b()]);
+                    settings.role_color = r
+                        .color
+                        .map_or([0x99, 0xaa, 0xb5], |c| [c.r(), c.g(), c.b()]);
                     settings.message = None;
                 }
             }
             AdminAction::SaveRole => {
-                let Some(settings) = &self.admin.settings else { return };
+                let Some(settings) = &self.admin.settings else {
+                    return;
+                };
                 let Some(role) = settings.role else { return };
                 let [r, g, b] = settings.role_color;
                 let color = (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
                 let body = json!({ "name": settings.role_name.trim(), "color": color });
-                self.api(Tag::RoleSaved, Method::PATCH, format!("/guilds/{}/roles/{role}", settings.guild), Some(body));
+                self.api(
+                    Tag::RoleSaved,
+                    Method::PATCH,
+                    format!("/guilds/{}/roles/{role}", settings.guild),
+                    Some(body),
+                );
             }
             AdminAction::Revoke(code) => {
-                self.api(Tag::Revoked { code: code.clone() }, Method::DELETE, format!("/invites/{code}"), None);
+                self.api(
+                    Tag::Revoked { code: code.clone() },
+                    Method::DELETE,
+                    format!("/invites/{code}"),
+                    None,
+                );
             }
             AdminAction::Unban(user) => {
-                let Some(settings) = &self.admin.settings else { return };
-                self.api(Tag::Unbanned { user }, Method::DELETE, format!("/guilds/{}/bans/{user}", settings.guild), None);
+                let Some(settings) = &self.admin.settings else {
+                    return;
+                };
+                self.api(
+                    Tag::Unbanned { user },
+                    Method::DELETE,
+                    format!("/guilds/{}/bans/{user}", settings.guild),
+                    None,
+                );
             }
         }
     }
@@ -176,11 +265,18 @@ impl App {
         let Some(channel) = self.channel else { return };
         self.admin.busy = true;
         let body = json!({ "max_age": 604800, "max_uses": 0, "temporary": false });
-        self.api(Tag::Invite, Method::POST, format!("/channels/{channel}/invites"), Some(body));
+        self.api(
+            Tag::Invite,
+            Method::POST,
+            format!("/channels/{channel}/invites"),
+            Some(body),
+        );
     }
 
     fn submit_modal(&mut self) {
-        let Some(modal) = self.admin.modal.clone() else { return };
+        let Some(modal) = self.admin.modal.clone() else {
+            return;
+        };
         self.admin.busy = true;
         self.admin.error = None;
         match modal {
@@ -192,37 +288,88 @@ impl App {
             }
             Modal::Nick { guild, text } => {
                 let nick = text.trim().to_owned();
-                self.api(Tag::Nick { guild, nick: nick.clone() }, Method::PATCH, format!("/guilds/{guild}/members/@me"), Some(json!({ "nick": nick })));
+                self.api(
+                    Tag::Nick {
+                        guild,
+                        nick: nick.clone(),
+                    },
+                    Method::PATCH,
+                    format!("/guilds/{guild}/members/@me"),
+                    Some(json!({ "nick": nick })),
+                );
             }
-            Modal::CreateChannel { guild, voice, name, category } => {
+            Modal::CreateChannel {
+                guild,
+                voice,
+                name,
+                category,
+            } => {
                 // Discord's text channel names are lowercase with dashes.
-                let name = if voice { name.trim().to_owned() } else { name.trim().to_lowercase().replace(' ', "-") };
+                let name = if voice {
+                    name.trim().to_owned()
+                } else {
+                    name.trim().to_lowercase().replace(' ', "-")
+                };
                 let mut body = json!({ "name": name, "type": if voice { 2 } else { 0 } });
                 if let Some(parent) = category {
                     body["parent_id"] = json!(parent.to_string());
                 }
-                self.api(Tag::Created, Method::POST, format!("/guilds/{guild}/channels"), Some(body));
+                self.api(
+                    Tag::Created,
+                    Method::POST,
+                    format!("/guilds/{guild}/channels"),
+                    Some(body),
+                );
             }
             Modal::CreateCategory { guild, name } => {
-                self.api(Tag::Created, Method::POST, format!("/guilds/{guild}/channels"), Some(json!({ "name": name.trim(), "type": 4 })));
+                self.api(
+                    Tag::Created,
+                    Method::POST,
+                    format!("/guilds/{guild}/channels"),
+                    Some(json!({ "name": name.trim(), "type": 4 })),
+                );
             }
             Modal::Leave { guild } => {
-                self.api(Tag::Left { guild }, Method::DELETE, format!("/users/@me/guilds/{guild}"), Some(json!({ "lurking": false })));
+                self.api(
+                    Tag::Left { guild },
+                    Method::DELETE,
+                    format!("/users/@me/guilds/{guild}"),
+                    Some(json!({ "lurking": false })),
+                );
             }
             Modal::Kick { guild, user } => {
-                self.api(Tag::Removed { user }, Method::DELETE, format!("/guilds/{guild}/members/{user}"), None);
+                self.api(
+                    Tag::Removed { user },
+                    Method::DELETE,
+                    format!("/guilds/{guild}/members/{user}"),
+                    None,
+                );
             }
             Modal::Ban { guild, user } => {
-                self.api(Tag::Removed { user }, Method::PUT, format!("/guilds/{guild}/bans/{user}"), Some(json!({ "delete_message_seconds": 0 })));
+                self.api(
+                    Tag::Removed { user },
+                    Method::PUT,
+                    format!("/guilds/{guild}/bans/{user}"),
+                    Some(json!({ "delete_message_seconds": 0 })),
+                );
             }
             Modal::DeleteGuild { guild, typed } => {
-                let name = self.model.guild(guild).map(|g| g.name.clone()).unwrap_or_default();
+                let name = self
+                    .model
+                    .guild(guild)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default();
                 if typed.trim() != crate::text::hyphens(&name) && typed.trim() != name {
                     self.admin.busy = false;
                     self.admin.error = Some("O nome não confere.".into());
                     return;
                 }
-                self.api(Tag::Deleted { guild }, Method::DELETE, format!("/guilds/{guild}"), None);
+                self.api(
+                    Tag::Deleted { guild },
+                    Method::DELETE,
+                    format!("/guilds/{guild}"),
+                    None,
+                );
             }
         }
     }
@@ -250,7 +397,11 @@ impl App {
             }
             Tag::Nick { guild, nick } => {
                 let me = self.model.me;
-                if let Some(member) = self.model.guild_mut(guild).and_then(|g| g.members.get_mut(&me)) {
+                if let Some(member) = self
+                    .model
+                    .guild_mut(guild)
+                    .and_then(|g| g.members.get_mut(&me))
+                {
                     member.nick = (!nick.is_empty()).then_some(nick);
                 }
                 self.admin.modal = None;
@@ -258,10 +409,17 @@ impl App {
             Tag::Created | Tag::Removed { .. } => {
                 self.admin.modal = None;
                 if let Tag::Removed { user } = tag {
-                    let guild = self.admin.settings.as_ref().map(|s| s.guild).or(self.server());
+                    let guild = self
+                        .admin
+                        .settings
+                        .as_ref()
+                        .map(|s| s.guild)
+                        .or(self.server());
                     if let Some(g) = guild.and_then(|g| self.model.guild_mut(g)) {
                         g.members.remove(&user);
-                        g.list.retain(|item| !matches!(item, crate::model::ListItem::Member(u) if *u == user));
+                        g.list.retain(
+                            |item| !matches!(item, crate::model::ListItem::Member(u) if *u == user),
+                        );
                     }
                 }
             }
@@ -282,7 +440,12 @@ impl App {
                 }
             }
             Tag::Revoked { code } => {
-                if let Some(list) = self.admin.settings.as_mut().and_then(|s| s.invites.as_mut()) {
+                if let Some(list) = self
+                    .admin
+                    .settings
+                    .as_mut()
+                    .and_then(|s| s.invites.as_mut())
+                {
                     list.retain(|i| i["code"].as_str() != Some(&code));
                 }
             }

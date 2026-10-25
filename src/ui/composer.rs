@@ -253,6 +253,15 @@ fn uploads(app: &mut App, ui: &mut Ui, channel: Id) {
 }
 
 fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
+    if app
+        .chat
+        .recording
+        .as_ref()
+        .is_some_and(|r| r.channel == channel)
+    {
+        recording_bar(app, ui);
+        return;
+    }
     let palette = app.palette;
     let id = composer_id(channel);
     let focused = ui.memory(|m| m.has_focus(id));
@@ -317,7 +326,7 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
                 act(app, ChatAction::AttachFiles);
             }
         });
-        let buttons = 4.0 * 24.0 + 3.0 * 16.0;
+        let buttons = 5.0 * 24.0 + 4.0 * 16.0;
         let width = ui.available_width() - buttons - 16.0;
         let focus = std::mem::take(&mut app.chat.focus_composer)
             && app.chat.editing.is_none()
@@ -400,11 +409,108 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
                         );
                     }
                 }
+                // Discord records voice messages only on the phone; here
+                // the microphone sits after the emoji.
+                if icon_button(
+                    ui,
+                    &palette,
+                    Icon::Mic,
+                    24.0,
+                    false,
+                    "Gravar mensagem de voz",
+                )
+                .clicked()
+                {
+                    act(app, ChatAction::StartRecording);
+                }
             });
         });
     });
     if send {
         app.actions.push(Action::Send);
+    }
+}
+
+/// The composer while a voice message records, as the phone app shows
+/// it: the bin to throw it away, a red dot and the time, the loudness
+/// moving by, and the button that sends. Enter sends and Escape discards.
+fn recording_bar(app: &mut App, ui: &mut Ui) {
+    let palette = app.palette;
+    let Some(recording) = &app.chat.recording else {
+        return;
+    };
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(50));
+    let elapsed = recording.recorder.elapsed().as_secs_f32();
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
+    let cy = rect.center().y;
+
+    let bin = Rect::from_center_size(pos2(rect.left() + 12.0, cy), Vec2::splat(28.0));
+    let bin = ui.interact(bin, ui.id().with("voice-discard"), Sense::click());
+    paint_icon(
+        ui,
+        Icon::Trash,
+        bin.rect.center(),
+        20.0,
+        if bin.hovered() {
+            palette.danger
+        } else {
+            palette.icon
+        },
+    );
+    let discard = bin.on_hover_text("Descartar").clicked();
+
+    // The dot breathes once a second while the microphone is open.
+    let breath = 0.6 + 0.4 * (elapsed * std::f32::consts::TAU).cos().abs();
+    ui.painter().circle_filled(
+        pos2(rect.left() + 44.0, cy),
+        5.0,
+        palette.danger.gamma_multiply(breath),
+    );
+    let time = ui.painter().layout_no_wrap(
+        crate::media::format_time(f64::from(elapsed)),
+        font(Weight::Medium, 15.0),
+        palette.strong,
+    );
+    ui.painter().galley(
+        pos2(rect.left() + 58.0, cy - time.size().y / 2.0),
+        time,
+        palette.strong,
+    );
+
+    let send_center = pos2(rect.right() - 16.0, cy);
+    let bars_left = rect.left() + 110.0;
+    let bars_right = send_center.x - 32.0;
+    const STEP: f32 = 5.0;
+    let count = ((bars_right - bars_left) / STEP).max(0.0) as usize;
+    for (i, level) in recording.recorder.levels(count).into_iter().enumerate() {
+        let height = 4.0 + level * 26.0;
+        let x = bars_left + i as f32 * STEP;
+        ui.painter().rect_filled(
+            Rect::from_center_size(pos2(x + 1.5, cy), vec2(3.0, height)),
+            CornerRadius::same(2),
+            palette.text,
+        );
+    }
+
+    let send = Rect::from_center_size(send_center, Vec2::splat(32.0));
+    let send = ui.interact(send, ui.id().with("voice-send"), Sense::click());
+    ui.painter().circle_filled(
+        send_center,
+        16.0,
+        if send.hovered() {
+            Color32::from_rgb(0x47, 0x52, 0xc4)
+        } else {
+            palette.accent
+        },
+    );
+    paint_icon(ui, Icon::Send, send_center, 16.0, Color32::WHITE);
+    let send = send.on_hover_text("Enviar").clicked();
+
+    if discard || ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+        act(app, ChatAction::CancelRecording);
+    } else if send || ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
+        act(app, ChatAction::SendRecording);
     }
 }
 

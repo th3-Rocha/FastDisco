@@ -614,12 +614,24 @@ impl Model {
         if g.owner == self.me {
             return u64::MAX;
         }
-        let roles = g.members.get(&self.me).map(|m| m.roles.clone()).unwrap_or_default();
-        let mut bits = g.roles.iter().find(|r| r.id == g.id).map_or(0, |r| r.permissions);
+        let roles = g
+            .members
+            .get(&self.me)
+            .map(|m| m.roles.clone())
+            .unwrap_or_default();
+        let mut bits = g
+            .roles
+            .iter()
+            .find(|r| r.id == g.id)
+            .map_or(0, |r| r.permissions);
         for role in g.roles.iter().filter(|r| roles.contains(&r.id)) {
             bits |= role.permissions;
         }
-        if bits & permission::ADMINISTRATOR != 0 { u64::MAX } else { bits }
+        if bits & permission::ADMINISTRATOR != 0 {
+            u64::MAX
+        } else {
+            bits
+        }
     }
 
     pub fn can(&self, guild: Id, bit: u64) -> bool {

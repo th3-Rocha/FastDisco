@@ -40,6 +40,16 @@ pub enum Command {
         channel: u64,
         message: rest::Outgoing,
     },
+    /// A recorded voice message: mono samples at Opus' rate, encoded here,
+    /// away from the interface.
+    SendVoice {
+        channel: u64,
+        nonce: String,
+        reply: Option<u64>,
+        samples: Vec<f32>,
+        seconds: f32,
+        waveform: Vec<u8>,
+    },
     Edit {
         channel: u64,
         message: u64,
@@ -349,6 +359,41 @@ impl Worker {
                     }
                 });
             }
+            Command::SendVoice {
+                channel,
+                nonce,
+                reply,
+                samples,
+                seconds,
+                waveform,
+            } => {
+                self.spawn(move |client, token, events| async move {
+                    let encoded =
+                        tokio::task::spawn_blocking(move || crate::voice::encode(&samples)).await;
+                    let result = match encoded {
+                        Ok(Ok(ogg)) => {
+                            let voice = rest::Voice {
+                                nonce: nonce.clone(),
+                                reply,
+                                ogg,
+                                seconds,
+                                waveform,
+                            };
+                            rest::send_voice(&client, &token, channel, voice).await
+                        }
+                        Ok(Err(reason)) => Err(reason),
+                        Err(error) => Err(error.to_string()),
+                    };
+                    if let Err(reason) = result {
+                        log::warn!("voice message to {channel}: {reason}");
+                        let _ = events.send(Event::SendFailed {
+                            channel,
+                            nonce,
+                            reason,
+                        });
+                    }
+                });
+            }
             Command::Send { channel, message } => {
                 self.spawn(move |client, token, events| async move {
                     let nonce = message.nonce.clone();
@@ -432,7 +477,12 @@ impl Worker {
                     ctx.wake();
                 });
             }
-            Command::Api { tag, method, path, body } => {
+            Command::Api {
+                tag,
+                method,
+                path,
+                body,
+            } => {
                 self.spawn(move |client, token, events| async move {
                     let result = rest::call(&client, &token, method, &path, body).await;
                     let _ = events.send(Event::Api { tag, result });

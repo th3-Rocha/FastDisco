@@ -191,6 +191,16 @@ pub enum ChatAction {
         insert: String,
         raw: Option<String>,
     },
+    /// The composer's microphone: records a voice message.
+    StartRecording,
+    CancelRecording,
+    SendRecording,
+}
+
+/// A voice message being recorded in a channel.
+pub struct Recording {
+    pub channel: Id,
+    pub recorder: crate::voice::Recorder,
 }
 
 /// Which side of what was clicked the profile card opens on.
@@ -249,6 +259,7 @@ pub struct Chat {
     pub dialog: Option<Dialog>,
     pub viewer: Option<String>,
     pub player: Option<media::Player>,
+    pub recording: Option<Recording>,
     /// Put the cursor in the composer on the next frame.
     pub focus_composer: bool,
     pub cursor_to_end: bool,
@@ -552,6 +563,21 @@ impl App {
             }
             ChatAction::ViewImage(url) => self.chat.viewer = Some(url),
             ChatAction::CloseViewer => self.chat.viewer = None,
+            ChatAction::StartRecording => {
+                let Some(channel) = channel else { return };
+                self.chat.picker = None;
+                match crate::voice::Recorder::start() {
+                    Ok(recorder) => {
+                        self.chat.recording = Some(Recording { channel, recorder });
+                    }
+                    Err(reason) => self.chat.dialog = Some(Dialog::Failed(reason)),
+                }
+            }
+            ChatAction::CancelRecording => {
+                self.chat.recording = None;
+                self.chat.focus_composer = true;
+            }
+            ChatAction::SendRecording => self.send_recording(),
             ChatAction::RevealSpoiler(message, index) => {
                 self.chat.revealed.insert((message, index));
             }
@@ -893,6 +919,65 @@ impl App {
         sticker: Option<Sticker>,
         shown: Vec<Attachment>,
     ) {
+        let sticker_id = sticker.as_ref().map(|s| s.id);
+        let (nonce, reply) = self.show_pending(channel, text.clone(), sticker, shown, false);
+        self.backend().send(Command::Send {
+            channel,
+            message: rest::Outgoing {
+                content: text,
+                nonce,
+                reply,
+                sticker: sticker_id,
+                files,
+            },
+        });
+    }
+
+    /// Stops the microphone and sends what it heard, as a voice message
+    /// that shows at once like any other.
+    fn send_recording(&mut self) {
+        let Some(recording) = self.chat.recording.take() else {
+            return;
+        };
+        self.chat.focus_composer = true;
+        if recording.recorder.elapsed() < crate::voice::SHORTEST {
+            return;
+        }
+        let channel = recording.channel;
+        let take = recording.recorder.finish();
+        let shown = vec![Attachment {
+            url: String::new(),
+            proxy: String::new(),
+            name: "voice-message.ogg".into(),
+            size: 0,
+            content_type: Some("audio/ogg".into()),
+            width: None,
+            height: None,
+            spoiler: false,
+            duration: Some(take.seconds),
+            waveform: take.waveform.clone(),
+        }];
+        let (nonce, reply) = self.show_pending(channel, String::new(), None, shown, true);
+        self.backend().send(Command::SendVoice {
+            channel,
+            nonce,
+            reply,
+            samples: take.samples,
+            seconds: take.seconds,
+            waveform: take.waveform,
+        });
+    }
+
+    /// Puts the user's message in the channel, pending, and returns its
+    /// nonce and the message it replies to.
+    fn show_pending(
+        &mut self,
+        channel: Id,
+        text: String,
+        sticker: Option<Sticker>,
+        shown: Vec<Attachment>,
+        voice: bool,
+    ) -> (String, Option<Id>) {
         let now = jiff::Timestamp::now();
         let nonce = crate::app::snowflake(now).to_string();
         let reply = self.chat.reply.remove(&channel);
@@ -902,6 +987,7 @@ impl App {
         message.nonce = Some(nonce.clone());
         message.pending = true;
         message.attachments = shown;
+        message.voice = voice;
         message.stickers = sticker.iter().cloned().collect();
         if let Some(reply) = reply {
             let quoted = self
@@ -920,17 +1006,8 @@ impl App {
         }
         self.chat.last_typing.remove(&channel);
         self.chat.unread_from.remove(&channel);
-        self.backend().send(Command::Send {
-            channel,
-            message: rest::Outgoing {
-                content: text,
-                nonce,
-                reply,
-                sticker: sticker.map(|s| s.id),
-                files,
-            },
-        });
         self.chat.focus_composer = true;
+        (nonce, reply)
     }
 
     /// `:smile:` becomes 😄 and `:name:` a server emoji, as Discord does

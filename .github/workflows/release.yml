@@ -18,6 +18,13 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # libopus is built from its bundled source into the binary, so no
+  # platform needs it installed.
+  LIBOPUS_STATIC: "1"
+  LIBOPUS_NO_PKG: "1"
+  # The libopus bundled with audiopus_sys asks for CMake older than 3.5,
+  # which CMake 4 refuses unless told this.
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
   version:
