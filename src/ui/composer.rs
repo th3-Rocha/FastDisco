@@ -1785,13 +1785,12 @@ fn suggestions(app: &App, channel: Id) -> Option<(String, String, Vec<Suggestion
                     .collect::<Vec<_>>()
                     .join(" ");
                 let lower = name.to_lowercase();
-                let rank = if lower.starts_with(&query) {
-                    0
-                } else if lower.contains(&query) {
-                    1
-                } else {
+                // Only names that start with what was typed, as Discord;
+                // the exact name first.
+                if !lower.starts_with(&query) {
                     return None;
-                };
+                }
+                let rank = u8::from(lower != query);
                 let app_name = index.apps.get(&command.application);
                 let detail = match (app_name, entry.description.is_empty()) {
                     (Some(a), false) => format!("{}  •  {a}", entry.description),
@@ -1989,83 +1988,107 @@ fn autocomplete(app: &mut App, ui: &mut Ui, channel: Id, field: Rect) {
                         font(Weight::Bold, 12.0),
                         palette.muted,
                     );
-                    for (i, s) in list.iter().enumerate() {
-                        let (rect, response) = ui
-                            .allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
-                        if i == selected || response.hovered() {
-                            ui.painter()
-                                .rect_filled(rect, CornerRadius::same(4), palette.selected);
-                        }
-                        let icon = pos2(rect.left() + 20.0, rect.center().y);
-                        match &s.hint {
-                            Hint::User(id) => {
-                                if let Some(user) = app.model.user(*id) {
-                                    super::widgets::avatar(ui, app, user, icon, 12.0, None);
-                                }
-                            }
-                            Hint::Emoji(text) => {
-                                ui.painter().text(
-                                    icon,
-                                    Align2::CENTER_CENTER,
-                                    text,
-                                    font(Weight::Regular, 20.0),
-                                    Color32::WHITE,
+                    // A long list scrolls, as Discord's keeps to its height.
+                    let last = egui::Id::new("autocomplete-last-pick");
+                    let moved = ui.data(|d| d.get_temp::<usize>(last)) != Some(selected);
+                    ui.data_mut(|d| d.insert_temp(last, selected));
+                    egui::ScrollArea::vertical()
+                        .max_height(400.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for (i, s) in list.iter().enumerate() {
+                                let (rect, response) = ui.allocate_exact_size(
+                                    vec2(ui.available_width(), 36.0),
+                                    Sense::click(),
                                 );
-                            }
-                            Hint::Custom(url) => {
-                                if let Some(uri) = app.picture(Some(url)) {
-                                    egui::Image::new(uri).paint_at(
-                                        ui,
-                                        Rect::from_center_size(icon, Vec2::splat(22.0)),
+                                // The arrows move the pick; keep it in view.
+                                if i == selected && moved {
+                                    ui.scroll_to_rect(rect, None);
+                                }
+                                if i == selected || response.hovered() {
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        CornerRadius::same(4),
+                                        palette.selected,
                                     );
                                 }
-                            }
-                            Hint::Channel => paint_icon(ui, Icon::Hash, icon, 20.0, palette.muted),
-                            Hint::Command(_, url) => {
-                                // The app's round picture, as in Discord.
-                                let r = Rect::from_center_size(icon, Vec2::splat(24.0));
-                                match app.picture(Some(url)) {
-                                    Some(uri) => egui::Image::new(uri)
-                                        .corner_radius(CornerRadius::same(12))
-                                        .paint_at(ui, r),
-                                    None => {
-                                        ui.painter().circle_filled(icon, 12.0, palette.chat);
+                                let icon = pos2(rect.left() + 20.0, rect.center().y);
+                                match &s.hint {
+                                    Hint::User(id) => {
+                                        if let Some(user) = app.model.user(*id) {
+                                            super::widgets::avatar(ui, app, user, icon, 12.0, None);
+                                        }
+                                    }
+                                    Hint::Emoji(text) => {
+                                        ui.painter().text(
+                                            icon,
+                                            Align2::CENTER_CENTER,
+                                            text,
+                                            font(Weight::Regular, 20.0),
+                                            Color32::WHITE,
+                                        );
+                                    }
+                                    Hint::Custom(url) => {
+                                        if let Some(uri) = app.picture(Some(url)) {
+                                            egui::Image::new(uri).paint_at(
+                                                ui,
+                                                Rect::from_center_size(icon, Vec2::splat(22.0)),
+                                            );
+                                        }
+                                    }
+                                    Hint::Channel => {
+                                        paint_icon(ui, Icon::Hash, icon, 20.0, palette.muted)
+                                    }
+                                    Hint::Command(_, url) => {
+                                        // The app's round picture, as in Discord.
+                                        let r = Rect::from_center_size(icon, Vec2::splat(24.0));
+                                        match app.picture(Some(url)) {
+                                            Some(uri) => egui::Image::new(uri)
+                                                .corner_radius(CornerRadius::same(12))
+                                                .paint_at(ui, r),
+                                            None => {
+                                                ui.painter().circle_filled(
+                                                    icon,
+                                                    12.0,
+                                                    palette.chat,
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Hint::Everyone => {
+                                        ui.painter().text(
+                                            icon,
+                                            Align2::CENTER_CENTER,
+                                            "@",
+                                            font(Weight::Bold, 18.0),
+                                            palette.muted,
+                                        );
                                     }
                                 }
-                            }
-                            Hint::Everyone => {
-                                ui.painter().text(
-                                    icon,
-                                    Align2::CENTER_CENTER,
-                                    "@",
-                                    font(Weight::Bold, 18.0),
-                                    palette.muted,
+                                let label = ui.painter().text(
+                                    pos2(rect.left() + 40.0, rect.center().y),
+                                    Align2::LEFT_CENTER,
+                                    hyphens(&s.label),
+                                    font(Weight::Medium, 15.0),
+                                    palette.strong,
                                 );
+                                if let Some(detail) = &s.detail {
+                                    Elide::new(ui, rect.right() - 8.0).text(
+                                        pos2(label.right() + 8.0, rect.center().y),
+                                        Align2::LEFT_CENTER,
+                                        hyphens(detail),
+                                        font(Weight::Regular, 13.0),
+                                        palette.muted,
+                                    );
+                                }
+                                if response.hovered() {
+                                    app.chat.suggestion = i;
+                                }
+                                if response.clicked() {
+                                    chosen = Some(s.action(&word));
+                                }
                             }
-                        }
-                        let label = ui.painter().text(
-                            pos2(rect.left() + 40.0, rect.center().y),
-                            Align2::LEFT_CENTER,
-                            hyphens(&s.label),
-                            font(Weight::Medium, 15.0),
-                            palette.strong,
-                        );
-                        if let Some(detail) = &s.detail {
-                            Elide::new(ui, rect.right() - 8.0).text(
-                                pos2(label.right() + 8.0, rect.center().y),
-                                Align2::LEFT_CENTER,
-                                hyphens(detail),
-                                font(Weight::Regular, 13.0),
-                                palette.muted,
-                            );
-                        }
-                        if response.hovered() {
-                            app.chat.suggestion = i;
-                        }
-                        if response.clicked() {
-                            chosen = Some(s.action(&word));
-                        }
-                    }
+                        });
                 });
         });
     if let Some(action) = chosen {
