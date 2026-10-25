@@ -1,6 +1,7 @@
 //! FastDisco: Discord, native and fast.
 
 mod animation;
+mod admin;
 mod app;
 mod backend;
 mod chat;

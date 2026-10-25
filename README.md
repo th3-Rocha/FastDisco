@@ -49,7 +49,8 @@ cargo run
 - [x] Replies, edits, deletion, reactions, typing indicator, older history on scroll
 - [x] Sending files by picker or drag and drop, with spoilers; GIF and sticker pickers
 - [x] Discord's limits: character counter, "message too long" (send as file), upload size by plan
-- [ ] Notifications and tray
+- [x] Notifications and tray
+- [x] Server menu and settings: invites, nickname, new channels and categories, leaving, roles, emoji, members, invites, bans, audit log
 - [x] Avatars and server icons
 - [x] F12 performance overlay (FPS, frame time, RAM, CPU, threads)
 

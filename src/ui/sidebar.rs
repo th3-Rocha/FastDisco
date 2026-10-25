@@ -55,7 +55,11 @@ fn header(app: &mut App, ui: &mut Ui) {
             match app.place {
                 Place::Server(id) => {
                     let response = ui.allocate_rect(rect, Sense::click());
-                    if response.hovered() {
+                    if response.clicked() {
+                        app.actions.push(Action::Admin(crate::admin::AdminAction::ToggleMenu));
+                    }
+                    let open = app.admin.menu;
+                    if response.hovered() || open {
                         ui.painter()
                             .rect_filled(rect, CornerRadius::ZERO, palette.hover);
                     }
@@ -73,13 +77,15 @@ fn header(app: &mut App, ui: &mut Ui) {
                         font(Weight::SemiBold, 15.0),
                         palette.strong,
                     );
+                    // An X while the menu is open, as Discord.
                     paint_icon(
                         ui,
-                        Icon::ChevronDown,
+                        if open { Icon::Close } else { Icon::ChevronDown },
                         pos2(rect.right() - 22.0, rect.center().y),
                         18.0,
                         palette.strong,
                     );
+                    super::admin::menu(app, ui, rect);
                 }
                 Place::Home => {
                     let field =

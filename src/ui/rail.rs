@@ -249,11 +249,17 @@ fn rail_tooltip(ui: &Ui, icon: Rect, text: &str) {
                 .corner_radius(CornerRadius::same(6))
                 .inner_margin(egui::Margin::symmetric(12, 8))
                 .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(super::widgets::hyphens(text))
-                            .font(font(Weight::SemiBold, 16.0))
-                            .color(Color32::WHITE),
+                    // Laid out at Discord's widest, breaking between words:
+                    // a new Area starts narrow, and a label would wrap
+                    // every letter.
+                    let galley = ui.painter().layout(
+                        super::widgets::hyphens(text).into_owned(),
+                        font(Weight::SemiBold, 16.0),
+                        Color32::WHITE,
+                        196.0,
                     );
+                    let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+                    ui.painter().galley(rect.min, galley, Color32::WHITE);
                 });
             let r = frame.response.rect;
             let tip = [

@@ -66,6 +66,13 @@ pub enum Command {
     /// Starts FastDisco at login, or stops.
     SetAutostart(bool),
     AutostartState,
+    /// Any API call; the reply comes back tagged with `tag`.
+    Api {
+        tag: crate::admin::Tag,
+        method: reqwest::Method,
+        path: String,
+        body: Option<Value>,
+    },
     /// A user's profile and the note about them.
     Profile {
         user: u64,
@@ -140,6 +147,10 @@ pub enum Event {
         reason: String,
     },
     GifHome(rest::GifHome),
+    Api {
+        tag: crate::admin::Tag,
+        result: Result<Value, String>,
+    },
     ProfileSaved(Result<(), String>),
     Autostart(Option<bool>),
     Profile {
@@ -419,6 +430,12 @@ impl Worker {
                     let autostart = fastframe_autostart::Autostart::new("fastdisco", "FastDisco");
                     let _ = events.send(Event::Autostart(autostart_on(&autostart)));
                     ctx.wake();
+                });
+            }
+            Command::Api { tag, method, path, body } => {
+                self.spawn(move |client, token, events| async move {
+                    let result = rest::call(&client, &token, method, &path, body).await;
+                    let _ = events.send(Event::Api { tag, result });
                 });
             }
             Command::Profile { user, guild } => {

@@ -521,6 +521,20 @@ pub struct Account {
 
 const VIEW_CHANNEL: u64 = 1 << 10;
 
+/// Discord's permission bits that the interface checks.
+pub mod permission {
+    pub const CREATE_INVITE: u64 = 1 << 0;
+    pub const KICK: u64 = 1 << 1;
+    pub const BAN: u64 = 1 << 2;
+    pub const ADMINISTRATOR: u64 = 1 << 3;
+    pub const MANAGE_CHANNELS: u64 = 1 << 4;
+    pub const MANAGE_GUILD: u64 = 1 << 5;
+    pub const VIEW_AUDIT_LOG: u64 = 1 << 7;
+    pub const CHANGE_NICKNAME: u64 = 1 << 26;
+    pub const MANAGE_ROLES: u64 = 1 << 28;
+    pub const MANAGE_EMOJIS: u64 = 1 << 30;
+}
+
 impl Model {
     /// The longest message the user may send.
     pub fn max_message(&self) -> usize {
@@ -591,6 +605,25 @@ impl Model {
         } else {
             names.join(", ")
         }
+    }
+
+    /// What the user may do on a server, from its roles; everything for the
+    /// owner and administrators.
+    pub fn guild_permissions(&self, guild: Id) -> u64 {
+        let Some(g) = self.guild(guild) else { return 0 };
+        if g.owner == self.me {
+            return u64::MAX;
+        }
+        let roles = g.members.get(&self.me).map(|m| m.roles.clone()).unwrap_or_default();
+        let mut bits = g.roles.iter().find(|r| r.id == g.id).map_or(0, |r| r.permissions);
+        for role in g.roles.iter().filter(|r| roles.contains(&r.id)) {
+            bits |= role.permissions;
+        }
+        if bits & permission::ADMINISTRATOR != 0 { u64::MAX } else { bits }
+    }
+
+    pub fn can(&self, guild: Id, bit: u64) -> bool {
+        self.guild_permissions(guild) & bit != 0
     }
 
     /// Whether the user may see a channel: the guild's roles, then the

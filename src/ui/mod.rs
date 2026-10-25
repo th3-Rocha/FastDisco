@@ -1,6 +1,7 @@
 //! The window: the server rail, the sidebar and the open channel, in
 //! Discord's arrangement.
 
+mod admin;
 mod chat;
 mod composer;
 mod login;
@@ -23,6 +24,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             settings::show(app, ui);
             sidebar::logout_dialog(app, ui);
         }
+        Screen::Main if app.admin.settings.is_some() => {
+            admin::settings(app, ui);
+            admin::modal(app, ui);
+        }
         Screen::Main => {
             if let Some(player) = &mut app.chat.player {
                 player.update();
@@ -42,6 +47,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             chat::show(app, ui);
             profile::popout(app, ui);
             sidebar::logout_dialog(app, ui);
+            admin::modal(app, ui);
             let wanted: Vec<crate::model::Id> =
                 ui.data_mut(|d| {
                     std::mem::take(d.get_temp_mut_or_default::<Vec<crate::model::Id>>(

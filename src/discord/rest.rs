@@ -428,3 +428,26 @@ pub async fn edit_profile(
             .to_owned())
     }
 }
+
+/// Any API call: the method, the path under /api/v9 and a JSON body. The
+/// reply's JSON (`null` when empty), or Discord's message on failure.
+pub async fn call(client: &reqwest::Client, token: &str, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<Value, String> {
+    let mut request = client.request(method, format!("{API}{path}")).header("Authorization", token);
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request.send().await.map_err(|e| e.to_string())?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if status.is_success() {
+        Ok(value)
+    } else {
+        let message = value["message"].as_str().map(str::to_owned).unwrap_or_else(|| status.to_string());
+        Err(match value["code"].as_i64() {
+            Some(50013) => "Você não tem permissão para isso.".into(),
+            Some(50001) => "Sem acesso.".into(),
+            _ => message,
+        })
+    }
+}

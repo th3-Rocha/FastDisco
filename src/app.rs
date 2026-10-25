@@ -98,6 +98,8 @@ pub enum Action {
     MarkGuildRead(Id),
     /// Alt+Up and Alt+Down: the channel above or below the open one.
     StepChannel(i32),
+    /// The server menu, its dialogs and the server settings.
+    Admin(crate::admin::AdminAction),
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -142,6 +144,7 @@ pub struct App {
     /// The unread count last put in the window title.
     title_count: u32,
     pub settings_page: Option<SettingsPage>,
+    pub admin: crate::admin::Admin,
     pub profile_form: Option<ProfileForm>,
     /// Whether FastDisco starts at login; `None` where it cannot.
     pub autostart: Option<bool>,
@@ -189,6 +192,7 @@ impl App {
             requests: Default::default(),
             title_count: 0,
             settings_page: None,
+            admin: crate::admin::Admin::default(),
             profile_form: None,
             autostart: None,
             autostart_asked: false,
@@ -471,6 +475,7 @@ impl App {
                     self.chat.dialog = Some(crate::chat::Dialog::Failed(reason));
                 }
                 Event::GifHome(home) => self.chat.gif_home = Some(home),
+                Event::Api { tag, result } => self.api_result(tag, result),
                 Event::Profile { user, profile } => {
                     self.chat.profiles.insert(
                         user,
@@ -716,6 +721,7 @@ impl App {
                 }
                 Action::Send => self.send_draft(),
                 Action::Chat(action) => self.apply_chat(action),
+                Action::Admin(action) => self.apply_admin(action),
                 Action::OpenSettings(page) => {
                     self.chat.popout = None;
                     self.settings_page = Some(page);
