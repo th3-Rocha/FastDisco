@@ -756,47 +756,7 @@ fn notifications(app: &mut App, ui: &mut Ui) {
 fn keybinds(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
     title(ui, &palette, "Atalhos de teclado");
-    let list = [
-        ("Enter", "Enviar mensagem"),
-        ("Shift + Enter", "Nova linha"),
-        ("↑ com o campo vazio", "Editar a última mensagem"),
-        ("Esc", "Cancelar resposta, edição ou seletor"),
-        ("Alt + ↑ / Alt + ↓", "Canal anterior / próximo"),
-        ("Ctrl + K", "Encontrar ou começar uma conversa"),
-        ("Tab / Enter", "Escolher uma sugestão (@, :, #)"),
-        ("Shift + clique em excluir", "Excluir sem confirmar"),
-        ("Ctrl + / Ctrl −", "Zoom"),
-        ("F12", "Desempenho (FPS, memória, CPU)"),
-    ];
-    for (keys, what) in list {
-        ui.horizontal(|ui| {
-            ui.set_min_height(32.0);
-            ui.label(
-                RichText::new(what)
-                    .font(font(Weight::Medium, 15.0))
-                    .color(palette.text),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                Frame::new()
-                    .fill(palette.rail)
-                    .corner_radius(CornerRadius::same(4))
-                    .inner_margin(Margin::symmetric(8, 4))
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(keys)
-                                .font(font(Weight::SemiBold, 13.0))
-                                .color(palette.strong),
-                        );
-                    });
-            });
-        });
-        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-        ui.painter().hline(
-            rect.x_range(),
-            rect.center().y,
-            Stroke::new(1.0, palette.divider),
-        );
-    }
+    super::nav::shortcut_rows(app, ui);
 }
 
 fn linux(app: &mut App, ui: &mut Ui) {

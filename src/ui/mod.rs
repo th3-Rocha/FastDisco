@@ -5,7 +5,9 @@ mod admin;
 mod chat;
 mod composer;
 mod login;
+mod friends;
 mod message;
+mod nav;
 pub mod overlay;
 mod player;
 mod profile;
@@ -33,6 +35,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 player.update();
             }
             app.update_animations();
+            nav::keys(app, ui.ctx());
             // Alt+Up and Alt+Down move between channels, as in Discord.
             let alt = egui::Modifiers::ALT;
             if ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowUp)) {
@@ -48,6 +51,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             profile::popout(app, ui);
             sidebar::logout_dialog(app, ui);
             admin::modal(app, ui);
+            nav::popout(app, ui);
+            nav::switcher(app, ui);
+            nav::shortcuts(app, ui);
             let wanted: Vec<crate::model::Id> =
                 ui.data_mut(|d| {
                     std::mem::take(d.get_temp_mut_or_default::<Vec<crate::model::Id>>(

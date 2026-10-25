@@ -25,13 +25,19 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     egui::CentralPanel::default()
         .frame(Frame::new().fill(palette.chat).inner_margin(Margin::ZERO))
         .show(ui, |ui| {
+            if super::nav::is_friends(app) {
+                super::friends::show(app, ui);
+                return;
+            }
             let Some(channel) = app.channel.filter(|c| app.model.channels.contains_key(c)) else {
                 empty(app, ui);
                 return;
             };
             header(app, ui, channel);
-            // Like Discord, a narrow window gives the room to the messages.
-            if app.settings.show_members
+            // Search results take the member list's place, as in Discord.
+            if app.nav.search.is_some() {
+                super::nav::search_panel(app, ui);
+            } else if app.settings.show_members
                 && app.server().is_some()
                 && ui.available_width() >= MEMBERS_MIN_CHAT + MEMBERS_WIDTH
             {
@@ -43,6 +49,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 .filter(|c| c.kind == ChannelKind::Direct)
                 .and_then(|c| c.recipients.first().copied());
             if let Some(user) = direct
+                && app.nav.search.is_none()
                 && app.settings.dm_profile
                 && ui.available_width() >= MEMBERS_MIN_CHAT + profile::PANEL_WIDTH
             {
@@ -166,9 +173,13 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                     .layout(Layout::right_to_left(Align::Center)),
                 |ui| {
                     ui.spacing_mut().item_spacing = vec2(12.0, 0.0);
-                    icon_button(ui, &palette, Icon::Help, 24.0, false, "Ajuda");
-                    icon_button(ui, &palette, Icon::Inbox, 24.0, false, "Caixa de entrada");
-                    search(ui, &palette);
+                    if icon_button(ui, &palette, Icon::Help, 24.0, false, "Ajuda").clicked() {
+                        app.actions.push(Action::Chat(crate::chat::ChatAction::OpenUrl(
+                            "https://support.discord.com".into(),
+                        )));
+                    }
+                    super::nav::popout_button(app, ui, crate::nav::Popout::Inbox);
+                    super::nav::search_field(app, ui);
                     if in_server {
                         let hint = if show_members {
                             "Ocultar lista de membros"
@@ -180,7 +191,7 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                         {
                             app.actions.push(Action::ToggleMembers);
                         }
-                        icon_button(ui, &palette, Icon::Pin, 24.0, false, "Mensagens fixadas");
+                        super::nav::popout_button(app, ui, crate::nav::Popout::Pins);
                         icon_button(
                             ui,
                             &palette,
@@ -209,32 +220,11 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                             false,
                             "Adicionar amigos à DM",
                         );
-                        icon_button(ui, &palette, Icon::Pin, 24.0, false, "Mensagens fixadas");
+                        super::nav::popout_button(app, ui, crate::nav::Popout::Pins);
                     }
                 },
             );
         });
-}
-
-/// The search field in the header. Searching arrives later.
-fn search(ui: &mut Ui, palette: &Palette) {
-    let (rect, _) = ui.allocate_exact_size(vec2(144.0, 24.0), Sense::click());
-    ui.painter()
-        .rect_filled(rect, CornerRadius::same(4), palette.rail);
-    ui.painter().text(
-        pos2(rect.left() + 8.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        "Buscar",
-        font(Weight::Medium, 14.0),
-        palette.muted,
-    );
-    paint_icon(
-        ui,
-        Icon::Search,
-        pos2(rect.right() - 12.0, rect.center().y),
-        16.0,
-        palette.muted,
-    );
 }
 
 fn messages(app: &mut App, ui: &mut Ui, id: Id) {
@@ -258,6 +248,8 @@ fn messages(app: &mut App, ui: &mut Ui, id: Id) {
         area = area.vertical_scroll_offset(offset);
         ui.data_mut(|d| d.remove::<f32>(egui::Id::new(("scroll-shift", id))));
     }
+    let detached = app.nav.detached.contains(&id);
+    let mut jump_scrolled = false;
     let output = area.show(ui, |ui| {
         ui.spacing_mut().item_spacing = Vec2::ZERO;
         let width = ui.available_width();
@@ -285,8 +277,10 @@ fn messages(app: &mut App, ui: &mut Ui, id: Id) {
             guild,
             channel: id,
             out: &mut out,
+            found: false,
         };
         let unread_from = app.chat.unread_from.get(&id).copied();
+        let jump = app.nav.jump.filter(|j| j.channel == id);
         let mut new_shown = false;
         let mut previous: Option<&Message> = None;
         for m in &channel.messages {
@@ -311,7 +305,27 @@ fn messages(app: &mut App, ui: &mut Ui, id: Id) {
             if !continues {
                 ui.add_space(16.0);
             }
+            let top = ui.cursor().top();
             message::show(&mut row, ui, m, continues);
+            if let Some(jump) = jump.filter(|j| j.message == m.id) {
+                let rect = Rect::from_min_max(
+                    pos2(ui.max_rect().left(), top),
+                    pos2(ui.max_rect().right(), ui.cursor().top()),
+                );
+                if !jump.scrolled {
+                    ui.scroll_to_rect(rect, Some(Align::Center));
+                    jump_scrolled = true;
+                }
+                // The jumped-to message lights up, then fades.
+                let age = jump.at.elapsed().as_secs_f32();
+                let fade = (1.0 - (age - 1.0).max(0.0) / 1.5).clamp(0.0, 1.0);
+                ui.painter().rect_filled(
+                    rect,
+                    CornerRadius::ZERO,
+                    palette.accent.gamma_multiply(0.18 * fade),
+                );
+                ui.ctx().request_repaint();
+            }
             previous = Some(m);
         }
         ui.add_space(8.0);
@@ -319,8 +333,9 @@ fn messages(app: &mut App, ui: &mut Ui, id: Id) {
     let offset = output.state.offset.y;
     let height = output.content_size.y;
     let viewport = output.inner_rect;
-    // Far from the newest messages: Discord's bar to jump back.
-    if height - offset - viewport.height() > viewport.height() * 1.5 {
+    // Far from the newest messages, or showing a jump into the past:
+    // Discord's bar to jump back.
+    if detached || height - offset - viewport.height() > viewport.height() * 1.5 {
         let bar = Rect::from_min_max(
             pos2(viewport.left() + 16.0, viewport.bottom() - 32.0),
             pos2(viewport.right() - 16.0, viewport.bottom()),
@@ -364,6 +379,9 @@ fn messages(app: &mut App, ui: &mut Ui, id: Id) {
         }
         ui.painter().galley(jump.min, label, palette.strong);
         if response.clicked() {
+            if detached {
+                out.push(Action::Nav(crate::nav::NavAction::JumpToPresent(id)));
+            }
             ui.data_mut(|d| d.insert_temp(egui::Id::new(("scroll-shift", id)), height));
         }
     }
@@ -385,6 +403,12 @@ fn messages(app: &mut App, ui: &mut Ui, id: Id) {
         out.push(Action::Chat(crate::chat::ChatAction::LoadOlder(id)));
     }
     app.actions.extend(out);
+    if let Some(jump) = &mut app.nav.jump {
+        jump.scrolled |= jump_scrolled;
+        if jump.at.elapsed().as_secs_f32() > 2.5 && jump.scrolled {
+            app.nav.jump = None;
+        }
+    }
     // The inline editor's text, written back now that nothing borrows it.
     if let Some(text) = ui.data_mut(|d| d.remove_temp::<String>(egui::Id::new("edit-message-text")))
         && let Some(editing) = &mut app.chat.editing
@@ -583,6 +607,7 @@ fn members(app: &mut App, ui: &mut Ui) {
                         guild: Some(id),
                         channel: 0,
                         out: &mut out,
+                        found: false,
                     };
                     for item in &guild.list {
                         match item {

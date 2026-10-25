@@ -307,24 +307,43 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
         pos2(slot.left() + 8.0, slot.top() + 1.0),
         pos2(slot.right() - 8.0, slot.bottom() - 1.0),
     );
-    if response.hovered() {
+    let selected = super::nav::is_friends(app);
+    if selected {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), palette.selected);
+    } else if response.hovered() {
         ui.painter()
             .rect_filled(rect, CornerRadius::same(4), palette.hover);
     }
+    let lit = selected || response.hovered();
     paint_icon(
         ui,
         Icon::Users,
         pos2(rect.left() + 22.0, rect.center().y),
         22.0,
-        palette.icon,
+        if lit { palette.strong } else { palette.icon },
     );
     ui.painter().text(
         pos2(rect.left() + 48.0, rect.center().y),
         Align2::LEFT_CENTER,
         "Amigos",
         font(Weight::Medium, 16.0),
-        palette.muted,
+        if lit { palette.strong } else { palette.muted },
     );
+    // Requests waiting, as the red badge on Discord's friends row.
+    let pending = app
+        .model
+        .relationships
+        .values()
+        .filter(|k| **k == crate::nav::relationship::INCOMING)
+        .count() as u32;
+    if pending > 0 {
+        badge(ui, &palette, pos2(rect.right() - 8.0, rect.center().y), pending, None);
+    }
+    if response.clicked() {
+        app.actions
+            .push(Action::Nav(crate::nav::NavAction::Friends));
+    }
 
     ui.add_space(16.0);
     let (rect, _) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 24.0), Sense::hover());

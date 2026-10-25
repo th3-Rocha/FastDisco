@@ -100,6 +100,8 @@ pub enum Action {
     StepChannel(i32),
     /// The server menu, its dialogs and the server settings.
     Admin(crate::admin::AdminAction),
+    /// The switcher, the inbox, pins, search, friends and jumping.
+    Nav(crate::nav::NavAction),
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -145,6 +147,7 @@ pub struct App {
     title_count: u32,
     pub settings_page: Option<SettingsPage>,
     pub admin: crate::admin::Admin,
+    pub nav: crate::nav::Nav,
     pub profile_form: Option<ProfileForm>,
     /// Whether FastDisco starts at login; `None` where it cannot.
     pub autostart: Option<bool>,
@@ -193,6 +196,7 @@ impl App {
             title_count: 0,
             settings_page: None,
             admin: crate::admin::Admin::default(),
+            nav: crate::nav::Nav::default(),
             profile_form: None,
             autostart: None,
             autostart_asked: false,
@@ -475,7 +479,10 @@ impl App {
                     self.chat.dialog = Some(crate::chat::Dialog::Failed(reason));
                 }
                 Event::GifHome(home) => self.chat.gif_home = Some(home),
-                Event::Api { tag, result } => self.api_result(tag, result),
+                Event::Api { tag, result } => match tag {
+                    crate::backend::Tag::Admin(tag) => self.api_result(tag, result),
+                    crate::backend::Tag::Nav(tag) => self.nav_result(tag, result),
+                },
                 Event::Profile { user, profile } => {
                     self.chat.profiles.insert(
                         user,
@@ -722,6 +729,7 @@ impl App {
                 Action::Send => self.send_draft(),
                 Action::Chat(action) => self.apply_chat(action),
                 Action::Admin(action) => self.apply_admin(action),
+                Action::Nav(action) => self.apply_nav(action),
                 Action::OpenSettings(page) => {
                     self.chat.popout = None;
                     self.settings_page = Some(page);
@@ -843,11 +851,17 @@ impl App {
         self.open_channel(channel);
     }
 
+    /// Home opens where the user last was there: a direct message, or
+    /// the friends page, as Discord.
     fn go_home(&mut self) {
         self.place = Place::Home;
         self.channel = None;
-        if let Some(first) = self.model.sorted_direct().first().copied() {
-            self.open_channel(first);
+        if let Some(channel) = self
+            .nav
+            .home_channel
+            .filter(|c| self.model.channels.contains_key(c))
+        {
+            self.open_channel(channel);
         }
     }
 
@@ -867,7 +881,7 @@ impl App {
 
     /// Shows a channel: loads its history the first time, marks it read
     /// and asks for the server's member list.
-    fn open_channel(&mut self, id: Id) {
+    pub(crate) fn open_channel(&mut self, id: Id) {
         let Some(channel) = self.model.channels.get_mut(&id) else {
             return;
         };
@@ -877,7 +891,10 @@ impl App {
         // A channel opened from a mention may be on another server.
         self.place = match channel.guild {
             Some(guild) => Place::Server(guild),
-            None => Place::Home,
+            None => {
+                self.nav.home_channel = Some(id);
+                Place::Home
+            }
         };
         if self.channel != Some(id) {
             self.chat.player = None;
@@ -931,6 +948,10 @@ impl App {
     }
 
     fn history(&mut self, id: Id, list: &[Value]) {
+        // A jump into the past arrived first: keep showing it.
+        if self.nav.detached.contains(&id) {
+            return;
+        }
         let me = self.model.me;
         let guild = self.model.channel(id).and_then(|c| c.guild);
         let mut messages: Vec<Message> = Vec::new();
@@ -941,6 +962,7 @@ impl App {
             }
         }
         if let Some(channel) = self.model.channels.get_mut(&id) {
+            channel.loading = false;
             channel.more = list.len() >= 50;
             // Keep anything that arrived live while the history loaded.
             let newest = messages.last().map_or(0, |m| m.id);
@@ -958,6 +980,14 @@ impl App {
         let me = self.model.me;
         match kind {
             "READY_SUPPLEMENTAL" => parse::supplemental(&data, &mut self.model),
+            "RELATIONSHIP_ADD" | "RELATIONSHIP_UPDATE" => {
+                parse::relationship(&data, &mut self.model);
+            }
+            "RELATIONSHIP_REMOVE" => {
+                if let Some(id) = parse::id(&data["id"]) {
+                    self.model.relationships.remove(&id);
+                }
+            }
             "MESSAGE_CREATE" => {
                 let Some(channel_id) = parse::id(&data["channel_id"]) else {
                     return;
@@ -985,7 +1015,9 @@ impl App {
                         message: message.id,
                     });
                 }
-                if !channel.requested {
+                // Showing older messages after a jump: the new one waits
+                // for "Ir para o presente".
+                if !channel.requested || self.nav.detached.contains(&channel_id) {
                     return;
                 }
                 match channel

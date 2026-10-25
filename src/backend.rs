@@ -13,6 +13,13 @@ use crate::discord::{self, auth, parse, remote_auth, rest};
 use crate::model::Model;
 use crate::session;
 
+/// Whom an API answer is for.
+#[derive(Clone, Debug)]
+pub enum Tag {
+    Admin(crate::admin::Tag),
+    Nav(crate::nav::Tag),
+}
+
 #[derive(Debug)]
 pub enum Command {
     /// At start: sign in with the saved token, if there is one.
@@ -78,7 +85,7 @@ pub enum Command {
     AutostartState,
     /// Any API call; the reply comes back tagged with `tag`.
     Api {
-        tag: crate::admin::Tag,
+        tag: Tag,
         method: reqwest::Method,
         path: String,
         body: Option<Value>,
@@ -158,7 +165,7 @@ pub enum Event {
     },
     GifHome(rest::GifHome),
     Api {
-        tag: crate::admin::Tag,
+        tag: Tag,
         result: Result<Value, String>,
     },
     ProfileSaved(Result<(), String>),

@@ -453,9 +453,7 @@ pub fn ready(value: &Value) -> Model {
         }
     }
     for r in value["relationships"].as_array().into_iter().flatten() {
-        if let Some(u) = user(&r["user"]) {
-            model.users.entry(u.id).or_insert(u);
-        }
+        relationship(r, &mut model);
     }
     let mut guilds: Vec<Guild> = value["guilds"]
         .as_array()
@@ -520,6 +518,17 @@ pub fn ready(value: &Value) -> Model {
         }
     }
     model
+}
+
+/// A friend, a blocked person or a request, from READY or the gateway.
+pub fn relationship(value: &Value, model: &mut Model) {
+    if let Some(u) = user(&value["user"]) {
+        model.users.entry(u.id).or_insert(u);
+    }
+    let kind = value["type"].as_u64().unwrap_or(0) as u8;
+    if let Some(id) = id(&value["id"]).or_else(|| id(&value["user"]["id"])) {
+        model.relationships.insert(id, kind);
+    }
 }
 
 /// Presences from READY_SUPPLEMENTAL.

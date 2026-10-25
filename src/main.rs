@@ -11,6 +11,7 @@ mod login;
 mod markdown;
 mod media;
 mod model;
+mod nav;
 mod notify;
 mod resident;
 mod session;

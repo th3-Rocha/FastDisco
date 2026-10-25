@@ -299,8 +299,14 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
         if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
             if app.chat.picker.is_some() {
                 act(app, ChatAction::ClosePicker);
-            } else {
+            } else if app.chat.reply.contains_key(&channel) {
                 act(app, ChatAction::CancelReply);
+            } else if app.nav.popout.is_some() {
+                app.actions
+                    .push(Action::Nav(crate::nav::NavAction::ClosePopout));
+            } else {
+                // Nothing to close: Escape marks the channel read, as Discord.
+                app.actions.push(Action::MarkRead(channel));
             }
         }
         let empty = app.drafts.get(&channel).is_none_or(|d| d.is_empty());

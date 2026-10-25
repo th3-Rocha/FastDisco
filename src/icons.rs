@@ -52,6 +52,8 @@ fastframe_icons::icons! {
         StarFill => "star-fill",
         Trending => "trending-up",
         Back => lucide "arrow-left",
+        Check => lucide "check",
+        MessageCircle => "message-circle",
         Send => "send-horizontal",
     }
 }

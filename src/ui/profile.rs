@@ -273,6 +273,7 @@ fn card(
                     guild,
                     channel: 0,
                     out,
+                    found: false,
                 };
                 blocks(
                     &mut row,

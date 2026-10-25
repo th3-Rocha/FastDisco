@@ -508,6 +508,9 @@ pub struct Model {
     /// 0 none, 1 Nitro Classic, 2 Nitro, 3 Nitro Basic.
     pub premium: u8,
     pub account: Account,
+    /// Friends, blocked people and requests, by Discord's type
+    /// (`nav::relationship`).
+    pub relationships: HashMap<Id, u8>,
 }
 
 /// The signed-in account's private details, from READY.

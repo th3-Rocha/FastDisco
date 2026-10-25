@@ -31,6 +31,9 @@ pub struct Row<'a> {
     pub guild: Option<Id>,
     pub channel: Id,
     pub out: &'a mut Vec<Action>,
+    /// Shown away from its channel (pins, inbox, search): a "Pular" button
+    /// instead of the toolbar, and no menu.
+    pub found: bool,
 }
 
 impl Row<'_> {
@@ -168,12 +171,28 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
     }
 
     if hovered && !message.pending && system.is_none() {
-        toolbar(row, ui, message, rect);
+        if row.found {
+            jump_button(row, ui, message, rect);
+        } else {
+            toolbar(row, ui, message, rect);
+        }
+    }
+    if row.found {
+        return;
+    }
+    // Alt+click marks the message unread, as Discord.
+    if row_response.clicked() && ui.input(|i| i.modifiers.alt) && !message.pending {
+        row.out
+            .push(Action::Nav(crate::nav::NavAction::MarkUnread {
+                channel: row.channel,
+                message: message.id,
+            }));
     }
     let own = message.author == app.model.me;
     let (channel, id) = (row.channel, message.id);
     let text = message.text.clone();
     let mut chosen = None;
+    let mut unread = false;
     row_response.context_menu(|ui| {
         ui.set_min_width(180.0);
         if ui.button("Adicionar reação").clicked() {
@@ -204,6 +223,10 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
             chosen = Some(ChatAction::Copy(text.clone()));
             ui.close();
         }
+        if ui.button("Marcar como não lida").clicked() {
+            unread = true;
+            ui.close();
+        }
         if ui.button("Copiar ID da mensagem").clicked() {
             chosen = Some(ChatAction::Copy(id.to_string()));
             ui.close();
@@ -223,6 +246,44 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
     });
     if let Some(action) = chosen {
         row.act(action);
+    }
+    if unread {
+        row.out
+            .push(Action::Nav(crate::nav::NavAction::MarkUnread { channel, message: id }));
+    }
+}
+
+/// "Pular" at the top right of a message shown away from its channel.
+fn jump_button(row: &mut Row<'_>, ui: &mut Ui, message: &Message, rect: Rect) {
+    let palette = row.app.palette;
+    let label = ui.painter().layout_no_wrap(
+        "Pular".into(),
+        font(Weight::Medium, 12.0),
+        palette.strong,
+    );
+    let size = label.size() + vec2(16.0, 8.0);
+    let button = Rect::from_min_size(pos2(rect.right() - 12.0 - size.x, rect.top() + 6.0), size);
+    let response = ui.interact(
+        button,
+        ui.id().with(("jump", message.id)),
+        Sense::click(),
+    );
+    let fill = if response.hovered() {
+        palette.selected
+    } else {
+        palette.sidebar
+    };
+    ui.painter().rect_filled(button, CornerRadius::same(4), fill);
+    ui.painter().galley(
+        button.center() - label.size() / 2.0,
+        label,
+        palette.strong,
+    );
+    if response.clicked() {
+        row.out.push(Action::Nav(crate::nav::NavAction::Jump {
+            channel: row.channel,
+            message: message.id,
+        }));
     }
 }
 

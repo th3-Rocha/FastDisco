@@ -121,7 +121,7 @@ pub enum AdminAction {
 impl App {
     fn api(&self, tag: Tag, method: Method, path: String, body: Option<Value>) {
         self.backend().send(Command::Api {
-            tag,
+            tag: crate::backend::Tag::Admin(tag),
             method,
             path,
             body,
