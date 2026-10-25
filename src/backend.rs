@@ -215,6 +215,8 @@ pub enum Event {
         url: String,
         bytes: Vec<u8>,
         ext: &'static str,
+        /// An avatar's main colour, for its call tile.
+        color: Option<[u8; 3]>,
     },
     ImageFailed(String),
 }
@@ -824,7 +826,25 @@ impl Worker {
         let ctx = self.ctx.clone();
         tokio::spawn(async move {
             let event = match download(&client, &url).await {
-                Some((bytes, ext)) => Event::Image { url, bytes, ext },
+                Some((bytes, ext)) => {
+                    // Avatars get their colour, as Discord paints call
+                    // tiles with it.
+                    let color = if url.contains("/avatars/") {
+                        let data = bytes.clone();
+                        tokio::task::spawn_blocking(move || crate::media::main_color(&data))
+                            .await
+                            .ok()
+                            .flatten()
+                    } else {
+                        None
+                    };
+                    Event::Image {
+                        url,
+                        bytes,
+                        ext,
+                        color,
+                    }
+                }
                 None => Event::ImageFailed(url),
             };
             let _ = events.send(event);

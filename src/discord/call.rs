@@ -143,7 +143,12 @@ impl EventHandler for Tick {
         }
         self.shared.speakers.push(&mixed);
         if !self.shared.deaf.load(std::sync::atomic::Ordering::Relaxed) {
-            let mono: Vec<f32> = mixed.as_chunks::<2>().0.iter().map(|[l, r]| (l + r) * 0.5).collect();
+            let mono: Vec<f32> = mixed
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|[l, r]| (l + r) * 0.5)
+                .collect();
             self.shared.played.push(&mono);
         }
         heard.retain(|_, at| now.duration_since(*at) < HOLD);

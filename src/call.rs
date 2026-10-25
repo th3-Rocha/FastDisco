@@ -478,7 +478,12 @@ where
             out.clear();
             resampler.feed(&converted, &mut out);
             // The filter works on one channel.
-            let mono: Vec<f32> = out.as_chunks::<2>().0.iter().map(|[l, r]| (l + r) * 0.5).collect();
+            let mono: Vec<f32> = out
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|[l, r]| (l + r) * 0.5)
+                .collect();
             shared.mic.push(&mono);
         },
         |error| log::warn!("call microphone: {error}"),

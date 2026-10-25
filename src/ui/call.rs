@@ -284,7 +284,12 @@ pub fn view(app: &mut App, ui: &mut Ui) {
             vec2(w, h),
         );
         let person = app.model.user(*user);
-        let fill = person.map_or(palette.sidebar, |p| p.color().gamma_multiply(0.55));
+        // The avatar's own colour, as Discord's tiles; until it is known,
+        // the colour behind the initial.
+        let fill = person.map_or(palette.sidebar, |p| {
+            app.picture_color(p.picture.as_deref())
+                .unwrap_or_else(|| p.color().gamma_multiply(0.55))
+        });
         ui.painter().rect_filled(tile, CornerRadius::same(8), fill);
         let radius = (h * 0.22).clamp(20.0, 60.0);
         if let Some(person) = person {

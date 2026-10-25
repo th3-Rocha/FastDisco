@@ -764,3 +764,85 @@ mod tests {
         assert!(player.position() >= 1.0);
     }
 }
+
+/// A picture's main colour, as Discord takes an avatar's for its call
+/// tile: the most common vivid shade, darkened enough for white text.
+pub fn main_color(bytes: &[u8]) -> Option<[u8; 3]> {
+    let picture = image::load_from_memory(bytes)
+        .ok()?
+        .thumbnail(32, 32)
+        .to_rgba8();
+    // Shades in 4-bit buckets, weighed by how vivid they are.
+    let mut buckets: std::collections::HashMap<u16, (f32, [f32; 3])> = Default::default();
+    for p in picture.pixels() {
+        let [r, g, b, a] = p.0;
+        if a < 128 {
+            continue;
+        }
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let saturation = if max == 0 {
+            0.0
+        } else {
+            f32::from(max - min) / f32::from(max)
+        };
+        let light = f32::from(max) / 255.0;
+        // Near black and near white say little about a picture.
+        let weight = 0.15 + saturation * (0.2 + light);
+        let key = (u16::from(r >> 4) << 8) | (u16::from(g >> 4) << 4) | u16::from(b >> 4);
+        let entry = buckets.entry(key).or_insert((0.0, [0.0; 3]));
+        entry.0 += weight;
+        entry.1[0] += f32::from(r) * weight;
+        entry.1[1] += f32::from(g) * weight;
+        entry.1[2] += f32::from(b) * weight;
+    }
+    let (weight, sum) = buckets.into_values().max_by(|a, b| a.0.total_cmp(&b.0))?;
+    let mut color = sum.map(|c| c / weight);
+    // Bright shades come down so the name on the tile stays readable.
+    let luma = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2];
+    if luma > 110.0 {
+        let k = 110.0 / luma;
+        color = color.map(|c| c * k);
+    }
+    Some(color.map(|c| c.round().clamp(0.0, 255.0) as u8))
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::main_color;
+
+    fn png(f: impl Fn(u32, u32) -> [u8; 4]) -> Vec<u8> {
+        let img = image::RgbaImage::from_fn(64, 64, |x, y| image::Rgba(f(x, y)));
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn a_dark_picture_with_a_purple_hood_is_purple() {
+        // Mostly near black, a third purple.
+        let bytes = png(|x, _| {
+            if x < 22 {
+                [90, 40, 120, 255]
+            } else {
+                [12, 12, 14, 255]
+            }
+        });
+        let [r, g, b] = main_color(&bytes).unwrap();
+        assert!(r > g + 20 && b > g + 40, "{r} {g} {b}");
+    }
+
+    #[test]
+    fn white_backgrounds_lose_to_the_drawing_and_light_colours_come_down() {
+        let bytes = png(|x, y| {
+            if (x / 16 + y / 16) % 3 == 0 {
+                [230, 60, 160, 255]
+            } else {
+                [250, 250, 250, 255]
+            }
+        });
+        let [r, g, b] = main_color(&bytes).unwrap();
+        assert!(r > g + 40 && b > g, "{r} {g} {b}");
+        let luma = 0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b);
+        assert!(luma <= 111.0, "{luma}");
+    }
+}

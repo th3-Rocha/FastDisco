@@ -179,6 +179,8 @@ pub struct App {
     files: fastframe_file::Writer,
     pub themes: fastframe_theme::Catalog<Palette>,
     pictures: RefCell<HashMap<String, Picture>>,
+    /// Avatars' main colours, by picture URL.
+    colors: HashMap<String, egui::Color32>,
     animations: RefCell<crate::animation::Animations>,
     /// egui's own widgets have been given the palette.
     styled: bool,
@@ -237,6 +239,7 @@ impl App {
             // Replaced by each window's context in `attach`.
             ctx: egui::Context::default(),
             pictures: RefCell::new(HashMap::new()),
+            colors: HashMap::new(),
             animations: RefCell::new(crate::animation::Animations::default()),
             loaded: 0,
             styled: false,
@@ -432,6 +435,11 @@ impl App {
         }
     }
 
+    /// An avatar's main colour, once its picture has loaded.
+    pub fn picture_color(&self, url: Option<&str>) -> Option<egui::Color32> {
+        self.colors.get(url?).copied()
+    }
+
     /// The picture at `url`, as a URI for `egui::Image`, once it has
     /// loaded; the first ask downloads it.
     pub fn picture(&self, url: Option<&str>) -> Option<String> {
@@ -582,7 +590,16 @@ impl App {
                     }
                 }
                 Event::FilesPicked(paths) => self.apply_chat(ChatAction::AddFiles(paths)),
-                Event::Image { url, bytes, ext } => {
+                Event::Image {
+                    url,
+                    bytes,
+                    ext,
+                    color,
+                } => {
+                    if let Some([r, g, b]) = color {
+                        self.colors
+                            .insert(url.clone(), egui::Color32::from_rgb(r, g, b));
+                    }
                     let mut pictures = self.pictures.borrow_mut();
                     self.loaded += 1;
                     let uri = format!("bytes://fastdisco/{}.{ext}", self.loaded);
