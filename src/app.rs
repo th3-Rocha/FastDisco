@@ -46,6 +46,7 @@ pub enum Flag {
     CloseToTray,
     StartAtLogin,
     Stats,
+    SpellCheck,
 }
 
 /// The profile page's fields while they are edited.
@@ -151,6 +152,8 @@ pub struct App {
     pub admin: crate::admin::Admin,
     pub nav: crate::nav::Nav,
     pub interact: crate::interact::Interact,
+    /// The spell checker, once its dictionaries are loaded.
+    pub speller: Option<std::sync::Arc<crate::spell::Speller>>,
     pub profile_form: Option<ProfileForm>,
     /// Whether FastDisco starts at login; `None` where it cannot.
     pub autostart: Option<bool>,
@@ -171,6 +174,10 @@ impl App {
     pub fn new(waker: &fastframe_shell::Waker) -> Self {
         let backend = Backend::start(waker.clone());
         backend.send(Command::Resume);
+        let settings = crate::settings::Settings::load();
+        if settings.spellcheck {
+            backend.send(Command::LoadSpeller);
+        }
         Self {
             screen: Screen::Connecting,
             login: Login::default(),
@@ -186,7 +193,7 @@ impl App {
             drafts: HashMap::new(),
             actions: Vec::new(),
             chat: Chat::new(),
-            settings: crate::settings::Settings::load(),
+            settings,
             notifier: crate::notify::Notifier::start(waker),
             waker: waker.clone(),
             tray: crate::resident::tray(waker),
@@ -201,6 +208,7 @@ impl App {
             admin: crate::admin::Admin::default(),
             nav: crate::nav::Nav::default(),
             interact: crate::interact::Interact::default(),
+            speller: None,
             profile_form: None,
             autostart: None,
             autostart_asked: false,
@@ -483,6 +491,10 @@ impl App {
                     self.chat.dialog = Some(crate::chat::Dialog::Failed(reason));
                 }
                 Event::GifHome(home) => self.chat.gif_home = Some(home),
+                Event::Speller(result) => match result {
+                    Ok(speller) => self.speller = Some(speller),
+                    Err(error) => log::warn!("spell checking off: {error}"),
+                },
                 Event::Api { tag, result } => match tag {
                     crate::backend::Tag::Admin(tag) => self.api_result(tag, result),
                     crate::backend::Tag::Nav(tag) => self.nav_result(tag, result),
@@ -760,6 +772,12 @@ impl App {
                             self.backend.send(Command::SetAutostart(on));
                         }
                         Flag::Stats => self.show_stats = !self.show_stats,
+                        Flag::SpellCheck => {
+                            s.spellcheck = !s.spellcheck;
+                            if s.spellcheck && self.speller.is_none() {
+                                self.backend.send(Command::LoadSpeller);
+                            }
+                        }
                     }
                     self.save_settings();
                 }

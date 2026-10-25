@@ -40,6 +40,10 @@ pub struct Settings {
     pub embeds: bool,
     pub muted: bool,
     pub deafened: bool,
+    /// Underlines misspelt words in the message field.
+    pub spellcheck: bool,
+    /// Words the user added to the dictionary, lowercased.
+    pub dictionary: Vec<String>,
 }
 
 impl Default for Settings {
@@ -57,6 +61,8 @@ impl Default for Settings {
             embeds: true,
             muted: false,
             deafened: false,
+            spellcheck: true,
+            dictionary: Vec::new(),
         }
     }
 }

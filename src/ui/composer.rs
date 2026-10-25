@@ -352,6 +352,17 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
             && app.chat.editing.is_none()
             && app.chat.dialog.is_none();
         let to_end = std::mem::take(&mut app.chat.cursor_to_end);
+        // The checker and the user's own words, before the draft is
+        // borrowed.
+        let speller = app
+            .settings
+            .spellcheck
+            .then(|| app.speller.clone())
+            .flatten();
+        let own: std::collections::HashSet<String> =
+            app.settings.dictionary.iter().cloned().collect();
+        let mut fix: Option<(std::ops::Range<usize>, String)> = None;
+        let mut learn: Option<String> = None;
         let draft = app.drafts.entry(channel).or_default();
         let changed = ui
             .vertical(|ui| {
@@ -360,16 +371,22 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
                     .id_salt(("composer-scroll", channel))
                     .max_height(ui.ctx().content_rect().height() * 0.4)
                     .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(draft)
-                                .id(id)
-                                .hint_text(RichText::new(placeholder).color(palette.muted))
-                                .font(font(Weight::Regular, 16.0))
-                                .text_color(palette.text)
-                                .frame(Frame::NONE)
-                                .desired_rows(1)
-                                .desired_width(width),
-                        )
+                        let output = egui::TextEdit::multiline(draft)
+                            .id(id)
+                            .hint_text(RichText::new(placeholder).color(palette.muted))
+                            .font(font(Weight::Regular, 16.0))
+                            .text_color(palette.text)
+                            .frame(Frame::NONE)
+                            .desired_rows(1)
+                            .desired_width(width)
+                            .show(ui);
+                        if let Some(speller) = &speller {
+                            let (f, l) =
+                                spelling(ui, speller, &own, draft, &output, palette.danger);
+                            fix = f;
+                            learn = l;
+                        }
+                        output.response
                     })
                     .inner;
                 ui.add_space(11.0);
@@ -386,6 +403,15 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
                 response.changed()
             })
             .inner;
+        if let Some((range, word)) = fix
+            && let Some(draft) = app.drafts.get_mut(&channel)
+            && draft.get(range.clone()).is_some()
+        {
+            draft.replace_range(range, &word);
+        }
+        if let Some(word) = learn {
+            act(app, ChatAction::AddWord(word));
+        }
         if changed {
             act(app, ChatAction::Typed);
         }
@@ -532,6 +558,112 @@ fn recording_bar(app: &mut App, ui: &mut Ui) {
     } else if send || ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
         act(app, ChatAction::SendRecording);
     }
+}
+
+/// Red waves under the words the dictionaries do not know (not the word
+/// still being typed at the end), and on a right click on one, the
+/// corrections and adding it to the user's dictionary. Returns a chosen
+/// correction and a word to learn.
+#[allow(clippy::type_complexity)]
+fn spelling(
+    ui: &mut Ui,
+    speller: &crate::spell::Speller,
+    own: &std::collections::HashSet<String>,
+    text: &str,
+    output: &egui::text_edit::TextEditOutput,
+    color: Color32,
+) -> (Option<(std::ops::Range<usize>, String)>, Option<String>) {
+    let key = output.response.id.with("spelling");
+    let cached: Option<(String, Vec<std::ops::Range<usize>>)> = ui.data(|d| d.get_temp(key));
+    let wrong = match cached {
+        Some((old, ranges)) if old == text => ranges,
+        _ => {
+            let ranges = speller.misspelled(text, own);
+            ui.data_mut(|d| d.insert_temp(key, (text.to_owned(), ranges.clone())));
+            ranges
+        }
+    };
+    let typing_at_end = !text.ends_with(|c: char| !c.is_alphanumeric());
+    let chars_before = |byte: usize| text[..byte].chars().count();
+    let painter = ui.painter();
+    for range in &wrong {
+        if typing_at_end && range.end == text.len() && output.response.has_focus() {
+            continue;
+        }
+        let a = output
+            .galley
+            .pos_from_cursor(egui::text::CCursor::new(chars_before(range.start)));
+        let b = output
+            .galley
+            .pos_from_cursor(egui::text::CCursor::new(chars_before(range.end)));
+        if (a.bottom() - b.bottom()).abs() > 1.0 {
+            continue;
+        }
+        let y = output.galley_pos.y + a.bottom() - 1.0;
+        let (x0, x1) = (
+            output.galley_pos.x + a.left(),
+            output.galley_pos.x + b.left(),
+        );
+        let mut points = Vec::new();
+        let mut x = x0;
+        let mut up = true;
+        while x < x1 {
+            points.push(pos2(x, if up { y - 1.5 } else { y + 0.5 }));
+            x += 2.0;
+            up = !up;
+        }
+        points.push(pos2(x1, y));
+        painter.add(egui::Shape::line(points, Stroke::new(1.0, color)));
+    }
+    // The misspelt word a right click landed on, kept while its menu is open.
+    let target_key = key.with("target");
+    if output.response.secondary_clicked()
+        && let Some(pointer) = output.response.interact_pointer_pos()
+    {
+        let cursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
+        let byte = text
+            .char_indices()
+            .nth(cursor.index.0)
+            .map_or(text.len(), |(b, _)| b);
+        let target = wrong
+            .iter()
+            .find(|r| r.start <= byte && byte <= r.end)
+            .map(|r| (r.clone(), speller.suggest(&text[r.clone()])));
+        ui.data_mut(|d| match target {
+            Some(t) => {
+                d.insert_temp(target_key, t);
+            }
+            None => {
+                d.remove::<(std::ops::Range<usize>, Vec<String>)>(target_key);
+            }
+        });
+    }
+    let target: Option<(std::ops::Range<usize>, Vec<String>)> = ui.data(|d| d.get_temp(target_key));
+    let mut fix = None;
+    let mut learn = None;
+    if let Some((range, suggestions)) = target {
+        let shown = output.response.context_menu(|ui| {
+            ui.set_min_width(180.0);
+            if suggestions.is_empty() {
+                ui.label(RichText::new("Nenhuma sugestão").italics());
+            }
+            for suggestion in &suggestions {
+                if ui.button(RichText::new(suggestion).strong()).clicked() {
+                    fix = Some((range.clone(), suggestion.clone()));
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if ui.button("Adicionar ao dicionário").clicked() {
+                learn = text.get(range.clone()).map(str::to_lowercase);
+                ui.close();
+            }
+        });
+        if shown.is_none() || fix.is_some() || learn.is_some() {
+            ui.data_mut(|d| d.remove::<(std::ops::Range<usize>, Vec<String>)>(target_key));
+        }
+    }
+    (fix, learn)
 }
 
 /// Discord's counter: it appears near the limit and turns red past it.

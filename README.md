@@ -95,12 +95,12 @@ everything Discord's desktop app does.
 - [x] Custom and Unicode emoji, jumbo emoji, emoji picker, `:shortcode:` on send
 - [x] Replies, edits, deletion, reactions, typing indicator
 - [x] Discord's limits: character counter, "message too long" (send as file), upload size by plan
-- [ ] Forwarding messages
-- [ ] Polls
-- [ ] Slash commands and app commands
-- [ ] Bot components: buttons, select menus, modals
-- [ ] Message context menu: copy link, copy ID, report
-- [ ] Spell checking
+- [x] Forwarding messages
+- [x] Polls: voting, results, making one
+- [x] Slash commands and app commands (attachment options not yet)
+- [x] Bot components: buttons, select menus, modals, and the newer layout components
+- [x] Message context menu: forward, pin, apps, copy link, copy ID, report (opens Discord's report form)
+- [x] Spell checking (Portuguese and English, dictionaries downloaded once)
 
 ### Media
 

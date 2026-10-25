@@ -191,6 +191,8 @@ pub enum ChatAction {
         insert: String,
         raw: Option<String>,
     },
+    /// A word the spell checker should accept from now on.
+    AddWord(String),
     /// The composer's microphone: records a voice message.
     StartRecording,
     CancelRecording,
@@ -571,6 +573,12 @@ impl App {
                         self.chat.recording = Some(Recording { channel, recorder });
                     }
                     Err(reason) => self.chat.dialog = Some(Dialog::Failed(reason)),
+                }
+            }
+            ChatAction::AddWord(word) => {
+                if !self.settings.dictionary.contains(&word) {
+                    self.settings.dictionary.push(word);
+                    self.save_settings();
                 }
             }
             ChatAction::CancelRecording => {

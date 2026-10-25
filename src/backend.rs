@@ -125,6 +125,8 @@ pub enum Command {
         channel: u64,
     },
     FetchImage(String),
+    /// The spell checker's dictionaries, downloaded the first time.
+    LoadSpeller,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,6 +168,7 @@ pub enum Event {
         reason: String,
     },
     GifHome(rest::GifHome),
+    Speller(Result<std::sync::Arc<crate::spell::Speller>, String>),
     Api {
         tag: Tag,
         result: Result<Value, String>,
@@ -624,6 +627,16 @@ impl Worker {
                 }
             }
             Command::FetchImage(url) => self.fetch_image(url),
+            Command::LoadSpeller => {
+                let client = self.client.clone();
+                let events = self.events.clone();
+                let ctx = self.ctx.clone();
+                tokio::spawn(async move {
+                    let speller = crate::spell::load(client).await.map(std::sync::Arc::new);
+                    let _ = events.send(Event::Speller(speller));
+                    ctx.wake();
+                });
+            }
             Command::Logout => {
                 if let Some((task, _)) = self.gateway.take() {
                     task.abort();

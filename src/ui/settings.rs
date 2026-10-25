@@ -729,6 +729,15 @@ fn accessibility(app: &mut App, ui: &mut Ui) {
         "Prévias de sites, vídeos e mensagens de bots.",
         embeds,
     );
+    let spellcheck = app.settings.spellcheck;
+    switch_row(
+        app,
+        ui,
+        Flag::SpellCheck,
+        "Verificar ortografia",
+        "Sublinha palavras com erro no campo de mensagem (português e inglês). Clique com o botão direito para ver sugestões.",
+        spellcheck,
+    );
 }
 
 fn notifications(app: &mut App, ui: &mut Ui) {
