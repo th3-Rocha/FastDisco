@@ -24,10 +24,17 @@ with the Discord phone app instead.
 
 ## Download
 
-Every version is built for Linux (x86_64), Windows (x86_64) and macOS
-(Apple Silicon) and published on the
+Every version is built for Linux, Windows and macOS and published on the
 [releases page](https://github.com/th3-Rocha/FastDisco/releases/latest).
-Unpack the archive and run `fastdisco`.
+
+- **Arch Linux**: `yay -S fastdisco-bin` (or any other AUR helper).
+- **Ubuntu and other Linux desktops**: download
+  `FastDisco-<version>-x86_64.AppImage`, then
+  `chmod +x FastDisco-*.AppImage` and run it. Needs Ubuntu 24.04 or newer.
+- **Linux, by hand**: the `x86_64-unknown-linux-gnu` archive has the
+  binary, the launcher entry and the icons.
+- **Windows** (x86_64) and **macOS** (Apple Silicon): unpack the archive
+  and run `fastdisco`.
 
 ## Build
 
@@ -151,7 +158,10 @@ everything Discord's desktop app does.
 - [x] F12 performance overlay (FPS, frame time, RAM, CPU, threads)
 - [x] Automatic releases for Linux, Windows and macOS
 - [ ] Updating itself from the releases page
-- [ ] Flatpak, AUR and Windows installer packages
+- [x] AppImage for Ubuntu and other Linux desktops
+- [x] AUR package (`fastdisco-bin`)
+- [ ] Flatpak
+- [ ] Windows installer and macOS app bundle
 - [ ] Rich presence (what game or music you are playing)
 
 ## License
