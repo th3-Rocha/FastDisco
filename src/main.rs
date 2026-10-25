@@ -19,6 +19,7 @@ mod notify;
 mod resident;
 mod session;
 mod settings;
+mod sounds;
 mod spell;
 mod stats;
 mod text;

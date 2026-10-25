@@ -6,8 +6,9 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
@@ -18,46 +19,139 @@ use crate::model::Id;
 pub const RATE: u32 = 48_000;
 /// Interleaved stereo.
 const CHANNELS: usize = 2;
-/// The most a ring keeps, in samples: a fifth of a second. Older sound is
-/// dropped so the delay never grows.
-const RING: usize = RATE as usize * CHANNELS / 5;
+/// Ten milliseconds of one channel: the filter's step.
+const CHUNK: usize = RATE as usize / 100;
+/// The most a ring keeps: a fifth of a second. Older sound is dropped so
+/// the delay never grows.
+const RING_SECONDS: f32 = 0.2;
 
-/// Samples handed from one thread to another.
-#[derive(Default)]
+/// Samples handed from one thread to another. Reading starts only once
+/// `cushion` samples are in, and again after it runs dry, so the small
+/// differences in when each side runs do not become gaps that click.
 pub struct Ring {
-    samples: Mutex<VecDeque<f32>>,
+    state: Mutex<RingState>,
+    cushion: usize,
+    max: usize,
+}
+
+struct RingState {
+    samples: VecDeque<f32>,
+    primed: bool,
 }
 
 impl Ring {
-    pub fn push(&self, data: &[f32]) {
-        let mut ring = self.samples.lock().unwrap_or_else(|e| e.into_inner());
-        ring.extend(data.iter().copied());
-        let over = ring.len().saturating_sub(RING);
-        ring.drain(..over);
+    /// A ring of `channels` interleaved, holding `cushion` seconds before
+    /// it plays.
+    pub fn new(channels: usize, cushion: f32) -> Self {
+        let per_second = RATE as f32 * channels as f32;
+        Self {
+            state: Mutex::new(RingState {
+                samples: VecDeque::new(),
+                primed: false,
+            }),
+            cushion: (per_second * cushion) as usize,
+            max: (per_second * RING_SECONDS) as usize,
+        }
     }
 
-    /// Fills `out`, with silence where there is nothing yet.
+    pub fn push(&self, data: &[f32]) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.samples.extend(data.iter().copied());
+        let over = state.samples.len().saturating_sub(self.max);
+        state.samples.drain(..over);
+    }
+
+    pub fn len(&self) -> usize {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .samples
+            .len()
+    }
+
+    /// Fills `out`, with silence while the cushion builds.
     pub fn pop(&self, out: &mut [f32]) {
-        let mut ring = self.samples.lock().unwrap_or_else(|e| e.into_inner());
-        for slot in out.iter_mut() {
-            *slot = ring.pop_front().unwrap_or(0.0);
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if !state.primed {
+            if state.samples.len() < self.cushion.max(out.len()) {
+                out.fill(0.0);
+                return;
+            }
+            state.primed = true;
+        }
+        let have = state.samples.len().min(out.len());
+        for (slot, sample) in out.iter_mut().zip(state.samples.drain(..have)) {
+            *slot = sample;
+        }
+        out[have..].fill(0.0);
+        if have < out.len() {
+            // Ran dry: build the cushion again.
+            state.primed = false;
         }
     }
 }
 
+/// The voice filter's settings, which can change during a call.
+pub struct Filter {
+    /// 0 off, 1 moderate, 2 high, 3 very high.
+    pub noise: AtomicU8,
+    pub echo: AtomicBool,
+    pub gain: AtomicBool,
+    /// Sends nothing while the user is not talking, as Discord's
+    /// automatic input sensitivity.
+    pub gate: AtomicBool,
+    /// Bumped on a change, for the filter to be built again.
+    pub version: AtomicU32,
+}
+
+impl Filter {
+    pub fn set(&self, settings: &crate::settings::Settings) {
+        self.noise
+            .store(settings.noise_suppression, Ordering::Relaxed);
+        self.echo
+            .store(settings.echo_cancellation, Ordering::Relaxed);
+        self.gain.store(settings.auto_gain, Ordering::Relaxed);
+        self.gate
+            .store(settings.auto_sensitivity, Ordering::Relaxed);
+        self.version.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// What the interface and the voice driver share.
-#[derive(Default)]
 pub struct Shared {
-    /// The microphone, 48 kHz stereo, for the driver to send.
+    /// The microphone, 48 kHz mono, for the driver to filter and send.
     pub mic: Ring,
+    /// What the speakers play, 48 kHz mono, for the echo canceller.
+    pub played: Ring,
     /// Everyone else mixed, 48 kHz stereo, for the speakers.
     pub speakers: Ring,
     /// Deafened: what others say is not played.
     pub deaf: AtomicBool,
-    /// The microphone's loudness, 0 to 1000, for the user's own ring.
-    pub level: AtomicU32,
-    /// Who is talking right now.
+    pub filter: Filter,
+    /// The user is talking, by the filter's voice detection.
+    pub talking: AtomicBool,
+    /// Who else is talking right now.
     pub speaking: Mutex<HashSet<Id>>,
+}
+
+impl Default for Shared {
+    fn default() -> Self {
+        Self {
+            mic: Ring::new(1, 0.04),
+            played: Ring::new(1, 0.0),
+            speakers: Ring::new(CHANNELS, 0.06),
+            deaf: AtomicBool::new(false),
+            filter: Filter {
+                noise: AtomicU8::new(2),
+                echo: AtomicBool::new(true),
+                gain: AtomicBool::new(true),
+                gate: AtomicBool::new(true),
+                version: AtomicU32::new(0),
+            },
+            talking: AtomicBool::new(false),
+            speaking: Mutex::new(HashSet::new()),
+        }
+    }
 }
 
 impl std::fmt::Debug for Shared {
@@ -66,29 +160,180 @@ impl std::fmt::Debug for Shared {
     }
 }
 
-/// The microphone as songbird reads it: raw little-endian f32 samples,
-/// never ending, silence when the microphone has nothing new.
+/// WebRTC's processing as the settings ask: echo cancelling against what
+/// the speakers play, noise suppression and level control.
+fn processor(filter: &Filter) -> Option<sonora::AudioProcessing> {
+    use sonora::config::{
+        AdaptiveDigital, EchoCanceller, GainController2, HighPassFilter, NoiseSuppression,
+        NoiseSuppressionLevel,
+    };
+    let noise = match filter.noise.load(Ordering::Relaxed) {
+        0 => None,
+        1 => Some(NoiseSuppressionLevel::Moderate),
+        2 => Some(NoiseSuppressionLevel::High),
+        _ => Some(NoiseSuppressionLevel::VeryHigh),
+    };
+    let echo = filter.echo.load(Ordering::Relaxed);
+    let gain = filter.gain.load(Ordering::Relaxed);
+    if noise.is_none() && !echo && !gain {
+        return None;
+    }
+    let stream = sonora::StreamConfig::new(RATE, 1);
+    Some(
+        sonora::AudioProcessing::builder()
+            .config(sonora::Config {
+                high_pass_filter: Some(HighPassFilter::default()),
+                echo_canceller: echo.then(EchoCanceller::default),
+                noise_suppression: noise.map(|level| NoiseSuppression {
+                    level,
+                    ..NoiseSuppression::default()
+                }),
+                // The digital gain only: the system's microphone volume is
+                // the user's to set.
+                gain_controller2: gain.then(|| GainController2 {
+                    input_volume_controller: false,
+                    adaptive_digital: Some(AdaptiveDigital {
+                        max_gain_db: 20.0,
+                        initial_gain_db: 0.0,
+                        ..AdaptiveDigital::default()
+                    }),
+                    ..GainController2::default()
+                }),
+                ..sonora::Config::default()
+            })
+            .capture_config(stream)
+            .render_config(stream)
+            .build(),
+    )
+}
+
+/// Tells talking from silence on the filtered microphone: louder than the
+/// room's floor by a margin, held a moment after the voice stops so the
+/// ring does not flicker between words.
+struct VoiceDetector {
+    floor: f32,
+    above: u32,
+    /// Chunks left before a voice that stopped counts as stopped.
+    hold: u32,
+}
+
+impl VoiceDetector {
+    /// 400 ms of 10 ms chunks.
+    const HOLD: u32 = 40;
+
+    fn new() -> Self {
+        Self {
+            floor: -60.0,
+            above: 0,
+            hold: 0,
+        }
+    }
+
+    /// One 10 ms chunk; whether the user is talking.
+    fn feed(&mut self, chunk: &[f32]) -> bool {
+        let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt();
+        let db = 20.0 * rms.max(1e-6).log10();
+        // The floor follows quiet quickly, and a steady sound (a fan the
+        // level control raised) within about half a second; speech rises
+        // and falls too often to be taken for it.
+        self.floor = if db < self.floor {
+            self.floor + (db - self.floor) * 0.2
+        } else {
+            self.floor + (db - self.floor) * 0.01
+        };
+        let loud = db > (self.floor + 10.0).max(-45.0);
+        self.above = if loud { self.above + 1 } else { 0 };
+        // Two chunks in a row start it: a click does not.
+        if self.above >= 2 {
+            self.hold = Self::HOLD;
+        } else {
+            self.hold = self.hold.saturating_sub(1);
+        }
+        self.hold > 0
+    }
+}
+
+/// The microphone as songbird reads it: filtered, gated while the user is
+/// quiet, as raw little-endian f32 stereo; never ending.
 pub struct MicSource {
-    pub shared: Arc<Shared>,
+    shared: Arc<Shared>,
     pending: Vec<u8>,
+    filter: Mutex<Filtering>,
+}
+
+struct Filtering {
+    processor: Option<sonora::AudioProcessing>,
+    version: u32,
+    voice: VoiceDetector,
+    /// The gate's gain now, moving smoothly so it never clicks.
+    open: f32,
 }
 
 impl MicSource {
     pub fn new(shared: Arc<Shared>) -> Self {
         Self {
+            filter: Mutex::new(Filtering {
+                processor: processor(&shared.filter),
+                version: shared.filter.version.load(Ordering::Relaxed),
+                voice: VoiceDetector::new(),
+                open: 0.0,
+            }),
             shared,
             pending: Vec::new(),
         }
+    }
+
+    /// Twenty milliseconds of the microphone, filtered, as stereo.
+    fn next_block(&mut self) -> Vec<f32> {
+        let shared = &self.shared;
+        // Wait briefly for the microphone to catch up instead of sending a
+        // gap; then send what there is.
+        let wanted = CHUNK * 2;
+        let start = Instant::now();
+        while shared.mic.len() < wanted && start.elapsed() < Duration::from_millis(12) {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let mut mono = vec![0f32; wanted];
+        shared.mic.pop(&mut mono);
+        let mut filtering = self.filter.lock().unwrap_or_else(|e| e.into_inner());
+        let f = &mut *filtering;
+        let version = shared.filter.version.load(Ordering::Relaxed);
+        if version != f.version {
+            f.version = version;
+            f.processor = processor(&shared.filter);
+        }
+        let gate = shared.filter.gate.load(Ordering::Relaxed);
+        let mut talking = false;
+        for chunk in mono.chunks_mut(CHUNK) {
+            if let Some(p) = &mut f.processor {
+                let mut played = vec![0f32; CHUNK];
+                if shared.played.len() >= CHUNK {
+                    shared.played.pop(&mut played);
+                }
+                let mut sink = vec![0f32; CHUNK];
+                let _ = p.process_render_f32(&[&played], &mut [&mut sink]);
+                let mut out = vec![0f32; CHUNK];
+                if p.process_capture_f32(&[&*chunk], &mut [&mut out]).is_ok() {
+                    chunk.copy_from_slice(&out);
+                }
+            }
+            talking = f.voice.feed(chunk);
+            let target = if !gate || talking { 1.0 } else { 0.0 };
+            for sample in chunk.iter_mut() {
+                f.open += (target - f.open) * 0.01;
+                *sample *= f.open;
+            }
+        }
+        shared.talking.store(talking, Ordering::Relaxed);
+        mono.iter().flat_map(|s| [*s, *s]).collect()
     }
 }
 
 impl Read for MicSource {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.pending.is_empty() {
-            // Twenty milliseconds at a time, as the driver sends.
-            let mut samples = vec![0f32; RATE as usize * CHANNELS / 50];
-            self.shared.mic.pop(&mut samples);
-            self.pending = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+            let block = self.next_block();
+            self.pending = block.iter().flat_map(|s| s.to_le_bytes()).collect();
         }
         let n = buf.len().min(self.pending.len());
         buf[..n].copy_from_slice(&self.pending[..n]);
@@ -230,13 +475,11 @@ where
                 data.iter()
                     .map(|s| <f32 as FromSample<T>>::from_sample_(*s)),
             );
-            let peak = converted.iter().fold(0f32, |p, s: &f32| p.max(s.abs()));
-            shared
-                .level
-                .store((peak.min(1.0) * 1000.0) as u32, Ordering::Relaxed);
             out.clear();
             resampler.feed(&converted, &mut out);
-            shared.mic.push(&out);
+            // The filter works on one channel.
+            let mono: Vec<f32> = out.as_chunks::<2>().0.iter().map(|[l, r]| (l + r) * 0.5).collect();
+            shared.mic.push(&mono);
         },
         |error| log::warn!("call microphone: {error}"),
         None,
@@ -269,31 +512,44 @@ fn open_speakers(device: &cpal::Device, shared: &Arc<Shared>) -> Result<cpal::St
     let channels = usize::from(config.channels());
     let config: cpal::StreamConfig = config.into();
     let shared = Arc::clone(shared);
-    let mut source = Vec::new();
+    // 48 kHz frames waiting to be played, and how far into them.
+    let mut pending: VecDeque<[f32; 2]> = VecDeque::new();
     let mut position = 0f64;
+    let mut pulled = Vec::new();
+    let step = f64::from(RATE) / f64::from(rate);
     let stream = device
         .build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 let frames = data.len() / channels.max(1);
-                // How many 48 kHz frames this callback covers.
-                let step = f64::from(RATE) / f64::from(rate);
-                let needed = ((frames as f64) * step).ceil() as usize + 1;
-                source.resize(needed * CHANNELS, 0.0);
-                shared.speakers.pop(&mut source);
+                // Exactly the frames this callback covers, no more, so the
+                // ring is not drained faster than it fills.
+                let needed = (position + frames as f64 * step).ceil() as usize + 1;
+                if pending.len() < needed {
+                    pulled.resize((needed - pending.len()) * CHANNELS, 0.0);
+                    shared.speakers.pop(&mut pulled);
+                    pending.extend(pulled.as_chunks::<2>().0.iter().copied());
+                }
                 let deaf = shared.deaf.load(Ordering::Relaxed);
                 for (i, frame) in data.chunks_mut(channels.max(1)).enumerate() {
-                    let at = ((i as f64 * step + position) as usize).min(needed - 1);
+                    let at = position + i as f64 * step;
+                    let k = at as usize;
+                    let t = (at - k as f64) as f32;
+                    let a = pending.get(k).copied().unwrap_or([0.0; 2]);
+                    let b = pending.get(k + 1).copied().unwrap_or(a);
                     let (l, r) = if deaf {
                         (0.0, 0.0)
                     } else {
-                        (source[at * 2], source[at * 2 + 1])
+                        (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
                     };
                     for (c, sample) in frame.iter_mut().enumerate() {
                         *sample = if c % 2 == 0 { l } else { r };
                     }
                 }
-                position = (frames as f64 * step + position).fract();
+                let advanced = position + frames as f64 * step;
+                let used = (advanced as usize).min(pending.len());
+                pending.drain(..used);
+                position = advanced - used as f64;
             },
             |error| log::warn!("call speakers: {error}"),
             None,
@@ -346,13 +602,77 @@ mod tests {
     }
 
     #[test]
-    fn the_ring_drops_old_sound_and_pads_with_silence() {
-        let ring = Ring::default();
-        ring.push(&vec![1.0; RING + 100]);
-        let mut out = vec![0.0; RING + 10];
+    fn the_ring_waits_for_its_cushion_and_drops_old_sound() {
+        let ring = Ring::new(1, 0.01);
+        let mut out = vec![9.0; 100];
+        ring.push(&[1.0; 200]);
+        // 480 samples of cushion: not yet.
         ring.pop(&mut out);
-        assert!(out[..RING].iter().all(|s| *s == 1.0));
-        assert!(out[RING..].iter().all(|s| *s == 0.0));
+        assert!(out.iter().all(|s| *s == 0.0));
+        ring.push(&[1.0; 400]);
+        ring.pop(&mut out);
+        assert!(out.iter().all(|s| *s == 1.0));
+        // Too much: only the newest fifth of a second stays.
+        ring.push(&vec![2.0; 20_000]);
+        assert_eq!(ring.len(), 9_600);
+    }
+
+    #[test]
+    fn the_filter_passes_a_voice_and_gates_the_silence_after() {
+        let shared = Arc::new(Shared::default());
+        let mut source = MicSource::new(Arc::clone(&shared));
+        // Half a second of a voice-like tone over a little noise.
+        let mut seed = 1u32;
+        let mut noise = move || {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (seed >> 16) as f32 / 65_536.0 - 0.5
+        };
+        let voiced: Vec<f32> = (0..RATE as usize / 2)
+            .map(|i| (i as f32 * 0.04).sin() * 0.3 + noise() * 0.002)
+            .collect();
+        let mut loud = 0.0f32;
+        for block in voiced.chunks(CHUNK * 2) {
+            shared.mic.push(block);
+            let out = source.next_block();
+            assert_eq!(out.len(), CHUNK * 4);
+            assert!(out.iter().all(|s| s.is_finite()));
+            loud = loud.max(out.iter().fold(0f32, |p, s| p.max(s.abs())));
+        }
+        assert!(loud > 0.05, "{loud}");
+        assert!(shared.talking.load(Ordering::Relaxed));
+        // A second of near silence: the gate closes.
+        let quiet: Vec<f32> = (0..RATE as usize).map(|_| noise() * 0.001).collect();
+        let mut last = Vec::new();
+        for block in quiet.chunks(CHUNK * 2) {
+            shared.mic.push(block);
+            last = source.next_block();
+        }
+        assert!(!shared.talking.load(Ordering::Relaxed));
+        let peak = last.iter().fold(0f32, |p, s| p.max(s.abs()));
+        assert!(peak < 1e-3, "{peak}");
+    }
+
+    #[test]
+    fn the_voice_detector_holds_between_words_and_ignores_a_click() {
+        let mut v = VoiceDetector::new();
+        let quiet = vec![0.0005f32; CHUNK];
+        let voice: Vec<f32> = (0..CHUNK).map(|i| (i as f32 * 0.3).sin() * 0.2).collect();
+        for _ in 0..50 {
+            assert!(!v.feed(&quiet));
+        }
+        // One loud chunk alone is a click.
+        assert!(!v.feed(&voice));
+        assert!(!v.feed(&quiet));
+        assert!(!v.feed(&voice));
+        assert!(v.feed(&voice));
+        // A pause between words keeps it on, a long silence turns it off.
+        for _ in 0..20 {
+            assert!(v.feed(&quiet));
+        }
+        for _ in 0..20 {
+            v.feed(&quiet);
+        }
+        assert!(!v.feed(&quiet));
     }
 }
 
@@ -370,6 +690,7 @@ impl crate::app::App {
         }
         let shared = Arc::new(Shared::default());
         shared.deaf.store(self.settings.deafened, Ordering::Relaxed);
+        shared.filter.set(&self.settings);
         let audio = match Audio::start(Arc::clone(&shared)) {
             Ok(audio) => Some(audio),
             Err(error) => {
@@ -394,6 +715,7 @@ impl crate::app::App {
         let Some(call) = self.call.take() else {
             return;
         };
+        self.sound(crate::sounds::Sound::Leave);
         self.call_view = false;
         self.backend().send(crate::backend::Command::VoiceState {
             guild: call.guild,
@@ -426,10 +748,23 @@ impl crate::app::App {
     /// VOICE_STATE_UPDATE: someone moved; for the user, the session the
     /// voice server needs, or the call ending elsewhere.
     pub fn voice_state_event(&mut self, data: &serde_json::Value) {
+        let before = crate::discord::parse::id(&data["user_id"]).and_then(|user| {
+            let guild = crate::discord::parse::id(&data["guild_id"]);
+            self.model.voice.get(&(guild, user)).map(|v| v.channel)
+        });
         let Some(user) = crate::discord::parse::voice_state(data, None, &mut self.model) else {
             return;
         };
         if user != self.model.me {
+            // Someone coming into or leaving the user's channel.
+            if let Some(mine) = self.call.as_ref().map(|c| c.channel) {
+                let after = crate::discord::parse::id(&data["channel_id"]);
+                if after == Some(mine) && before != Some(mine) {
+                    self.sound(crate::sounds::Sound::Arrive);
+                } else if before == Some(mine) && after != Some(mine) {
+                    self.sound(crate::sounds::Sound::Depart);
+                }
+            }
             return;
         }
         let channel = crate::discord::parse::id(&data["channel_id"]);
@@ -500,10 +835,12 @@ impl crate::app::App {
             Ok(()) => {
                 call.state = State::Connected;
                 self.send_voice_state();
+                self.sound(crate::sounds::Sound::Join);
             }
             Err(error) => {
                 log::warn!("voice: {error}");
                 call.state = State::Failed(error);
+                self.sound(crate::sounds::Sound::Lost);
             }
         }
     }
@@ -518,7 +855,7 @@ impl crate::app::App {
             return !self.settings.muted
                 && !self.settings.deafened
                 && call.state == State::Connected
-                && call.shared.level.load(Ordering::Relaxed) > 60;
+                && call.shared.talking.load(Ordering::Relaxed);
         }
         call.shared
             .speaking

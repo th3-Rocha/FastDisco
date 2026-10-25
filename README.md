@@ -120,6 +120,7 @@ everything Discord's desktop app does.
 - [ ] Forum and media channels
 - [ ] Stage channels
 - [x] Voice channels: joining, speaking and hearing, mute and deafen, who is talking, with Discord's DAVE end-to-end encryption
+- [x] Voice filter: noise suppression, echo cancellation, automatic gain and input sensitivity
 - [ ] Video calls and screen sharing
 - [ ] Direct message calls
 - [ ] Scheduled events
@@ -151,6 +152,7 @@ everything Discord's desktop app does.
 ### Desktop
 
 - [x] Notifications for direct messages and mentions
+- [x] The app's sounds: joining and leaving calls, people coming and going, mute, deafen, new messages
 - [x] Unread count in the window title
 - [x] Tray, closing to the tray
 - [x] One running copy

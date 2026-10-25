@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use songbird::driver::{Channels, DecodeConfig, DecodeMode, SampleRate};
 use songbird::id::{ChannelId, GuildId, UserId};
@@ -54,6 +55,7 @@ pub async fn connect(
         Tick {
             shared: Arc::clone(&shared),
             ssrcs,
+            heard: Mutex::default(),
             wake: Box::new(wake),
         },
     );
@@ -96,13 +98,19 @@ impl EventHandler for Speaking {
     }
 }
 
-/// Every twenty milliseconds: mixes what was said for the speakers, and
-/// notes who said it.
+/// Every twenty milliseconds: mixes what was said for the speakers and
+/// the echo canceller, and notes who said it.
 struct Tick {
     shared: Arc<Shared>,
     ssrcs: Arc<Mutex<HashMap<u32, u64>>>,
+    /// When each person was last heard, to keep their ring lit between
+    /// words.
+    heard: Mutex<HashMap<u64, Instant>>,
     wake: Box<dyn Fn() + Send + Sync>,
 }
+
+/// How long a voice stays lit after it was last heard.
+const HOLD: Duration = Duration::from_millis(350);
 
 #[async_trait::async_trait]
 impl EventHandler for Tick {
@@ -110,17 +118,21 @@ impl EventHandler for Tick {
         let EventContext::VoiceTick(tick) = ctx else {
             return None;
         };
+        let now = Instant::now();
         let mut mixed = vec![0f32; RATE as usize * 2 / 50];
-        let mut talking = HashSet::new();
         let ssrcs = self.ssrcs.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let mut heard = self.heard.lock().unwrap_or_else(|e| e.into_inner());
         for (ssrc, data) in &tick.speaking {
             let Some(pcm) = &data.decoded_voice else {
                 continue;
             };
-            // Quiet packets still arrive; a voice is something louder.
-            let loud = pcm.iter().any(|s| s.unsigned_abs() > 600);
-            if loud && let Some(user) = ssrcs.get(ssrc) {
-                talking.insert(*user);
+            let energy =
+                pcm.iter().map(|s| f32::from(*s).powi(2)).sum::<f32>() / pcm.len().max(1) as f32;
+            // About -45 dBFS: a voice, not a breath or comfort noise.
+            if energy.sqrt() > 180.0
+                && let Some(user) = ssrcs.get(ssrc)
+            {
+                heard.insert(*user, now);
             }
             for (out, sample) in mixed.iter_mut().zip(pcm) {
                 *out += f32::from(*sample) / 32_768.0;
@@ -130,6 +142,13 @@ impl EventHandler for Tick {
             *sample = sample.clamp(-1.0, 1.0);
         }
         self.shared.speakers.push(&mixed);
+        if !self.shared.deaf.load(std::sync::atomic::Ordering::Relaxed) {
+            let mono: Vec<f32> = mixed.as_chunks::<2>().0.iter().map(|[l, r]| (l + r) * 0.5).collect();
+            self.shared.played.push(&mono);
+        }
+        heard.retain(|_, at| now.duration_since(*at) < HOLD);
+        let talking: HashSet<u64> = heard.keys().copied().collect();
+        drop(heard);
         let mut speaking = self
             .shared
             .speaking

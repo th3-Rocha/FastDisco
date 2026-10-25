@@ -69,6 +69,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     match page {
                         SettingsPage::Account => account(app, ui),
                         SettingsPage::Profiles => profiles(app, ui),
+                        SettingsPage::Voice => voice(app, ui),
                         SettingsPage::Appearance => appearance(app, ui),
                         SettingsPage::Accessibility => accessibility(app, ui),
                         SettingsPage::Notifications => notifications(app, ui),
@@ -128,6 +129,7 @@ fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
     item(app, ui, SettingsPage::Profiles, "Perfis");
     separator(ui, &palette);
     header(ui, "CONFIGURAÇÕES DO APP");
+    item(app, ui, SettingsPage::Voice, "Voz e vídeo");
     item(app, ui, SettingsPage::Appearance, "Aparência");
     item(app, ui, SettingsPage::Accessibility, "Acessibilidade");
     item(app, ui, SettingsPage::Notifications, "Notificações");
@@ -766,6 +768,124 @@ fn keybinds(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
     title(ui, &palette, "Atalhos de teclado");
     super::nav::shortcut_rows(app, ui);
+}
+
+/// The call's voice filter and the app's sounds, as Discord's "Voice &
+/// Video" page.
+fn voice(app: &mut App, ui: &mut Ui) {
+    let palette = app.palette;
+    title(ui, &palette, "Voz e vídeo");
+    ui.label(
+        RichText::new("SUPRESSÃO DE RUÍDO")
+            .font(font(Weight::Bold, 12.0))
+            .color(palette.muted),
+    );
+    ui.label(
+        RichText::new("Tira do seu microfone o barulho de fundo: ventilador, teclado, rua.")
+            .font(font(Weight::Regular, 14.0))
+            .color(palette.muted),
+    );
+    let current = app.settings.noise_suppression;
+    for (level, label, note) in [
+        (0, "Desligada", "O microfone vai como está."),
+        (1, "Padrão", "Tira ruídos constantes, como um ventilador."),
+        (
+            2,
+            "Alta",
+            "Também tira boa parte do teclado e de vozes ao fundo.",
+        ),
+        (
+            3,
+            "Muito alta",
+            "O máximo; pode deixar a voz um pouco abafada.",
+        ),
+    ] {
+        let (rect, response) =
+            ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::click());
+        let selected = current == level;
+        let fill = if selected {
+            palette.selected
+        } else if response.hovered() {
+            palette.hover
+        } else {
+            palette.sidebar
+        };
+        ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
+        let dot = pos2(rect.left() + 20.0, rect.center().y);
+        ui.painter().circle_stroke(
+            dot,
+            9.0,
+            Stroke::new(
+                2.0,
+                if selected {
+                    palette.strong
+                } else {
+                    palette.muted
+                },
+            ),
+        );
+        if selected {
+            ui.painter().circle_filled(dot, 5.0, palette.strong);
+        }
+        ui.painter().text(
+            pos2(rect.left() + 40.0, rect.center().y - 8.0),
+            Align2::LEFT_CENTER,
+            label,
+            font(Weight::Medium, 15.0),
+            palette.strong,
+        );
+        ui.painter().text(
+            pos2(rect.left() + 40.0, rect.center().y + 10.0),
+            Align2::LEFT_CENTER,
+            note,
+            font(Weight::Regular, 13.0),
+            palette.muted,
+        );
+        if response.clicked() {
+            app.actions.push(Action::SetNoiseSuppression(level));
+        }
+    }
+    ui.add_space(16.0);
+    let s = &app.settings;
+    let (echo, gain, sensitivity, sounds) = (
+        s.echo_cancellation,
+        s.auto_gain,
+        s.auto_sensitivity,
+        s.sounds,
+    );
+    switch_row(
+        app,
+        ui,
+        Flag::EchoCancellation,
+        "Cancelamento de eco",
+        "Evita que os outros se ouçam de volta quando você usa caixas de som.",
+        echo,
+    );
+    switch_row(
+        app,
+        ui,
+        Flag::AutoGain,
+        "Controle automático de ganho",
+        "Ajusta o volume da sua voz para os outros te ouvirem sempre por igual.",
+        gain,
+    );
+    switch_row(
+        app,
+        ui,
+        Flag::AutoSensitivity,
+        "Determinar a sensibilidade de entrada automaticamente",
+        "O microfone só transmite enquanto você fala.",
+        sensitivity,
+    );
+    ui.add_space(16.0);
+    switch_row(
+        app,
+        ui,
+        Flag::Sounds,
+        "Sons do app",
+        "Entrar e sair de canais de voz, silenciar, ensurdecer e mensagens novas.",
+        sounds,
+    );
 }
 
 fn linux(app: &mut App, ui: &mut Ui) {

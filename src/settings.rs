@@ -44,6 +44,15 @@ pub struct Settings {
     pub spellcheck: bool,
     /// Words the user added to the dictionary, lowercased.
     pub dictionary: Vec<String>,
+    /// The call's voice filter: noise suppression 0 off, 1 moderate,
+    /// 2 high, 3 very high.
+    pub noise_suppression: u8,
+    pub echo_cancellation: bool,
+    pub auto_gain: bool,
+    /// The microphone sends only while the user talks.
+    pub auto_sensitivity: bool,
+    /// The app's little sounds: calls, muting, messages.
+    pub sounds: bool,
 }
 
 impl Default for Settings {
@@ -63,6 +72,11 @@ impl Default for Settings {
             deafened: false,
             spellcheck: true,
             dictionary: Vec::new(),
+            noise_suppression: 2,
+            echo_cancellation: true,
+            auto_gain: true,
+            auto_sensitivity: true,
+            sounds: true,
         }
     }
 }

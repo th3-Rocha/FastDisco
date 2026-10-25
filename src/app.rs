@@ -28,6 +28,7 @@ pub enum Screen {
 pub enum SettingsPage {
     Account,
     Profiles,
+    Voice,
     Appearance,
     Accessibility,
     Notifications,
@@ -47,6 +48,10 @@ pub enum Flag {
     StartAtLogin,
     Stats,
     SpellCheck,
+    EchoCancellation,
+    AutoGain,
+    AutoSensitivity,
+    Sounds,
 }
 
 /// The profile page's fields while they are edited.
@@ -93,6 +98,8 @@ pub enum Action {
     Toggle(Flag),
     SetTheme(crate::settings::Theme),
     SetZoom(f32),
+    /// The voice filter's noise suppression, 0 off to 3 very high.
+    SetNoiseSuppression(u8),
     SaveProfile,
     AskAutostart,
     MarkRead(Id),
@@ -162,6 +169,7 @@ pub struct App {
     pub call: Option<crate::call::Session>,
     /// The call's tiles fill the middle instead of a text channel.
     pub call_view: bool,
+    sounds: crate::sounds::Sounds,
     pub profile_form: Option<ProfileForm>,
     /// Whether FastDisco starts at login; `None` where it cannot.
     pub autostart: Option<bool>,
@@ -219,6 +227,7 @@ impl App {
             speller: None,
             call: None,
             call_view: false,
+            sounds: crate::sounds::Sounds::default(),
             profile_form: None,
             autostart: None,
             autostart_asked: false,
@@ -390,8 +399,18 @@ impl App {
                 "Enviou uma mensagem".into()
             };
         }
-        let sound = self.settings.notification_sound;
-        self.notifier.show(&title, &body, channel, sound);
+        // The app's own message sound, not the system's.
+        if self.settings.notification_sound {
+            self.sound(crate::sounds::Sound::Message);
+        }
+        self.notifier.show(&title, &body, channel, false);
+    }
+
+    /// One of the app's sounds, unless the user turned them off.
+    pub fn sound(&mut self, sound: crate::sounds::Sound) {
+        if self.settings.sounds {
+            self.sounds.play(sound);
+        }
     }
 
     pub fn save_settings(&self) {
@@ -761,6 +780,13 @@ impl App {
                 Action::Admin(action) => self.apply_admin(action),
                 Action::Nav(action) => self.apply_nav(action),
                 Action::Interact(action) => self.apply_interact(action),
+                Action::SetNoiseSuppression(level) => {
+                    self.settings.noise_suppression = level.min(3);
+                    self.save_settings();
+                    if let Some(call) = &self.call {
+                        call.shared.filter.set(&self.settings);
+                    }
+                }
                 Action::JoinVoice(channel) => self.join_voice(channel),
                 Action::LeaveVoice => self.leave_voice(),
                 Action::ShowCall(shown) => self.call_view = shown && self.call.is_some(),
@@ -787,6 +813,10 @@ impl App {
                             self.backend.send(Command::SetAutostart(on));
                         }
                         Flag::Stats => self.show_stats = !self.show_stats,
+                        Flag::EchoCancellation => s.echo_cancellation = !s.echo_cancellation,
+                        Flag::AutoGain => s.auto_gain = !s.auto_gain,
+                        Flag::AutoSensitivity => s.auto_sensitivity = !s.auto_sensitivity,
+                        Flag::Sounds => s.sounds = !s.sounds,
                         Flag::SpellCheck => {
                             s.spellcheck = !s.spellcheck;
                             if s.spellcheck && self.speller.is_none() {
@@ -795,6 +825,9 @@ impl App {
                         }
                     }
                     self.save_settings();
+                    if let Some(call) = &self.call {
+                        call.shared.filter.set(&self.settings);
+                    }
                 }
                 Action::SetTheme(theme) => {
                     self.settings.theme = theme;
@@ -847,12 +880,22 @@ impl App {
                     }
                     self.save_settings();
                     self.send_voice_state();
+                    self.sound(if self.settings.muted {
+                        crate::sounds::Sound::Mute
+                    } else {
+                        crate::sounds::Sound::Unmute
+                    });
                 }
                 Action::ToggleDeafen => {
                     self.settings.deafened = !self.settings.deafened;
                     self.settings.muted = self.settings.deafened;
                     self.save_settings();
                     self.send_voice_state();
+                    self.sound(if self.settings.deafened {
+                        crate::sounds::Sound::Deafen
+                    } else {
+                        crate::sounds::Sound::Undeafen
+                    });
                 }
             }
         }
