@@ -511,6 +511,29 @@ pub struct Model {
     /// Friends, blocked people and requests, by Discord's type
     /// (`nav::relationship`).
     pub relationships: HashMap<Id, u8>,
+    /// The rail: servers alone and in folders, in the user's order.
+    pub folders: Vec<Folder>,
+}
+
+/// A folder of servers in the rail; one without an id is a server alone.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Folder {
+    pub id: Option<u64>,
+    pub name: Option<String>,
+    /// 0xRRGGBB.
+    pub color: Option<u32>,
+    pub guilds: Vec<Id>,
+}
+
+impl Folder {
+    pub fn single(guild: Id) -> Self {
+        Self {
+            id: None,
+            name: None,
+            color: None,
+            guilds: vec![guild],
+        }
+    }
 }
 
 /// The signed-in account's private details, from READY.
@@ -539,6 +562,33 @@ pub mod permission {
 }
 
 impl Model {
+    /// Makes the rail's folders hold every server once, and the server
+    /// list follow their order. New servers go to the top, as Discord's.
+    pub fn settle_folders(&mut self) {
+        let known: std::collections::HashSet<Id> = self.guilds.iter().map(|g| g.id).collect();
+        let mut seen = std::collections::HashSet::new();
+        for folder in &mut self.folders {
+            folder
+                .guilds
+                .retain(|g| known.contains(g) && seen.insert(*g));
+        }
+        self.folders.retain(|f| !f.guilds.is_empty());
+        let missing: Vec<Folder> = self
+            .guilds
+            .iter()
+            .filter(|g| !seen.contains(&g.id))
+            .map(|g| Folder::single(g.id))
+            .collect();
+        self.folders.splice(0..0, missing);
+        let order: Vec<Id> = self.folders.iter().flat_map(|f| f.guilds.clone()).collect();
+        self.guilds.sort_by_key(|g| {
+            order
+                .iter()
+                .position(|id| *id == g.id)
+                .unwrap_or(usize::MAX)
+        });
+    }
+
     /// The longest message the user may send.
     pub fn max_message(&self) -> usize {
         if self.premium == 2 { 4000 } else { 2000 }

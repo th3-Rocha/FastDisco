@@ -1,11 +1,17 @@
 //! The server rail: home, the servers, then adding and discovering servers.
 
-use egui::{Align2, Color32, CornerRadius, Frame, Margin, Rect, Sense, Ui, Vec2, pos2, vec2};
+use egui::{
+    Align2, Color32, CornerRadius, Frame, Margin, Rect, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2,
+};
 use fastframe_fonts::Weight;
 
 use super::widgets::{badge, font, paint_icon};
+use crate::admin::{AdminAction, Modal};
 use crate::app::{Action, App, Place};
+use crate::folders::{Drop, Key};
 use crate::icons::Icon;
+use crate::model::{Id, permission};
+use crate::nav::NavAction;
 use crate::theme::RAIL_WIDTH;
 
 const ICON: f32 = 48.0;
@@ -59,74 +65,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     );
                     ui.add_space(GAP);
 
-                    let mut open = None;
-                    let mut menu: Option<Action> = None;
-                    for guild in &app.model.guilds {
-                        let (unread, mentions) = app.model.guild_unread(guild);
-                        let selected = app.place == Place::Server(guild.id);
-                        let icon = app.picture(guild.icon.as_deref());
-                        let response = item(
-                            ui,
-                            app,
-                            selected,
-                            unread,
-                            mentions,
-                            &guild.name,
-                            |ui, rect, lit| match icon {
-                                Some(uri) => {
-                                    egui::Image::new(uri)
-                                        .corner_radius(radius(lit))
-                                        .paint_at(ui, rect);
-                                }
-                                None => {
-                                    let fill = if lit { palette.accent } else { palette.chat };
-                                    ui.painter().rect_filled(rect, radius(lit), fill);
-                                    let text = acronym(&guild.name);
-                                    let size = match text.chars().count() {
-                                        0..=2 => 18.0,
-                                        3 => 14.0,
-                                        _ => 11.0,
-                                    };
-                                    let tint = if lit { Color32::WHITE } else { palette.text };
-                                    ui.painter().text(
-                                        rect.center(),
-                                        Align2::CENTER_CENTER,
-                                        text,
-                                        font(Weight::Medium, size),
-                                        tint,
-                                    );
-                                }
-                            },
-                        );
-                        if response.clicked() {
-                            open = Some(guild.id);
-                        }
-                        let id = guild.id;
-                        response.context_menu(|ui| {
-                            ui.set_min_width(180.0);
-                            if ui
-                                .add_enabled(unread, egui::Button::new("Marcar como lido"))
-                                .clicked()
-                            {
-                                menu = Some(Action::MarkGuildRead(id));
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button("Copiar ID do servidor").clicked() {
-                                menu = Some(Action::Chat(crate::chat::ChatAction::Copy(
-                                    id.to_string(),
-                                )));
-                                ui.close();
-                            }
-                        });
-                        ui.add_space(GAP);
-                    }
-                    if let Some(id) = open {
-                        app.actions.push(Action::OpenServer(id));
-                    }
-                    if let Some(action) = menu {
-                        app.actions.push(action);
-                    }
+                    servers(app, ui);
 
                     // Creating and joining servers open Discord's own pages
                     // for now.
@@ -171,6 +110,322 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         });
 }
 
+/// The server being dragged, kept in egui's memory while the button is down.
+const DRAG: &str = "rail-drag";
+
+/// What a dragged server can land on or beside.
+#[derive(Clone, Copy)]
+enum Slot {
+    /// A server alone, or a folder's head (open or not).
+    Entry(Key, bool),
+    /// A server in an open folder.
+    Inside(Key, Id),
+}
+
+/// The servers, alone and in folders, and dragging them around.
+fn servers(app: &mut App, ui: &mut Ui) {
+    let palette = app.palette;
+    let mut out: Vec<Action> = Vec::new();
+    let mut slots: Vec<(Rect, Slot)> = Vec::new();
+    let folders = app.model.folders.clone();
+    for folder in &folders {
+        let key = Key::of(folder);
+        let Some(id) = folder.id else {
+            let response = guild_item(app, ui, folder.guilds[0], &mut out);
+            slots.push((response.rect, Slot::Entry(key, false)));
+            ui.add_space(GAP);
+            continue;
+        };
+        let open = app.nav.open_folders.contains(&id);
+        let background = ui.painter().add(Shape::Noop);
+        let top = ui.cursor().top();
+        let (unread, mentions) = folder
+            .guilds
+            .iter()
+            .filter_map(|g| app.model.guild(*g))
+            .map(|g| app.model.guild_unread(g))
+            .fold((false, 0), |(u, m), (gu, gm)| (u || gu, m + gm));
+        let inside = app.server().is_some_and(|s| folder.guilds.contains(&s));
+        let hint = folder.name.clone().unwrap_or_else(|| {
+            folder
+                .guilds
+                .iter()
+                .filter_map(|g| app.model.guild(*g))
+                .map(|g| g.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        });
+        let color = folder_color(folder.color);
+        let head = item(
+            ui,
+            app,
+            inside && !open,
+            unread && !open,
+            if open { 0 } else { mentions },
+            &hint,
+            |ui, rect, _| {
+                if open {
+                    paint_icon(ui, Icon::Folder, rect.center(), 24.0, color);
+                    return;
+                }
+                ui.painter()
+                    .rect_filled(rect, CornerRadius::same(16), color.gamma_multiply(0.4));
+                for (i, guild) in folder.guilds.iter().take(4).enumerate() {
+                    let dx = if i % 2 == 0 { -10.0 } else { 10.0 };
+                    let dy = if i < 2 { -10.0 } else { 10.0 };
+                    let mini =
+                        Rect::from_center_size(rect.center() + vec2(dx, dy), Vec2::splat(16.0));
+                    if let Some(g) = app.model.guild(*guild) {
+                        paint_guild(ui, app, g, mini, false);
+                    }
+                }
+            },
+        );
+        if head.clicked() {
+            out.push(Action::Nav(NavAction::ToggleFolder(id)));
+        }
+        slots.push((head.rect, Slot::Entry(key, open)));
+        if open {
+            for guild in &folder.guilds {
+                ui.add_space(GAP);
+                let response = guild_item(app, ui, *guild, &mut out);
+                slots.push((response.rect, Slot::Inside(key, *guild)));
+            }
+            // An open folder sits on a band of its own, as Discord's.
+            let center = head.rect.center().x;
+            let band = Rect::from_min_max(
+                pos2(center - ICON / 2.0, top),
+                pos2(center + ICON / 2.0, ui.cursor().top()),
+            );
+            ui.painter().set(
+                background,
+                Shape::rect_filled(band, CornerRadius::same(16), palette.sidebar),
+            );
+        }
+        ui.add_space(GAP);
+    }
+    drag(app, ui, &slots, &mut out);
+    app.actions.extend(out);
+}
+
+/// One server in the rail: its picture or initials, opening it on a
+/// click, its menu, and picking it up to drag.
+fn guild_item(app: &App, ui: &mut Ui, id: Id, out: &mut Vec<Action>) -> egui::Response {
+    let Some(guild) = app.model.guild(id) else {
+        let (rect, response) = ui.allocate_exact_size(vec2(RAIL_WIDTH, ICON), Sense::hover());
+        let _ = rect;
+        return response;
+    };
+    let (unread, mentions) = app.model.guild_unread(guild);
+    let selected = app.place == Place::Server(id);
+    let response = item(
+        ui,
+        app,
+        selected,
+        unread,
+        mentions,
+        &guild.name,
+        |ui, rect, lit| {
+            paint_guild(ui, app, guild, rect, lit);
+        },
+    );
+    if response.drag_started() {
+        ui.data_mut(|d| d.insert_temp(egui::Id::new(DRAG), id));
+    }
+    if response.clicked() {
+        out.push(Action::OpenServer(id));
+    }
+    let can_settings = [
+        permission::MANAGE_GUILD,
+        permission::MANAGE_ROLES,
+        permission::BAN,
+        permission::VIEW_AUDIT_LOG,
+    ]
+    .iter()
+    .any(|bit| app.model.can(id, *bit));
+    let owner = guild.owner == app.model.me;
+    response.context_menu(|ui| {
+        ui.set_min_width(180.0);
+        if ui
+            .add_enabled(
+                unread || mentions > 0,
+                egui::Button::new("Marcar como lido"),
+            )
+            .clicked()
+        {
+            out.push(Action::MarkGuildRead(id));
+            ui.close();
+        }
+        ui.separator();
+        if app.model.can(id, permission::CREATE_INVITE) && ui.button("Convidar pessoas").clicked() {
+            out.push(Action::OpenServer(id));
+            out.push(Action::Admin(AdminAction::Open(Modal::Invite {
+                link: None,
+            })));
+            ui.close();
+        }
+        if can_settings && ui.button("Configurações do servidor").clicked() {
+            out.push(Action::Admin(AdminAction::OpenSettings(id)));
+            ui.close();
+        }
+        if !owner {
+            let leave = egui::Button::new(
+                egui::RichText::new("Sair do servidor").color(app.palette.danger),
+            );
+            if ui.add(leave).clicked() {
+                out.push(Action::Admin(AdminAction::Open(Modal::Leave { guild: id })));
+                ui.close();
+            }
+        }
+        ui.separator();
+        if ui.button("Copiar ID do servidor").clicked() {
+            out.push(Action::Chat(crate::chat::ChatAction::Copy(id.to_string())));
+            ui.close();
+        }
+    });
+    response
+}
+
+/// A server's picture, or its initials on a plain tile.
+fn paint_guild(ui: &Ui, app: &App, guild: &crate::model::Guild, rect: Rect, lit: bool) {
+    let palette = app.palette;
+    let small = rect.width() < 30.0;
+    let corner = if small {
+        CornerRadius::same(5)
+    } else {
+        radius(lit)
+    };
+    match app.picture(guild.icon.as_deref()) {
+        Some(uri) => {
+            egui::Image::new(uri)
+                .corner_radius(corner)
+                .paint_at(ui, rect);
+        }
+        None => {
+            let fill = if lit { palette.accent } else { palette.chat };
+            ui.painter().rect_filled(rect, corner, fill);
+            let text = acronym(&guild.name);
+            let size = match (small, text.chars().count()) {
+                (true, _) => 7.0,
+                (false, 0..=2) => 18.0,
+                (false, 3) => 14.0,
+                _ => 11.0,
+            };
+            let tint = if lit { Color32::WHITE } else { palette.text };
+            ui.painter().text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                text,
+                font(Weight::Medium, size),
+                tint,
+            );
+        }
+    }
+}
+
+/// A folder's colour, Discord's blurple when it has none.
+fn folder_color(color: Option<u32>) -> Color32 {
+    let c = color.filter(|c| *c != 0).unwrap_or(0x5865f2);
+    Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
+}
+
+/// While a server is dragged: it follows the pointer, a line or a ring
+/// shows where it would land, and letting go moves it there.
+fn drag(app: &App, ui: &mut Ui, slots: &[(Rect, Slot)], out: &mut Vec<Action>) {
+    let key = egui::Id::new(DRAG);
+    let Some(guild) = ui.data(|d| d.get_temp::<Id>(key)) else {
+        return;
+    };
+    let released = ui.input(|i| i.pointer.any_released() || !i.pointer.any_down());
+    let Some(pointer) = ui.ctx().pointer_latest_pos() else {
+        ui.data_mut(|d| d.remove::<Id>(key));
+        return;
+    };
+    let palette = app.palette;
+    let next_in = |folder: Key, after: Id| -> Option<Id> {
+        let f = app.model.folders.iter().find(|f| Key::of(f) == folder)?;
+        let at = f.guilds.iter().position(|g| *g == after)?;
+        f.guilds.get(at + 1).copied()
+    };
+    let first_in = |folder: Key| -> Option<Id> {
+        app.model
+            .folders
+            .iter()
+            .find(|f| Key::of(f) == folder)
+            .and_then(|f| f.guilds.first().copied())
+    };
+    enum Mark {
+        Line(f32),
+        Ring(Rect),
+    }
+    let target = slots
+        .iter()
+        .find(|(r, _)| pointer.y >= r.top() - GAP / 2.0 && pointer.y < r.bottom() + GAP / 2.0)
+        .and_then(|(r, slot)| {
+            let rel = (pointer.y - r.top()) / r.height();
+            let above = r.top() - GAP / 2.0;
+            let below = r.bottom() + GAP / 2.0;
+            match *slot {
+                Slot::Entry(Key::Guild(g), _) if g == guild => None,
+                Slot::Entry(k, _) if rel < 0.25 => Some((Drop::Before(k), Mark::Line(above))),
+                Slot::Entry(k, true) if rel > 0.75 => {
+                    Some((Drop::Into(k, first_in(k)), Mark::Line(below)))
+                }
+                Slot::Entry(k, false) if rel > 0.75 => Some((Drop::After(k), Mark::Line(below))),
+                Slot::Entry(k, _) => Some((Drop::Into(k, None), Mark::Ring(*r))),
+                Slot::Inside(_, g) if g == guild => None,
+                Slot::Inside(k, g) if rel < 0.5 => {
+                    Some((Drop::Into(k, Some(g)), Mark::Line(above)))
+                }
+                Slot::Inside(k, g) => Some((Drop::Into(k, next_in(k, g)), Mark::Line(below))),
+            }
+        });
+    let layer = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        key.with("mark"),
+    ));
+    let center = slots
+        .first()
+        .map_or(RAIL_WIDTH / 2.0, |(r, _)| r.center().x);
+    match target.as_ref().map(|(_, m)| m) {
+        Some(Mark::Line(y)) => {
+            layer.rect_filled(
+                Rect::from_center_size(pos2(center, *y), vec2(40.0, 3.0)),
+                CornerRadius::same(2),
+                palette.online,
+            );
+        }
+        Some(Mark::Ring(rect)) => {
+            let ring = Rect::from_center_size(rect.center(), Vec2::splat(ICON + 4.0));
+            layer.rect_stroke(
+                ring,
+                CornerRadius::same(18),
+                Stroke::new(2.0, palette.online),
+                egui::StrokeKind::Outside,
+            );
+        }
+        None => {}
+    }
+    if let Some(g) = app.model.guild(guild) {
+        egui::Area::new(key.with("ghost"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(pointer - Vec2::splat(ICON / 2.0))
+            .interactable(false)
+            .show(ui.ctx(), |ui| {
+                ui.set_opacity(0.8);
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(ICON), Sense::hover());
+                paint_guild(ui, app, g, rect, true);
+            });
+    }
+    ui.ctx().request_repaint();
+    if released {
+        ui.data_mut(|d| d.remove::<Id>(key));
+        if let Some((drop, _)) = target {
+            out.push(Action::Nav(NavAction::MoveGuild { guild, drop }));
+        }
+    }
+}
+
 /// A circle that becomes a rounded square under the pointer or when chosen.
 fn radius(lit: bool) -> CornerRadius {
     CornerRadius::same(if lit { 16 } else { 24 })
@@ -188,7 +443,7 @@ fn item(
     paint: impl FnOnce(&Ui, Rect, bool),
 ) -> egui::Response {
     let palette = app.palette;
-    let (slot, response) = ui.allocate_exact_size(vec2(RAIL_WIDTH, ICON), Sense::click());
+    let (slot, response) = ui.allocate_exact_size(vec2(RAIL_WIDTH, ICON), Sense::click_and_drag());
     let hovered = response.hovered();
     let rect = Rect::from_center_size(slot.center(), Vec2::splat(ICON));
     paint(ui, rect, selected || hovered);
@@ -219,7 +474,7 @@ fn item(
             Some(palette.rail),
         );
     }
-    if hovered {
+    if hovered && !ui.data(|d| d.get_temp::<Id>(egui::Id::new(DRAG)).is_some()) {
         rail_tooltip(ui, rect, hint);
     }
     response

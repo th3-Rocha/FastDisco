@@ -116,9 +116,15 @@ fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
         return;
     };
     let (loose, categories) = app.model.layout(g);
+    let movable = app
+        .model
+        .can(guild, crate::model::permission::MANAGE_CHANNELS);
+    // Where a dragged channel can go: each row, and each category's name.
+    let mut rows: Vec<Row> = Vec::new();
     ui.add_space(8.0);
     for id in loose {
-        channel_row(app, ui, id);
+        let rect = channel_row(app, ui, id, movable);
+        rows.push((rect, None, Some(id), false));
     }
     for (category, list) in categories {
         ui.add_space(16.0);
@@ -164,26 +170,109 @@ fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
         if response.clicked() {
             app.actions.push(Action::ToggleCategory(category));
         }
+        // Dropped on the name: first in the category.
+        let first = list.first().copied();
+        rows.push((rect, Some(category), first, true));
         for id in list {
             // A collapsed category still shows the open channel and unread ones.
             let unread = app.model.channel(id).is_some_and(|c| c.unread());
             if collapsed && Some(id) != app.channel && !unread {
                 continue;
             }
-            channel_row(app, ui, id);
+            let rect = channel_row(app, ui, id, movable);
+            rows.push((rect, Some(category), Some(id), false));
         }
     }
     ui.add_space(8.0);
+    if movable {
+        drag_channel(app, ui, &rows);
+    }
 }
 
-fn channel_row(app: &mut App, ui: &mut Ui, id: Id) {
+const CHANNEL_DRAG: &str = "channel-drag";
+
+/// A place in the channel list: where it is drawn, its category, the
+/// channel there (a category's first, for its name), and whether it is
+/// the category's name.
+type Row = (Rect, Option<Id>, Option<Id>, bool);
+
+/// While a channel is dragged: a line where it would land, and letting
+/// go moves it there.
+fn drag_channel(app: &mut App, ui: &mut Ui, rows: &[Row]) {
+    let key = egui::Id::new(CHANNEL_DRAG);
+    let Some(channel) = ui.data(|d| d.get_temp::<Id>(key)) else {
+        return;
+    };
+    let released = ui.input(|i| i.pointer.any_released() || !i.pointer.any_down());
+    let Some(pointer) = ui.ctx().pointer_latest_pos() else {
+        ui.data_mut(|d| d.remove::<Id>(key));
+        return;
+    };
+    // The row under the pointer: its top half puts the channel before it,
+    // the bottom half before the next row of the same category.
+    let target = rows
+        .iter()
+        .enumerate()
+        .find(|(_, (r, ..))| pointer.y >= r.top() && pointer.y < r.bottom())
+        .map(|(i, (r, parent, id, header))| {
+            if *header || pointer.y < r.center().y {
+                (*parent, *id, if *header { r.bottom() } else { r.top() })
+            } else {
+                let next = rows
+                    .get(i + 1)
+                    .filter(|n| n.1 == *parent && !n.3)
+                    .and_then(|n| n.2);
+                (*parent, next, r.bottom())
+            }
+        });
+    if let Some((_, _, y)) = target {
+        let layer = ui.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            key.with("mark"),
+        ));
+        let left = ui.max_rect().left() + 8.0;
+        layer.rect_filled(
+            Rect::from_min_max(
+                pos2(left, y - 1.0),
+                pos2(left + SIDEBAR_WIDTH - 16.0, y + 1.0),
+            ),
+            CornerRadius::same(1),
+            app.palette.online,
+        );
+    }
+    ui.ctx().request_repaint();
+    if released {
+        ui.data_mut(|d| d.remove::<Id>(key));
+        if let Some((parent, before, _)) = target
+            && before != Some(channel)
+        {
+            app.actions
+                .push(Action::Nav(crate::nav::NavAction::MoveChannel {
+                    channel,
+                    parent,
+                    before,
+                }));
+        }
+    }
+}
+
+/// One channel; `movable` lets it be dragged. Returns where it was drawn.
+fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     let palette = app.palette;
     let Some(channel) = app.model.channel(id) else {
-        return;
+        return Rect::NOTHING;
     };
     let selected = app.channel == Some(id);
     let unread = channel.unread();
-    let (slot, response) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 34.0), Sense::click());
+    let sense = if movable {
+        Sense::click_and_drag()
+    } else {
+        Sense::click()
+    };
+    let (slot, response) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 34.0), sense);
+    if response.drag_started() {
+        ui.data_mut(|d| d.insert_temp(egui::Id::new(CHANNEL_DRAG), id));
+    }
     let rect = Rect::from_min_max(
         pos2(slot.left() + 8.0, slot.top() + 1.0),
         pos2(slot.right() - 8.0, slot.bottom() - 1.0),
@@ -297,6 +386,7 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id) {
     if let Some(action) = chosen {
         app.actions.push(action);
     }
+    slot
 }
 
 fn direct_messages(app: &mut App, ui: &mut Ui) {
@@ -338,7 +428,13 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
         .filter(|k| **k == crate::nav::relationship::INCOMING)
         .count() as u32;
     if pending > 0 {
-        badge(ui, &palette, pos2(rect.right() - 8.0, rect.center().y), pending, None);
+        badge(
+            ui,
+            &palette,
+            pos2(rect.right() - 8.0, rect.center().y),
+            pending,
+            None,
+        );
     }
     if response.clicked() {
         app.actions

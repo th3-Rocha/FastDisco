@@ -485,6 +485,8 @@ pub fn ready(value: &Value) -> Model {
         });
     }
     model.guilds = guilds;
+    model.folders = folders(&value["user_settings"]["guild_folders"]);
+    model.settle_folders();
 
     for c in value["private_channels"].as_array().into_iter().flatten() {
         for u in c["recipients"].as_array().into_iter().flatten() {
@@ -518,6 +520,32 @@ pub fn ready(value: &Value) -> Model {
         }
     }
     model
+}
+
+/// The rail's folders from the user's settings; servers alone are
+/// folders without an id.
+pub fn folders(value: &Value) -> Vec<crate::model::Folder> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|f| crate::model::Folder {
+            id: f["id"]
+                .as_u64()
+                .or_else(|| f["id"].as_str().and_then(|s| s.parse().ok())),
+            name: f["name"]
+                .as_str()
+                .filter(|n| !n.is_empty())
+                .map(str::to_owned),
+            color: f["color"].as_u64().map(|c| c as u32),
+            guilds: f["guild_ids"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(id)
+                .collect(),
+        })
+        .collect()
 }
 
 /// A friend, a blocked person or a request, from READY or the gateway.

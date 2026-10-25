@@ -4,8 +4,8 @@
 mod admin;
 mod chat;
 mod composer;
-mod login;
 mod friends;
+mod login;
 mod message;
 mod nav;
 pub mod overlay;

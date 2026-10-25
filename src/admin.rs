@@ -427,6 +427,7 @@ impl App {
                 self.admin.modal = None;
                 self.admin.settings = None;
                 self.model.guilds.retain(|g| g.id != guild);
+                self.model.settle_folders();
                 self.actions.push(crate::app::Action::GoHome);
             }
             Tag::GuildSaved | Tag::RoleSaved => {

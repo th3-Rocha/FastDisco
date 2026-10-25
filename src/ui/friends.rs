@@ -55,7 +55,13 @@ fn header(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                 Stroke::new(1.0, palette.divider),
             );
             let y = rect.center().y;
-            paint_icon(ui, Icon::Users, pos2(rect.left() + 12.0, y), 22.0, palette.muted);
+            paint_icon(
+                ui,
+                Icon::Users,
+                pos2(rect.left() + 12.0, y),
+                22.0,
+                palette.muted,
+            );
             ui.painter().text(
                 pos2(rect.left() + 32.0, y),
                 Align2::LEFT_CENTER,
@@ -64,7 +70,8 @@ fn header(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                 palette.strong,
             );
             let mut x = rect.left() + 104.0;
-            ui.painter().circle_filled(pos2(x - 12.0, y), 2.0, palette.muted);
+            ui.painter()
+                .circle_filled(pos2(x - 12.0, y), 2.0, palette.muted);
             for (tab, label) in [
                 (FriendsTab::Online, "Disponível"),
                 (FriendsTab::All, "Todos"),
@@ -83,8 +90,11 @@ fn header(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                 let width = width_of + 16.0 + if badge { 24.0 } else { 0.0 };
                 let tab_rect = Rect::from_min_size(pos2(x, y - 13.0), vec2(width, 26.0));
                 x += width + 12.0;
-                let response =
-                    ui.interact(tab_rect, ui.id().with(("friends-tab", label)), Sense::click());
+                let response = ui.interact(
+                    tab_rect,
+                    ui.id().with(("friends-tab", label)),
+                    Sense::click(),
+                );
                 let hovered = response.hovered();
                 let (fill, text_color) = match (add, selected, hovered) {
                     (true, true, _) => (None, palette.online),
@@ -94,11 +104,14 @@ fn header(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                     (false, false, false) => (None, palette.muted),
                 };
                 if let Some(fill) = fill {
-                    ui.painter().rect_filled(tab_rect, CornerRadius::same(4), fill);
-                }
-                let galley =
                     ui.painter()
-                        .layout_no_wrap(label.into(), font(Weight::Medium, 15.0), text_color);
+                        .rect_filled(tab_rect, CornerRadius::same(4), fill);
+                }
+                let galley = ui.painter().layout_no_wrap(
+                    label.into(),
+                    font(Weight::Medium, 15.0),
+                    text_color,
+                );
                 ui.painter().galley(
                     pos2(tab_rect.left() + 8.0, y - galley.size().y / 2.0),
                     galley,
@@ -131,7 +144,10 @@ fn people(app: &App, tab: FriendsTab) -> Vec<(Id, u8)> {
         .filter(|(id, kind)| match tab {
             FriendsTab::Online => {
                 *kind == relationship::FRIEND
-                    && app.model.user(*id).is_some_and(|u| u.status != Status::Offline)
+                    && app
+                        .model
+                        .user(*id)
+                        .is_some_and(|u| u.status != Status::Offline)
             }
             FriendsTab::All => *kind == relationship::FRIEND,
             FriendsTab::Pending => {
@@ -151,7 +167,10 @@ fn people(app: &App, tab: FriendsTab) -> Vec<(Id, u8)> {
     list.sort_by_cached_key(|(id, kind)| {
         (
             *kind != relationship::INCOMING,
-            app.model.user(*id).map(|u| u.name.to_lowercase()).unwrap_or_default(),
+            app.model
+                .user(*id)
+                .map(|u| u.name.to_lowercase())
+                .unwrap_or_default(),
         )
     });
     list
@@ -196,7 +215,9 @@ fn list(app: &mut App, ui: &mut Ui, tab: FriendsTab, out: &mut Vec<Action>) {
     if people.is_empty() {
         let text = match tab {
             FriendsTab::Online => "Ninguém por perto para brincar com o Wumpus.",
-            FriendsTab::Pending => "Não há pedidos de amizade pendentes. Fique à vontade para adicionar alguém.",
+            FriendsTab::Pending => {
+                "Não há pedidos de amizade pendentes. Fique à vontade para adicionar alguém."
+            }
             FriendsTab::Blocked => "Você não pode desbloquear o Wumpus.",
             _ => "O Wumpus está esperando amigos. Mas você não precisa!",
         };
@@ -246,7 +267,14 @@ fn row(app: &App, ui: &mut Ui, user: Id, kind: u8, out: &mut Vec<Action>) {
     let cy = rect.center().y;
     let ring = if hovered { palette.hover } else { palette.chat };
     let status = (kind == relationship::FRIEND).then(|| status_color(&palette, person.status));
-    avatar(ui, app, person, pos2(rect.left() + 16.0, cy), 16.0, status.map(|_| ring));
+    avatar(
+        ui,
+        app,
+        person,
+        pos2(rect.left() + 16.0, cy),
+        16.0,
+        status.map(|_| ring),
+    );
     let line = match kind {
         relationship::INCOMING => "Pedido de amizade recebido".to_owned(),
         relationship::OUTGOING => "Pedido de amizade enviado".to_owned(),
@@ -264,7 +292,11 @@ fn row(app: &App, ui: &mut Ui, user: Id, kind: u8, out: &mut Vec<Action>) {
     let buttons: Vec<(Icon, &str, Action)> = match kind {
         relationship::INCOMING => vec![
             (Icon::Check, "Aceitar", Action::Nav(NavAction::Accept(user))),
-            (Icon::Close, "Ignorar", Action::Nav(NavAction::RemoveRelationship(user))),
+            (
+                Icon::Close,
+                "Ignorar",
+                Action::Nav(NavAction::RemoveRelationship(user)),
+            ),
         ],
         relationship::OUTGOING => vec![(
             Icon::Close,
@@ -286,9 +318,11 @@ fn row(app: &App, ui: &mut Ui, user: Id, kind: u8, out: &mut Vec<Action>) {
         )],
     };
     let text_right = rect.right() - 16.0 - 46.0 * buttons.len() as f32;
-    let name_galley =
-        ui.painter()
-            .layout_no_wrap(person.name.clone(), font(Weight::SemiBold, 16.0), palette.strong);
+    let name_galley = ui.painter().layout_no_wrap(
+        person.name.clone(),
+        font(Weight::SemiBold, 16.0),
+        palette.strong,
+    );
     let name_w = name_galley.size().x.min(text_right - rect.left() - 44.0);
     Elide::new(ui, text_right).text(
         pos2(rect.left() + 44.0, cy - 9.0),
@@ -326,7 +360,11 @@ fn row(app: &App, ui: &mut Ui, user: Id, kind: u8, out: &mut Vec<Action>) {
         ui.painter().circle_filled(
             center,
             18.0,
-            if hovered { palette.rail } else { palette.sidebar },
+            if hovered {
+                palette.rail
+            } else {
+                palette.sidebar
+            },
         );
         let tint = match (button.hovered(), hint) {
             (true, "Aceitar") => palette.online,
@@ -419,8 +457,10 @@ fn add_friend(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                     egui::TextEdit::singleline(&mut app.nav.add_friend)
                         .frame(Frame::NONE)
                         .hint_text(
-                            RichText::new("Você pode adicionar amigos com o nome de usuário deles.")
-                                .color(palette.muted),
+                            RichText::new(
+                                "Você pode adicionar amigos com o nome de usuário deles.",
+                            )
+                            .color(palette.muted),
                         )
                         .font(font(Weight::Regular, 16.0))
                         .text_color(palette.strong)
@@ -447,11 +487,19 @@ fn add_friend(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     match &app.nav.add_result {
         Some(Ok(text)) => {
             ui.add_space(8.0);
-            ui.label(RichText::new(text).font(font(Weight::Regular, 14.0)).color(palette.online));
+            ui.label(
+                RichText::new(text)
+                    .font(font(Weight::Regular, 14.0))
+                    .color(palette.online),
+            );
         }
         Some(Err(text)) => {
             ui.add_space(8.0);
-            ui.label(RichText::new(text).font(font(Weight::Regular, 14.0)).color(palette.danger));
+            ui.label(
+                RichText::new(text)
+                    .font(font(Weight::Regular, 14.0))
+                    .color(palette.danger),
+            );
         }
         None => {}
     }

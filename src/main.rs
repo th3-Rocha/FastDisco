@@ -6,6 +6,7 @@ mod app;
 mod backend;
 mod chat;
 mod discord;
+mod folders;
 mod icons;
 mod login;
 mod markdown;

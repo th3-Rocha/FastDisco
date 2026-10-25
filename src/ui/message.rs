@@ -182,11 +182,10 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
     }
     // Alt+click marks the message unread, as Discord.
     if row_response.clicked() && ui.input(|i| i.modifiers.alt) && !message.pending {
-        row.out
-            .push(Action::Nav(crate::nav::NavAction::MarkUnread {
-                channel: row.channel,
-                message: message.id,
-            }));
+        row.out.push(Action::Nav(crate::nav::NavAction::MarkUnread {
+            channel: row.channel,
+            message: message.id,
+        }));
     }
     let own = message.author == app.model.me;
     let (channel, id) = (row.channel, message.id);
@@ -248,37 +247,31 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
         row.act(action);
     }
     if unread {
-        row.out
-            .push(Action::Nav(crate::nav::NavAction::MarkUnread { channel, message: id }));
+        row.out.push(Action::Nav(crate::nav::NavAction::MarkUnread {
+            channel,
+            message: id,
+        }));
     }
 }
 
 /// "Pular" at the top right of a message shown away from its channel.
 fn jump_button(row: &mut Row<'_>, ui: &mut Ui, message: &Message, rect: Rect) {
     let palette = row.app.palette;
-    let label = ui.painter().layout_no_wrap(
-        "Pular".into(),
-        font(Weight::Medium, 12.0),
-        palette.strong,
-    );
+    let label =
+        ui.painter()
+            .layout_no_wrap("Pular".into(), font(Weight::Medium, 12.0), palette.strong);
     let size = label.size() + vec2(16.0, 8.0);
     let button = Rect::from_min_size(pos2(rect.right() - 12.0 - size.x, rect.top() + 6.0), size);
-    let response = ui.interact(
-        button,
-        ui.id().with(("jump", message.id)),
-        Sense::click(),
-    );
+    let response = ui.interact(button, ui.id().with(("jump", message.id)), Sense::click());
     let fill = if response.hovered() {
         palette.selected
     } else {
         palette.sidebar
     };
-    ui.painter().rect_filled(button, CornerRadius::same(4), fill);
-    ui.painter().galley(
-        button.center() - label.size() / 2.0,
-        label,
-        palette.strong,
-    );
+    ui.painter()
+        .rect_filled(button, CornerRadius::same(4), fill);
+    ui.painter()
+        .galley(button.center() - label.size() / 2.0, label, palette.strong);
     if response.clicked() {
         row.out.push(Action::Nav(crate::nav::NavAction::Jump {
             channel: row.channel,

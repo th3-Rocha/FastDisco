@@ -18,6 +18,7 @@ use crate::session;
 pub enum Tag {
     Admin(crate::admin::Tag),
     Nav(crate::nav::Tag),
+    Folders(crate::folders::Tag),
 }
 
 #[derive(Debug)]

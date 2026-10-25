@@ -482,6 +482,7 @@ impl App {
                 Event::Api { tag, result } => match tag {
                     crate::backend::Tag::Admin(tag) => self.api_result(tag, result),
                     crate::backend::Tag::Nav(tag) => self.nav_result(tag, result),
+                    crate::backend::Tag::Folders(tag) => self.folders_result(tag, result),
                 },
                 Event::Profile { user, profile } => {
                     self.chat.profiles.insert(
@@ -1149,6 +1150,11 @@ impl App {
                     Some(old) => *old = guild,
                     None => self.model.guilds.push(guild),
                 }
+                self.model.settle_folders();
+            }
+            "USER_SETTINGS_UPDATE" if data["guild_folders"].is_array() => {
+                self.model.folders = parse::folders(&data["guild_folders"]);
+                self.model.settle_folders();
             }
             "GUILD_DELETE" => {
                 let Some(id) = parse::id(&data["id"]) else {
@@ -1158,6 +1164,7 @@ impl App {
                     return;
                 }
                 self.model.guilds.retain(|g| g.id != id);
+                self.model.settle_folders();
                 if self.place == Place::Server(id) {
                     self.go_home();
                 }

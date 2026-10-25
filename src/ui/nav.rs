@@ -143,7 +143,9 @@ pub fn switcher(app: &mut App, ui: &mut Ui) {
             selected = (selected + 1) % list.len();
         }
     }
-    let mut chosen = enter.then(|| list.get(selected).map(|c| c.target)).flatten();
+    let mut chosen = enter
+        .then(|| list.get(selected).map(|c| c.target))
+        .flatten();
     let mut query = state.query.clone();
     let response = egui::Modal::new(egui::Id::new("quick-switcher"))
         .backdrop_color(Color32::from_black_alpha(170))
@@ -207,14 +209,20 @@ pub fn switcher(app: &mut App, ui: &mut Ui) {
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         for (index, candidate) in list.iter().enumerate() {
-                            let (rect, row) =
-                                ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
+                            let (rect, row) = ui.allocate_exact_size(
+                                vec2(ui.available_width(), 36.0),
+                                Sense::click(),
+                            );
                             if row.hovered() && ui.input(|i| i.pointer.delta() != Vec2::ZERO) {
                                 selected = index;
                             }
                             let lit = index == selected;
                             if lit {
-                                ui.painter().rect_filled(rect, CornerRadius::same(4), palette.selected);
+                                ui.painter().rect_filled(
+                                    rect,
+                                    CornerRadius::same(4),
+                                    palette.selected,
+                                );
                                 if up || down {
                                     ui.scroll_to_rect(rect, None);
                                 }
@@ -232,13 +240,23 @@ pub fn switcher(app: &mut App, ui: &mut Ui) {
                                                 avatar(ui, app, user, icon_at, 11.0, None);
                                             }
                                         }
-                                        Some(ChannelKind::Group) => {
-                                            paint_icon(ui, Icon::Users, icon_at, 18.0, palette.muted)
+                                        Some(ChannelKind::Group) => paint_icon(
+                                            ui,
+                                            Icon::Users,
+                                            icon_at,
+                                            18.0,
+                                            palette.muted,
+                                        ),
+                                        Some(ChannelKind::Voice) => paint_icon(
+                                            ui,
+                                            Icon::Speaker,
+                                            icon_at,
+                                            18.0,
+                                            palette.muted,
+                                        ),
+                                        _ => {
+                                            paint_icon(ui, Icon::Hash, icon_at, 18.0, palette.muted)
                                         }
-                                        Some(ChannelKind::Voice) => {
-                                            paint_icon(ui, Icon::Speaker, icon_at, 18.0, palette.muted)
-                                        }
-                                        _ => paint_icon(ui, Icon::Hash, icon_at, 18.0, palette.muted),
                                     }
                                 }
                                 Target::User(user) => {
@@ -257,7 +275,11 @@ pub fn switcher(app: &mut App, ui: &mut Ui) {
                                             .corner_radius(CornerRadius::same(6))
                                             .paint_at(ui, r),
                                         None => {
-                                            ui.painter().rect_filled(r, CornerRadius::same(6), palette.chat);
+                                            ui.painter().rect_filled(
+                                                r,
+                                                CornerRadius::same(6),
+                                                palette.chat,
+                                            );
                                         }
                                     }
                                 }
@@ -267,7 +289,13 @@ pub fn switcher(app: &mut App, ui: &mut Ui) {
                             let right = rect.right() - 12.0;
                             let mut text_right = right;
                             if candidate.mentions > 0 {
-                                badge(ui, &palette, pos2(right, rect.center().y), candidate.mentions, None);
+                                badge(
+                                    ui,
+                                    &palette,
+                                    pos2(right, rect.center().y),
+                                    candidate.mentions,
+                                    None,
+                                );
                                 text_right -= 32.0;
                             } else if candidate.unread {
                                 ui.painter().circle_filled(
@@ -411,7 +439,11 @@ pub fn popout(app: &mut App, ui: &mut Ui) {
             pos2(ui.ctx().content_rect().right() - 40.0, 48.0),
             Vec2::splat(24.0),
         ));
-    let width = if popout == Popout::Inbox { 480.0 } else { 420.0 };
+    let width = if popout == Popout::Inbox {
+        480.0
+    } else {
+        420.0
+    };
     let screen = ui.ctx().content_rect();
     let left = (anchor.right() - width).max(screen.left() + 8.0);
     let height = (screen.bottom() - anchor.bottom() - 40.0).clamp(200.0, 640.0);
@@ -448,7 +480,13 @@ pub fn popout(app: &mut App, ui: &mut Ui) {
 fn popout_title(app: &App, ui: &mut Ui, icon: Icon, title: &str) {
     let palette = app.palette;
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::hover());
-    paint_icon(ui, icon, pos2(rect.left() + 26.0, rect.center().y), 20.0, palette.icon);
+    paint_icon(
+        ui,
+        icon,
+        pos2(rect.left() + 26.0, rect.center().y),
+        20.0,
+        palette.icon,
+    );
     ui.painter().text(
         pos2(rect.left() + 44.0, rect.center().y),
         Align2::LEFT_CENTER,
@@ -479,7 +517,13 @@ fn pins(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
 fn inbox(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let palette = app.palette;
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::hover());
-    paint_icon(ui, Icon::Inbox, pos2(rect.left() + 26.0, rect.center().y), 20.0, palette.icon);
+    paint_icon(
+        ui,
+        Icon::Inbox,
+        pos2(rect.left() + 26.0, rect.center().y),
+        20.0,
+        palette.icon,
+    );
     ui.painter().text(
         pos2(rect.left() + 44.0, rect.center().y),
         Align2::LEFT_CENTER,
@@ -489,31 +533,44 @@ fn inbox(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     );
     // The tabs on the right of the title, as Discord.
     let mut x = rect.right() - 16.0;
-    for (tab, label) in [(InboxTab::Unreads, "Não lidas"), (InboxTab::Mentions, "Menções")] {
-        let galley = ui
-            .painter()
-            .layout_no_wrap(label.into(), font(Weight::Medium, 14.0), palette.text);
+    for (tab, label) in [
+        (InboxTab::Unreads, "Não lidas"),
+        (InboxTab::Mentions, "Menções"),
+    ] {
+        let galley =
+            ui.painter()
+                .layout_no_wrap(label.into(), font(Weight::Medium, 14.0), palette.text);
         let size = galley.size() + vec2(16.0, 6.0);
         let tab_rect = Rect::from_min_size(pos2(x - size.x, rect.center().y - size.y / 2.0), size);
         x -= size.x + 6.0;
         let response = ui.interact(tab_rect, ui.id().with(("inbox-tab", label)), Sense::click());
         let selected = app.nav.inbox_tab == tab;
         if selected {
-            ui.painter().rect_filled(tab_rect, CornerRadius::same(4), palette.selected);
+            ui.painter()
+                .rect_filled(tab_rect, CornerRadius::same(4), palette.selected);
         } else if response.hovered() {
-            ui.painter().rect_filled(tab_rect, CornerRadius::same(4), palette.hover);
+            ui.painter()
+                .rect_filled(tab_rect, CornerRadius::same(4), palette.hover);
         }
         ui.painter().galley(
             tab_rect.center() - galley.size() / 2.0,
             galley,
-            if selected { palette.strong } else { palette.muted },
+            if selected {
+                palette.strong
+            } else {
+                palette.muted
+            },
         );
         if response.clicked() {
             out.push(Action::Nav(NavAction::InboxTab(tab)));
         }
     }
     let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().hline(line.x_range(), line.center().y, Stroke::new(1.0, palette.divider));
+    ui.painter().hline(
+        line.x_range(),
+        line.center().y,
+        Stroke::new(1.0, palette.divider),
+    );
     match app.nav.inbox_tab {
         InboxTab::Mentions => match app.nav.mentions.clone() {
             None => empty_note(app, ui, "Carregando…"),
@@ -545,7 +602,12 @@ fn unreads(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
                 && (c.unread() || c.mentions > 0)
                 && app.model.can_view(c)
             {
-                rows.push((*id, format!("#{}", c.name), Some(guild.name.clone()), c.mentions));
+                rows.push((
+                    *id,
+                    format!("#{}", c.name),
+                    Some(guild.name.clone()),
+                    c.mentions,
+                ));
             }
         }
     }
@@ -562,7 +624,8 @@ fn unreads(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
                     ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::click());
                 let inner = rect.shrink2(vec2(8.0, 2.0));
                 if response.hovered() {
-                    ui.painter().rect_filled(inner, CornerRadius::same(4), palette.hover);
+                    ui.painter()
+                        .rect_filled(inner, CornerRadius::same(4), palette.hover);
                 }
                 let check = Rect::from_center_size(
                     pos2(inner.right() - 20.0, inner.center().y),
@@ -572,15 +635,29 @@ fn unreads(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
                 ui.painter().circle_filled(
                     check.rect.center(),
                     14.0,
-                    if check.hovered() { palette.selected } else { palette.chat },
+                    if check.hovered() {
+                        palette.selected
+                    } else {
+                        palette.chat
+                    },
                 );
                 paint_icon(ui, Icon::Check, check.rect.center(), 16.0, palette.strong);
                 let check = check.on_hover_text("Marcar como lido");
                 let text_right = inner.right() - 44.0 - if mentions > 0 { 30.0 } else { 0.0 };
                 if mentions > 0 {
-                    badge(ui, &palette, pos2(inner.right() - 44.0, inner.center().y), mentions, None);
+                    badge(
+                        ui,
+                        &palette,
+                        pos2(inner.right() - 44.0, inner.center().y),
+                        mentions,
+                        None,
+                    );
                 }
-                let top = if place.is_some() { inner.center().y - 9.0 } else { inner.center().y };
+                let top = if place.is_some() {
+                    inner.center().y - 9.0
+                } else {
+                    inner.center().y
+                };
                 Elide::new(ui, text_right).text(
                     pos2(inner.left() + 12.0, top),
                     Align2::LEFT_CENTER,
@@ -698,10 +775,15 @@ pub fn search_panel(app: &mut App, ui: &mut Ui) {
         .resizable(false)
         .exact_size(420.0)
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.sidebar).inner_margin(Margin::ZERO))
+        .frame(
+            Frame::new()
+                .fill(palette.sidebar)
+                .inner_margin(Margin::ZERO),
+        )
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
-            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::hover());
+            let (rect, _) =
+                ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::hover());
             ui.painter().text(
                 pos2(rect.left() + 16.0, rect.center().y),
                 Align2::LEFT_CENTER,
@@ -719,7 +801,11 @@ pub fn search_panel(app: &mut App, ui: &mut Ui) {
                 Icon::Close,
                 close.rect.center(),
                 18.0,
-                if close.hovered() { palette.strong } else { palette.icon },
+                if close.hovered() {
+                    palette.strong
+                } else {
+                    palette.icon
+                },
             );
             if close.on_hover_text("Fechar").clicked() {
                 out.push(Action::Nav(NavAction::CloseSearch));
@@ -727,11 +813,9 @@ pub fn search_panel(app: &mut App, ui: &mut Ui) {
             match (results, error) {
                 (None, _) => {}
                 (Some(_), Some(error)) => empty_note(app, ui, &error),
-                (Some(list), None) if list.is_empty() => empty_note(
-                    app,
-                    ui,
-                    "Nenhum resultado. Tente outras palavras.",
-                ),
+                (Some(list), None) if list.is_empty() => {
+                    empty_note(app, ui, "Nenhum resultado. Tente outras palavras.")
+                }
                 (Some(list), None) => found_list(app, ui, &list, true, &mut out),
             }
         });
@@ -744,8 +828,14 @@ pub fn search_field(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
     let id = egui::Id::new("header-search");
     let focused = ui.memory(|m| m.has_focus(id));
-    let width = if focused || !app.nav.search_text.is_empty() { 240.0 } else { 144.0 };
-    let width = ui.ctx().animate_value_with_time(id.with("width"), width, 0.15);
+    let width = if focused || !app.nav.search_text.is_empty() {
+        240.0
+    } else {
+        144.0
+    };
+    let width = ui
+        .ctx()
+        .animate_value_with_time(id.with("width"), width, 0.15);
     let mut submit = false;
     let mut clear = false;
     let frame = Frame::new()

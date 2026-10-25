@@ -17,12 +17,19 @@ use crate::model::{ChannelKind, Id, Message};
 /// What an API answer is for.
 #[derive(Clone, Debug)]
 pub enum Tag {
-    Pins { channel: Id },
+    Pins {
+        channel: Id,
+    },
     Mentions,
-    Search { query: String },
-    Around { channel: Id },
+    Search {
+        query: String,
+    },
+    Around {
+        channel: Id,
+    },
     AddFriend,
-    Relationship,
+    /// Only a failure needs telling.
+    Done,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,6 +103,8 @@ pub struct Nav {
     pub detached: HashSet<Id>,
     /// The direct message last open at home; none is the friends page.
     pub home_channel: Option<Id>,
+    /// The rail's folders shown open.
+    pub open_folders: HashSet<u64>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -124,7 +133,10 @@ pub enum NavAction {
     InboxTab(InboxTab),
     Search(String),
     CloseSearch,
-    Jump { channel: Id, message: Id },
+    Jump {
+        channel: Id,
+        message: Id,
+    },
     JumpToPresent(Id),
     Friends,
     FriendsTab(FriendsTab),
@@ -133,9 +145,23 @@ pub enum NavAction {
     /// Unfriends, declines, cancels or unblocks: Discord's one call.
     RemoveRelationship(Id),
     Block(Id),
-    MarkUnread { channel: Id, message: Id },
+    MarkUnread {
+        channel: Id,
+        message: Id,
+    },
     StepServer(i32),
     StepUnread(i32),
+    ToggleFolder(u64),
+    /// A channel dragged to sit before another in a category, or last.
+    MoveChannel {
+        channel: Id,
+        parent: Option<Id>,
+        before: Option<Id>,
+    },
+    MoveGuild {
+        guild: Id,
+        drop: crate::folders::Drop,
+    },
 }
 
 /// Discord's relationship types.
@@ -206,7 +232,9 @@ pub fn candidates(app: &App, query: &str) -> Vec<Candidate> {
     if matches!(filter, None | Some('#') | Some('!')) {
         for guild in &model.guilds {
             for id in &guild.channels {
-                let Some(c) = model.channel(*id) else { continue };
+                let Some(c) = model.channel(*id) else {
+                    continue;
+                };
                 let wanted = match filter {
                     Some('!') => c.kind == ChannelKind::Voice,
                     _ => c.kind == ChannelKind::Text,
@@ -451,7 +479,12 @@ impl App {
                 self.nav.add_result = None;
             }
             NavAction::AddFriend => {
-                let name = self.nav.add_friend.trim().trim_start_matches('@').to_owned();
+                let name = self
+                    .nav
+                    .add_friend
+                    .trim()
+                    .trim_start_matches('@')
+                    .to_owned();
                 if name.is_empty() {
                     return;
                 }
@@ -464,19 +497,19 @@ impl App {
                 );
             }
             NavAction::Accept(user) => self.nav_api(
-                Tag::Relationship,
+                Tag::Done,
                 Method::PUT,
                 format!("/users/@me/relationships/{user}"),
                 Some(json!({})),
             ),
             NavAction::RemoveRelationship(user) => self.nav_api(
-                Tag::Relationship,
+                Tag::Done,
                 Method::DELETE,
                 format!("/users/@me/relationships/{user}"),
                 None,
             ),
             NavAction::Block(user) => self.nav_api(
-                Tag::Relationship,
+                Tag::Done,
                 Method::PUT,
                 format!("/users/@me/relationships/{user}"),
                 Some(json!({ "type": relationship::BLOCKED })),
@@ -484,6 +517,17 @@ impl App {
             NavAction::MarkUnread { channel, message } => self.mark_unread(channel, message),
             NavAction::StepServer(step) => self.step_server(step),
             NavAction::StepUnread(step) => self.step_unread(step),
+            NavAction::ToggleFolder(id) => {
+                if !self.nav.open_folders.remove(&id) {
+                    self.nav.open_folders.insert(id);
+                }
+            }
+            NavAction::MoveGuild { guild, drop } => self.move_guild(guild, drop),
+            NavAction::MoveChannel {
+                channel,
+                parent,
+                before,
+            } => self.move_channel(channel, parent, before),
         }
     }
 
@@ -531,10 +575,53 @@ impl App {
         c.read = Some(before);
         self.chat.unread_from.insert(channel, before);
         self.nav_api(
-            Tag::Relationship,
+            Tag::Done,
             Method::POST,
             format!("/channels/{channel}/messages/{before}/ack"),
             Some(json!({ "manual": true, "mention_count": 0 })),
+        );
+    }
+
+    /// Puts a channel before another in a category, or at its end, and
+    /// tells Discord every position in that category.
+    fn move_channel(&mut self, channel: Id, parent: Option<Id>, before: Option<Id>) {
+        let Some(guild) = self.model.channel(channel).and_then(|c| c.guild) else {
+            return;
+        };
+        let Some(g) = self.model.guild(guild) else {
+            return;
+        };
+        let (loose, categories) = self.model.layout(g);
+        let mut list: Vec<Id> = match parent {
+            None => loose,
+            Some(p) => categories
+                .into_iter()
+                .find(|(c, _)| *c == p)
+                .map(|(_, l)| l)
+                .unwrap_or_default(),
+        };
+        list.retain(|c| *c != channel);
+        let at = before
+            .and_then(|b| list.iter().position(|c| *c == b))
+            .unwrap_or(list.len());
+        list.insert(at, channel);
+        let mut body = Vec::new();
+        for (position, id) in list.iter().enumerate() {
+            if let Some(c) = self.model.channels.get_mut(id) {
+                c.position = position as i64;
+                c.parent = parent;
+            }
+            body.push(json!({
+                "id": id.to_string(),
+                "position": position,
+                "parent_id": parent.map(|p| p.to_string()),
+            }));
+        }
+        self.nav_api(
+            Tag::Done,
+            Method::PATCH,
+            format!("/guilds/{guild}/channels"),
+            Some(Value::Array(body)),
         );
     }
 
@@ -675,10 +762,10 @@ impl App {
                     }),
                 });
             }
-            (Tag::Relationship, Err(error)) => {
+            (Tag::Done, Err(error)) => {
                 self.chat.dialog = Some(crate::chat::Dialog::Failed(error));
             }
-            (Tag::Pins { .. } | Tag::Relationship, _) => {}
+            (Tag::Pins { .. } | Tag::Done, _) => {}
         }
     }
 }

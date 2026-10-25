@@ -174,9 +174,10 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                 |ui| {
                     ui.spacing_mut().item_spacing = vec2(12.0, 0.0);
                     if icon_button(ui, &palette, Icon::Help, 24.0, false, "Ajuda").clicked() {
-                        app.actions.push(Action::Chat(crate::chat::ChatAction::OpenUrl(
-                            "https://support.discord.com".into(),
-                        )));
+                        app.actions
+                            .push(Action::Chat(crate::chat::ChatAction::OpenUrl(
+                                "https://support.discord.com".into(),
+                            )));
                     }
                     super::nav::popout_button(app, ui, crate::nav::Popout::Inbox);
                     super::nav::search_field(app, ui);

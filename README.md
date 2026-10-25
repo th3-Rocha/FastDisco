@@ -76,15 +76,15 @@ everything Discord's desktop app does.
 - [x] Unread dots, mention badges, collapsible categories
 - [x] Rail tooltips, the pill beside the open server
 - [x] Alt+Up and Alt+Down between channels
-- [ ] Server folders in the rail
-- [ ] Dragging servers and channels to reorder them
-- [ ] Quick switcher (Ctrl+K)
-- [ ] The rest of Discord's keyboard shortcuts
-- [ ] Friends page: online, all, pending, blocked, add friend
-- [ ] Inbox: recent mentions and unreads
-- [ ] Search messages
-- [ ] Pinned messages panel
-- [ ] Mark as unread, mark server as read from the rail menu
+- [x] Server folders in the rail
+- [x] Dragging servers and channels to reorder them
+- [x] Quick switcher (Ctrl+K)
+- [x] The rest of Discord's keyboard shortcuts
+- [x] Friends page: online, all, pending, blocked, add friend
+- [x] Inbox: recent mentions and unreads
+- [x] Search messages
+- [x] Pinned messages panel
+- [x] Mark as unread, mark server as read from the rail menu
 
 ### Messages
 

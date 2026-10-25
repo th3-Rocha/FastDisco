@@ -54,6 +54,7 @@ fastframe_icons::icons! {
         Back => lucide "arrow-left",
         Check => lucide "check",
         MessageCircle => "message-circle",
+        Folder => "folder",
         Send => "send-horizontal",
     }
 }
