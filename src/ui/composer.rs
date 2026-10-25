@@ -1742,8 +1742,9 @@ pub struct Suggestion {
 }
 
 enum Hint {
-    /// A slash command: its entry in the channel's command list.
-    Command(usize),
+    /// A slash command: its entry in the channel's command list, and its
+    /// app's picture.
+    Command(usize, String),
     User(Id),
     Emoji(String),
     Custom(String),
@@ -1802,7 +1803,7 @@ fn suggestions(app: &App, channel: Id) -> Option<(String, String, Vec<Suggestion
                     Suggestion {
                         label: format!("/{name}"),
                         detail: Some(detail),
-                        hint: Hint::Command(i),
+                        hint: Hint::Command(i, index.icon(command.application)),
                         insert: String::new(),
                         raw: None,
                     },
@@ -2020,14 +2021,17 @@ fn autocomplete(app: &mut App, ui: &mut Ui, channel: Id, field: Rect) {
                                 }
                             }
                             Hint::Channel => paint_icon(ui, Icon::Hash, icon, 20.0, palette.muted),
-                            Hint::Command(_) => {
-                                ui.painter().text(
-                                    icon,
-                                    Align2::CENTER_CENTER,
-                                    "/",
-                                    font(Weight::Bold, 18.0),
-                                    palette.muted,
-                                );
+                            Hint::Command(_, url) => {
+                                // The app's round picture, as in Discord.
+                                let r = Rect::from_center_size(icon, Vec2::splat(24.0));
+                                match app.picture(Some(url)) {
+                                    Some(uri) => egui::Image::new(uri)
+                                        .corner_radius(CornerRadius::same(12))
+                                        .paint_at(ui, r),
+                                    None => {
+                                        ui.painter().circle_filled(icon, 12.0, palette.chat);
+                                    }
+                                }
                             }
                             Hint::Everyone => {
                                 ui.painter().text(
@@ -2074,7 +2078,7 @@ impl Suggestion {
     /// draft.
     fn action(&self, word: &str) -> Action {
         match self.hint {
-            Hint::Command(entry) => {
+            Hint::Command(entry, _) => {
                 Action::Interact(crate::interact::InteractAction::StartCommand(entry))
             }
             _ => Action::Chat(ChatAction::Complete {

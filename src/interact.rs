@@ -115,6 +115,20 @@ pub struct CommandIndex {
     pub commands: Vec<AppCommand>,
     pub entries: Vec<Entry>,
     pub apps: HashMap<Id, String>,
+    /// Each app's picture, as the command list shows it.
+    pub icons: HashMap<Id, String>,
+}
+
+impl CommandIndex {
+    /// The app's icon, or the bot's avatar, else Discord's default one.
+    pub fn icon(&self, application: Id) -> String {
+        self.icons.get(&application).cloned().unwrap_or_else(|| {
+            format!(
+                "https://cdn.discordapp.com/embed/avatars/{}.png",
+                (application >> 22) % 6
+            )
+        })
+    }
 }
 
 /// The slash command being filled in.
@@ -949,6 +963,22 @@ fn merge_index(index: &mut CommandIndex, value: &Value) {
     for app in value["applications"].as_array().into_iter().flatten() {
         if let (Some(id), Some(name)) = (parse::id(&app["id"]), app["name"].as_str()) {
             index.apps.insert(id, name.to_owned());
+            let icon = match (
+                app["icon"].as_str(),
+                parse::id(&app["bot"]["id"]),
+                app["bot"]["avatar"].as_str(),
+            ) {
+                (Some(hash), _, _) => Some(format!(
+                    "https://cdn.discordapp.com/app-icons/{id}/{hash}.png?size=64"
+                )),
+                (None, Some(bot), Some(avatar)) => Some(format!(
+                    "https://cdn.discordapp.com/avatars/{bot}/{avatar}.png?size=64"
+                )),
+                _ => None,
+            };
+            if let Some(icon) = icon {
+                index.icons.insert(id, icon);
+            }
         }
     }
     let list = value["application_commands"]
@@ -1077,7 +1107,7 @@ mod tests {
             }, {
                 "id": "12", "application_id": "20", "version": "1", "name": "Quote", "type": 3
             }],
-            "applications": [{ "id": "20", "name": "Bot" }]
+            "applications": [{ "id": "20", "name": "Bot", "icon": "abc" }]
         });
         let mut index = CommandIndex::default();
         merge_index(&mut index, &raw);
@@ -1095,5 +1125,9 @@ mod tests {
         assert!(index.entries[0].options[0].required);
         assert_eq!(index.entries[2].options[0].choices[0].1, json!(1));
         assert_eq!(index.apps[&20], "Bot");
+        assert_eq!(
+            index.icon(20),
+            "https://cdn.discordapp.com/app-icons/20/abc.png?size=64"
+        );
     }
 }

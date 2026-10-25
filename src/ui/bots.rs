@@ -1207,6 +1207,7 @@ pub fn command_bar(app: &mut App, ui: &mut Ui) {
         return;
     };
     let app_name = index.apps.get(&command.application).cloned();
+    let app_icon = index.icon(command.application);
     let mut values = active.values.clone();
     let (run, cancel) = ui.input_mut(|i| {
         (
@@ -1220,6 +1221,15 @@ pub fn command_bar(app: &mut App, ui: &mut Ui) {
             .chain(entry.path.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join(" ");
+        let (r, _) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::hover());
+        match app.picture(Some(&app_icon)) {
+            Some(uri) => egui::Image::new(uri)
+                .corner_radius(CornerRadius::same(12))
+                .paint_at(ui, r),
+            None => {
+                ui.painter().circle_filled(r.center(), 12.0, palette.chat);
+            }
+        }
         Frame::new()
             .fill(palette.accent.gamma_multiply(0.3))
             .corner_radius(CornerRadius::same(4))
