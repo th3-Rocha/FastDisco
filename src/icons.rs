@@ -66,5 +66,12 @@ fastframe_icons::icons! {
         Activities => "shapes",
         Soundboard => "megaphone",
         Send => "send-horizontal",
+        Palette => "palette",
+        Keyboard => "keyboard",
+        Accessibility => "accessibility",
+        Monitor => "monitor",
+        Sliders => "sliders-horizontal",
+        Shield => "shield-check",
+        LogOut => "log-out",
     }
 }

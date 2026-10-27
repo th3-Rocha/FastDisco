@@ -215,9 +215,10 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
         visuals.window_fill = floating;
         visuals.panel_fill = palette.chat;
         visuals.extreme_bg_color = palette.rail;
-        visuals.window_stroke = egui::Stroke::NONE;
+        // Discord's menus: rounder, with a faint edge.
+        visuals.window_stroke = egui::Stroke::new(1.0, palette.divider);
         visuals.window_corner_radius = egui::CornerRadius::same(6);
-        visuals.menu_corner_radius = egui::CornerRadius::same(6);
+        visuals.menu_corner_radius = egui::CornerRadius::same(8);
         visuals.popup_shadow = egui::Shadow {
             offset: [0, 4],
             blur: 12,

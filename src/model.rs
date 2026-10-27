@@ -847,29 +847,43 @@ impl Model {
         self.guild_permissions(guild) & bit != 0
     }
 
-    /// Whether the user may see a channel: the guild's roles, then the
-    /// channel's overwrites for @everyone, the roles and the member.
+    /// Whether the user may see a channel.
     pub fn can_view(&self, channel: &Channel) -> bool {
+        // Before our own member entry arrives, nothing is hidden.
+        let known = channel
+            .guild
+            .and_then(|g| self.guild(g))
+            .is_none_or(|g| g.members.contains_key(&self.me));
+        !known || self.channel_permissions(channel) & VIEW_CHANNEL != 0
+    }
+
+    /// What the user may do in a channel, as Discord works it out: the
+    /// guild's roles, then the channel's overwrites for @everyone, the
+    /// roles and the member. Everything for the owner and administrators,
+    /// and outside a server.
+    pub fn channel_permissions(&self, channel: &Channel) -> u64 {
         let Some(guild) = channel.guild.and_then(|g| self.guild(g)) else {
-            return true;
+            return u64::MAX;
         };
         if guild.owner == self.me {
-            return true;
+            return u64::MAX;
         }
-        let Some(member) = guild.members.get(&self.me) else {
-            return true;
-        };
+        let roles = guild
+            .members
+            .get(&self.me)
+            .map(|m| m.roles.clone())
+            .unwrap_or_default();
         let everyone = guild
             .roles
             .iter()
             .find(|r| r.id == guild.id)
             .map_or(0, |r| r.permissions);
         let mut permissions = everyone;
-        for role in guild.roles.iter().filter(|r| member.roles.contains(&r.id)) {
+        for role in guild.roles.iter().filter(|r| roles.contains(&r.id)) {
             permissions |= role.permissions;
         }
         if permissions & ADMINISTRATOR != 0 {
-            return true;
+            return u64::MAX;
         }
         if let Some(o) = channel.overwrites.iter().find(|o| o.id == guild.id) {
             permissions = (permissions & !o.deny) | o.allow;
@@ -878,7 +892,7 @@ impl Model {
         for o in channel
             .overwrites
             .iter()
-            .filter(|o| o.kind == 0 && member.roles.contains(&o.id))
+            .filter(|o| o.kind == 0 && roles.contains(&o.id))
         {
             allow |= o.allow;
             deny |= o.deny;
@@ -891,7 +905,7 @@ impl Model {
         {
             permissions = (permissions & !o.deny) | o.allow;
         }
-        permissions & VIEW_CHANNEL != 0
+        permissions
     }
 
     /// A guild's visible channels in Discord's order: channels outside a

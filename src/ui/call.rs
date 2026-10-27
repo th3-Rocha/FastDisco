@@ -108,7 +108,8 @@ pub fn members(app: &mut App, ui: &mut Ui, channel: Id) {
 
 /// The right-click menu on someone in a voice channel, as Discord's: the
 /// person, their volume here, and for moderators the server's mute,
-/// deafen, disconnect and move.
+/// deafen, disconnect and move. The moderation follows what the voice
+/// channel allows, not only the server's roles.
 fn member_menu(
     app: &mut App,
     response: &egui::Response,
@@ -125,12 +126,17 @@ fn member_menu(
 
     let palette = app.palette;
     let me = user == app.model.me;
-    let can = |bit| guild.is_some_and(|g| app.model.can(g, bit));
+    let allowed = app
+        .model
+        .channel(channel)
+        .filter(|_| guild.is_some())
+        .map_or(0, |c| app.model.channel_permissions(c));
     let (mute, deafen, moving) = (
-        can(permission::MUTE_MEMBERS),
-        can(permission::DEAFEN_MEMBERS),
-        can(permission::MOVE_MEMBERS),
+        allowed & permission::MUTE_MEMBERS != 0,
+        allowed & permission::DEAFEN_MEMBERS != 0,
+        allowed & permission::MOVE_MEMBERS != 0,
     );
+    let can = |bit| guild.is_some_and(|g| app.model.can(g, bit));
     let (kick, ban) = (!me && can(permission::KICK), !me && can(permission::BAN));
     let name = app.model.name_in(guild, user);
     let volume = app.settings.user_volumes.get(&user).copied().unwrap_or(100);
@@ -154,8 +160,9 @@ fn member_menu(
         .unwrap_or_default();
     let mut chosen: Vec<Action> = Vec::new();
     response.context_menu(|ui| {
-        ui.set_min_width(200.0);
-        if ui.button("Perfil").clicked() {
+        ui.set_width(MENU_WIDTH);
+        ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+        if menu_item(ui, &palette, "Perfil", palette.text).clicked() {
             chosen.push(Action::Chat(ChatAction::ShowProfile {
                 user,
                 anchor,
@@ -163,18 +170,18 @@ fn member_menu(
             }));
             ui.close();
         }
-        if ui.button("Mencionar").clicked() {
+        if menu_item(ui, &palette, "Mencionar", palette.text).clicked() {
             chosen.push(Action::Chat(ChatAction::Mention(user)));
             ui.close();
         }
-        if !me && ui.button("Mensagem").clicked() {
+        if !me && menu_item(ui, &palette, "Mensagem", palette.text).clicked() {
             chosen.push(Action::Chat(ChatAction::MessageUser {
                 user,
                 text: String::new(),
             }));
             ui.close();
         }
-        ui.separator();
+        menu_line(ui, &palette);
         if me {
             if check_item(ui, &palette, "Silenciar", muted, palette.text) {
                 chosen.push(Action::ToggleMute);
@@ -183,31 +190,35 @@ fn member_menu(
                 chosen.push(Action::ToggleDeafen);
             }
         } else {
-            ui.label(
-                egui::RichText::new("Volume do usuário")
-                    .font(font(Weight::SemiBold, 12.0))
-                    .color(palette.muted),
-            );
-            let mut level = f32::from(volume);
-            ui.spacing_mut().slider_width = ui.available_width();
-            let slider = ui
-                .add(
-                    egui::Slider::new(&mut level, 0.0..=200.0)
-                        .show_value(false)
-                        .trailing_fill(true),
-                )
-                .on_hover_text(format!("{}%", level.round()));
-            if slider.changed() {
-                chosen.push(Action::SetUserVolume(user, level.round() as u16));
+            if let Some(level) = volume_slider(ui, &palette, volume) {
+                chosen.push(Action::SetUserVolume(user, level));
             }
+            menu_line(ui, &palette);
             if check_item(ui, &palette, "Silenciar", local, palette.text) {
                 chosen.push(Action::ToggleLocalMute(user));
             }
         }
         if let Some(guild) = guild
+            && (kick || ban)
+        {
+            if kick
+                && menu_item(ui, &palette, &format!("Expulsar {name}"), palette.danger).clicked()
+            {
+                chosen.push(Action::Admin(AdminAction::Open(Modal::Kick {
+                    guild,
+                    user,
+                })));
+                ui.close();
+            }
+            if ban && menu_item(ui, &palette, &format!("Banir {name}"), palette.danger).clicked() {
+                chosen.push(Action::Admin(AdminAction::Open(Modal::Ban { guild, user })));
+                ui.close();
+            }
+        }
+        if let Some(guild) = guild
             && (mute || deafen || moving)
         {
-            ui.separator();
+            menu_line(ui, &palette);
             let moderate = |change| {
                 Action::Admin(AdminAction::VoiceMember {
                     guild,
@@ -219,7 +230,7 @@ fn member_menu(
                 && check_item(
                     ui,
                     &palette,
-                    "Silenciar no servidor",
+                    "Silenciar voz no servidor",
                     state.mute,
                     palette.danger,
                 )
@@ -230,7 +241,7 @@ fn member_menu(
                 && check_item(
                     ui,
                     &palette,
-                    "Ensurdecer no servidor",
+                    "Desativar áudio no servidor",
                     state.deaf,
                     palette.danger,
                 )
@@ -238,53 +249,144 @@ fn member_menu(
                 chosen.push(moderate(json!({ "deaf": !state.deaf })));
             }
             if moving {
-                let disconnect =
-                    egui::Button::new(egui::RichText::new("Desconectar").color(palette.danger));
-                if ui.add(disconnect).clicked() {
-                    chosen.push(moderate(json!({ "channel_id": null })));
-                    ui.close();
-                }
                 if !elsewhere.is_empty() {
-                    ui.menu_button("Mover para", |ui| {
-                        ui.set_min_width(180.0);
+                    let item = submenu_item(ui, &palette, "Mover para");
+                    egui::containers::menu::SubMenu::new().show(ui, &item, |ui| {
+                        ui.set_width(MENU_WIDTH - 40.0);
+                        ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
                         for (id, label) in &elsewhere {
-                            if ui.button(format!("🔊 {label}")).clicked() {
+                            if menu_item(ui, &palette, label, palette.text).clicked() {
                                 chosen.push(moderate(json!({ "channel_id": id.to_string() })));
                                 ui.close();
                             }
                         }
                     });
                 }
+                if menu_item(ui, &palette, "Desconectar", palette.danger).clicked() {
+                    chosen.push(moderate(json!({ "channel_id": null })));
+                    ui.close();
+                }
             }
         }
-        if let Some(guild) = guild
-            && (kick || ban)
-        {
-            ui.separator();
-            let item = |verb: &str| {
-                egui::Button::new(
-                    egui::RichText::new(format!("{verb} {name}")).color(palette.danger),
-                )
-            };
-            if kick && ui.add(item("Expulsar")).clicked() {
-                chosen.push(Action::Admin(AdminAction::Open(Modal::Kick {
-                    guild,
-                    user,
-                })));
-                ui.close();
-            }
-            if ban && ui.add(item("Banir")).clicked() {
-                chosen.push(Action::Admin(AdminAction::Open(Modal::Ban { guild, user })));
-                ui.close();
-            }
-        }
-        ui.separator();
-        if ui.button("Copiar ID do usuário").clicked() {
+        menu_line(ui, &palette);
+        if menu_item(ui, &palette, "Copiar ID do usuário", palette.text).clicked() {
             chosen.push(Action::Chat(ChatAction::Copy(user.to_string())));
             ui.close();
         }
     });
     app.actions.extend(chosen);
+}
+
+/// The width of Discord's right-click menus.
+const MENU_WIDTH: f32 = 220.0;
+/// The height of a row in them.
+const MENU_ROW: f32 = 32.0;
+
+/// A row of Discord's menu: the label, grey under the pointer.
+fn menu_row(
+    ui: &mut Ui,
+    palette: &crate::theme::Palette,
+    label: &str,
+    color: Color32,
+) -> (Rect, egui::Response) {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), MENU_ROW), Sense::click());
+    let lit = response.hovered() || response.has_focus();
+    if lit {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), palette.hover);
+    }
+    Elide::new(ui, rect.right() - 34.0).text(
+        pos2(rect.left() + 8.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label.to_owned(),
+        font(Weight::Medium, 14.0),
+        if lit && color == palette.text {
+            palette.strong
+        } else {
+            color
+        },
+    );
+    (
+        rect,
+        response.on_hover_cursor(egui::CursorIcon::PointingHand),
+    )
+}
+
+fn menu_item(
+    ui: &mut Ui,
+    palette: &crate::theme::Palette,
+    label: &str,
+    color: Color32,
+) -> egui::Response {
+    menu_row(ui, palette, label, color).1
+}
+
+/// A row that opens another menu, with the arrow on the right.
+fn submenu_item(ui: &mut Ui, palette: &crate::theme::Palette, label: &str) -> egui::Response {
+    let (rect, response) = menu_row(ui, palette, label, palette.text);
+    paint_icon(
+        ui,
+        Icon::ChevronRight,
+        pos2(rect.right() - 16.0, rect.center().y),
+        16.0,
+        palette.text,
+    );
+    response
+}
+
+/// The thin line between the menu's groups.
+fn menu_line(ui: &mut Ui, palette: &crate::theme::Palette) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
+    ui.painter().hline(
+        (rect.left() + 4.0)..=(rect.right() - 4.0),
+        rect.center().y,
+        Stroke::new(1.0, palette.divider),
+    );
+}
+
+/// "Volume do usuário" and Discord's slider: blue up to a white knob,
+/// up to 200%. The new level while it is dragged or clicked.
+fn volume_slider(ui: &mut Ui, palette: &crate::theme::Palette, volume: u16) -> Option<u16> {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
+    ui.painter().text(
+        pos2(rect.left() + 8.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        "Volume do usuário",
+        font(Weight::Medium, 14.0),
+        palette.text,
+    );
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click_and_drag());
+    let track = Rect::from_min_max(
+        pos2(rect.left() + 10.0, rect.center().y - 4.0),
+        pos2(rect.right() - 10.0, rect.center().y + 4.0),
+    );
+    let mut level = f32::from(volume.min(200)) / 200.0;
+    let mut changed = None;
+    if let Some(pos) = response.interact_pointer_pos()
+        && (response.dragged() || response.clicked())
+    {
+        level = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0);
+        let value = (level * 200.0).round() as u16;
+        if value != volume {
+            changed = Some(value);
+        }
+    }
+    let knob = pos2(track.left() + level * track.width(), track.center().y);
+    ui.painter()
+        .rect_filled(track, CornerRadius::same(4), palette.divider);
+    ui.painter().rect_filled(
+        Rect::from_min_max(track.min, pos2(knob.x, track.max.y)),
+        CornerRadius::same(4),
+        palette.accent,
+    );
+    ui.painter().circle_filled(knob, 9.0, Color32::WHITE);
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if response.hovered() || response.dragged() {
+        response.on_hover_text_at_pointer(format!("{}%", (level * 200.0).round()));
+    }
+    changed
 }
 
 /// A menu row with Discord's checkbox on the right; true when clicked.
@@ -296,23 +398,10 @@ fn check_item(
     on: bool,
     color: Color32,
 ) -> bool {
-    let height = ui.spacing().interact_size.y + 4.0;
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
-    if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(2), palette.hover);
-    }
-    ui.painter().text(
-        pos2(rect.left() + 4.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        egui::TextStyle::Button.resolve(ui.style()),
-        color,
-    );
+    let (rect, response) = menu_row(ui, palette, label, color);
     let tick = Rect::from_center_size(
-        pos2(rect.right() - 12.0, rect.center().y),
-        Vec2::splat(18.0),
+        pos2(rect.right() - 18.0, rect.center().y),
+        Vec2::splat(20.0),
     );
     if on {
         ui.painter()
@@ -326,9 +415,7 @@ fn check_item(
             egui::StrokeKind::Inside,
         );
     }
-    response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
+    response.clicked()
 }
 
 /// The height of the call's part of the user card.

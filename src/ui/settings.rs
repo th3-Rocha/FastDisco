@@ -13,7 +13,7 @@ use crate::icons::Icon;
 use crate::settings::Theme;
 use crate::theme::Palette;
 
-const NAV_WIDTH: f32 = 218.0;
+const NAV_WIDTH: f32 = 240.0;
 const CONTENT_WIDTH: f32 = 740.0;
 
 pub fn show(app: &mut App, ui: &mut Ui) {
@@ -82,39 +82,119 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         });
 }
 
+/// The sections in Discord's new layout: who you are with "Editar perfis"
+/// on top, a search, then the pages with their icons under plain titles.
 fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
     let palette = app.palette;
     ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
-    let header = |ui: &mut Ui, text: &str| {
-        ui.add_space(6.0);
-        let (rect, _) = ui.allocate_exact_size(vec2(NAV_WIDTH, 24.0), Sense::hover());
-        ui.painter().text(
-            pos2(rect.left() + 10.0, rect.center().y),
-            Align2::LEFT_CENTER,
-            text,
-            font(Weight::Bold, 12.0),
-            palette.muted,
+    // The account, which opens the profiles.
+    let (rect, response) = ui.allocate_exact_size(vec2(NAV_WIDTH, 64.0), Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if page == SettingsPage::Profiles {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(8), palette.selected);
+    } else if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(8), palette.hover);
+    }
+    let me = app.model.me;
+    if let Some(person) = app.model.user(me) {
+        super::widgets::avatar(
+            ui,
+            app,
+            person,
+            pos2(rect.left() + 32.0, rect.center().y),
+            26.0,
+            None,
         );
-    };
-    let item = |app: &mut App, ui: &mut Ui, target: SettingsPage, text: &str| {
-        let (rect, response) = ui.allocate_exact_size(vec2(NAV_WIDTH, 32.0), Sense::click());
+    }
+    let name = app.model.name_in(None, me);
+    super::widgets::Elide::new(ui, rect.right() - 8.0).text(
+        pos2(rect.left() + 68.0, rect.center().y - 10.0),
+        Align2::LEFT_CENTER,
+        name,
+        font(Weight::SemiBold, 16.0),
+        palette.strong,
+    );
+    let edit = ui.painter().text(
+        pos2(rect.left() + 68.0, rect.center().y + 11.0),
+        Align2::LEFT_CENTER,
+        "Editar perfis",
+        font(Weight::Regular, 14.0),
+        palette.muted,
+    );
+    paint_icon(
+        ui,
+        Icon::Pencil,
+        pos2(edit.right() + 9.0, edit.center().y),
+        12.0,
+        palette.muted,
+    );
+    if response.clicked() {
+        app.actions
+            .push(Action::OpenSettings(SettingsPage::Profiles));
+    }
+    ui.add_space(10.0);
+    // The search, which narrows the list to the pages that match.
+    let id = ui.id().with("settings-search");
+    let mut query: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+    let (rect, _) = ui.allocate_exact_size(vec2(NAV_WIDTH, 40.0), Sense::hover());
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(8),
+        palette.rail,
+        Stroke::new(1.0, palette.divider),
+        egui::StrokeKind::Inside,
+    );
+    paint_icon(
+        ui,
+        Icon::Search,
+        pos2(rect.left() + 20.0, rect.center().y),
+        18.0,
+        palette.muted,
+    );
+    let field = Rect::from_min_max(
+        pos2(rect.left() + 38.0, rect.top() + 9.0),
+        pos2(rect.right() - 10.0, rect.bottom() - 9.0),
+    );
+    ui.put(
+        field,
+        egui::TextEdit::singleline(&mut query)
+            .frame(Frame::NONE)
+            .margin(Margin::ZERO)
+            .hint_text(RichText::new("Buscar").color(palette.muted))
+            .font(font(Weight::Regular, 16.0))
+            .text_color(palette.text),
+    );
+    ui.data_mut(|d| d.insert_temp(id, query.clone()));
+    ui.add_space(10.0);
+    let query = query.trim().to_lowercase();
+    let shown = |text: &str| query.is_empty() || text.to_lowercase().contains(&query);
+    let item = |app: &mut App, ui: &mut Ui, target: SettingsPage, icon: Icon, text: &str| {
+        let (rect, response) = ui.allocate_exact_size(vec2(NAV_WIDTH, 36.0), Sense::click());
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         let selected = page == target;
         if selected {
             ui.painter()
-                .rect_filled(rect, CornerRadius::same(4), palette.selected);
+                .rect_filled(rect, CornerRadius::same(8), palette.selected);
         } else if response.hovered() {
             ui.painter()
-                .rect_filled(rect, CornerRadius::same(4), palette.hover);
+                .rect_filled(rect, CornerRadius::same(8), palette.hover);
         }
-        let color = if selected {
+        let color = if selected || response.hovered() {
             palette.strong
-        } else if response.hovered() {
-            palette.text
         } else {
-            palette.muted
+            palette.text
         };
+        paint_icon(
+            ui,
+            icon,
+            pos2(rect.left() + 22.0, rect.center().y),
+            20.0,
+            color,
+        );
         ui.painter().text(
-            pos2(rect.left() + 10.0, rect.center().y),
+            pos2(rect.left() + 44.0, rect.center().y),
             Align2::LEFT_CENTER,
             text,
             font(Weight::Medium, 16.0),
@@ -124,36 +204,76 @@ fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
             app.actions.push(Action::OpenSettings(target));
         }
     };
-    header(ui, "CONFIGURAÇÕES DE USUÁRIO");
-    item(app, ui, SettingsPage::Account, "Minha conta");
-    item(app, ui, SettingsPage::Profiles, "Perfis");
+    let groups: [(&str, &[Entry]); 2] = [
+        (
+            "",
+            &[
+                (SettingsPage::Account, Icon::User, "Conta"),
+                (SettingsPage::Notifications, Icon::Bell, "Notificações"),
+            ],
+        ),
+        (
+            "Experiência",
+            &[
+                (SettingsPage::Voice, Icon::Mic, "Voz e vídeo"),
+                (SettingsPage::Appearance, Icon::Palette, "Aparência"),
+                (
+                    SettingsPage::Accessibility,
+                    Icon::Accessibility,
+                    "Acessibilidade",
+                ),
+                (SettingsPage::Keybinds, Icon::Keyboard, "Atalhos de teclado"),
+                (SettingsPage::Linux, Icon::Monitor, "Configurações do Linux"),
+                (SettingsPage::Advanced, Icon::Sliders, "Avançado"),
+            ],
+        ),
+    ];
+    let mut first = true;
+    for (title, pages) in groups {
+        let pages: Vec<_> = pages.iter().filter(|(_, _, text)| shown(text)).collect();
+        if pages.is_empty() {
+            continue;
+        }
+        if !first {
+            separator(ui, &palette);
+        }
+        first = false;
+        if !title.is_empty() {
+            let (rect, _) = ui.allocate_exact_size(vec2(NAV_WIDTH, 28.0), Sense::hover());
+            ui.painter().text(
+                pos2(rect.left() + 10.0, rect.center().y),
+                Align2::LEFT_CENTER,
+                title,
+                font(Weight::Medium, 14.0),
+                palette.muted,
+            );
+        }
+        for (target, icon, text) in pages {
+            item(app, ui, *target, *icon, text);
+        }
+    }
+    if !shown("Sair") {
+        return;
+    }
     separator(ui, &palette);
-    header(ui, "CONFIGURAÇÕES DO APP");
-    item(app, ui, SettingsPage::Voice, "Voz e vídeo");
-    item(app, ui, SettingsPage::Appearance, "Aparência");
-    item(app, ui, SettingsPage::Accessibility, "Acessibilidade");
-    item(app, ui, SettingsPage::Notifications, "Notificações");
-    item(app, ui, SettingsPage::Keybinds, "Atalhos de teclado");
-    item(app, ui, SettingsPage::Linux, "Configurações do Linux");
-    item(app, ui, SettingsPage::Advanced, "Avançado");
-    separator(ui, &palette);
-    let (rect, response) = ui.allocate_exact_size(vec2(NAV_WIDTH, 32.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(NAV_WIDTH, 36.0), Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.hovered() {
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(4), palette.hover);
+            .rect_filled(rect, CornerRadius::same(8), palette.hover);
     }
+    paint_icon(
+        ui,
+        Icon::LogOut,
+        pos2(rect.left() + 22.0, rect.center().y),
+        20.0,
+        palette.danger,
+    );
     ui.painter().text(
-        pos2(rect.left() + 10.0, rect.center().y),
+        pos2(rect.left() + 44.0, rect.center().y),
         Align2::LEFT_CENTER,
         "Sair",
         font(Weight::Medium, 16.0),
-        palette.danger,
-    );
-    paint_icon(
-        ui,
-        Icon::External,
-        pos2(rect.right() - 16.0, rect.center().y),
-        16.0,
         palette.danger,
     );
     if response.clicked() {
@@ -171,6 +291,9 @@ fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
         palette.muted,
     );
 }
+
+/// A page in the navigation: where it goes, its icon and its name.
+type Entry = (SettingsPage, Icon, &'static str);
 
 fn separator(ui: &mut Ui, palette: &Palette) {
     ui.add_space(6.0);
