@@ -6,11 +6,11 @@ use egui::{
 };
 use fastframe_fonts::Weight;
 
-use super::widgets::{Elide, avatar, badge, font, icon_button, paint_icon};
+use super::widgets::{Elide, avatar, badge, font, paint_icon};
 use crate::app::{Action, App, Place};
 use crate::icons::Icon;
 use crate::model::{ChannelKind, Id, Status};
-use crate::theme::{HEADER_HEIGHT, SIDEBAR_WIDTH, USER_PANEL_HEIGHT};
+use crate::theme::{HEADER_HEIGHT, RAIL_WIDTH, SIDEBAR_WIDTH};
 
 pub fn show(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
@@ -24,8 +24,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 .inner_margin(Margin::ZERO),
         )
         .show(ui, |ui| {
-            user_panel(app, ui);
-            super::call::panel(app, ui);
+            // Room for the card drawn over the foot (`card`).
+            egui::Panel::bottom("sidebar-foot")
+                .resizable(false)
+                .exact_size(card_space(app))
+                .show_separator_line(false)
+                .frame(Frame::new().fill(palette.sidebar))
+                .show(ui, |_| {});
             header(app, ui);
             egui::CentralPanel::default()
                 .frame(Frame::new().inner_margin(Margin::ZERO))
@@ -70,23 +75,49 @@ fn header(app: &mut App, ui: &mut Ui) {
                         .guild(id)
                         .map(|g| g.name.clone())
                         .unwrap_or_default();
-                    let clip =
-                        Rect::from_min_max(rect.min, pos2(rect.right() - 36.0, rect.bottom()));
-                    Elide::new(ui, clip.right()).text(
-                        pos2(rect.left() + 16.0, rect.center().y),
-                        Align2::LEFT_CENTER,
-                        name,
-                        font(Weight::SemiBold, 15.0),
-                        palette.strong,
-                    );
+                    // The name with its chevron right after it, and
+                    // "Convidar" at the far right, as Discord's.
+                    let invite = app.model.can(id, crate::model::permission::CREATE_INVITE);
+                    let text = Elide::new(ui, rect.right() - if invite { 64.0 } else { 36.0 })
+                        .text(
+                            pos2(rect.left() + 16.0, rect.center().y),
+                            Align2::LEFT_CENTER,
+                            name,
+                            font(Weight::Bold, 16.0),
+                            palette.strong,
+                        );
                     // An X while the menu is open, as Discord.
                     paint_icon(
                         ui,
                         if open { Icon::Close } else { Icon::ChevronDown },
-                        pos2(rect.right() - 22.0, rect.center().y),
+                        pos2(text.right() + 12.0, rect.center().y),
                         18.0,
                         palette.strong,
                     );
+                    if invite {
+                        let button = Rect::from_center_size(
+                            pos2(rect.right() - 22.0, rect.center().y),
+                            Vec2::splat(28.0),
+                        );
+                        let button = ui.interact(button, ui.id().with("invite"), Sense::click());
+                        paint_icon(
+                            ui,
+                            Icon::UserPlus,
+                            button.rect.center(),
+                            20.0,
+                            if button.hovered() {
+                                palette.strong
+                            } else {
+                                palette.icon
+                            },
+                        );
+                        if button.on_hover_text("Convidar pessoas").clicked() {
+                            app.actions
+                                .push(Action::Admin(crate::admin::AdminAction::Open(
+                                    crate::admin::Modal::Invite { link: None },
+                                )));
+                        }
+                    }
                     super::admin::menu(app, ui, rect);
                 }
                 Place::Home => {
@@ -131,10 +162,12 @@ fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
     for (category, list) in categories {
         ui.add_space(16.0);
         let collapsed = app.collapsed.contains(&category);
+        // The name as written, the chevron after it, as Discord's
+        // current layout; the plus only under the pointer.
         let name = app
             .model
             .channel(category)
-            .map(|c| c.name.to_uppercase())
+            .map(|c| c.name.clone())
             .unwrap_or_default();
         let (rect, response) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 24.0), Sense::click());
         let tint = if response.hovered() {
@@ -147,28 +180,29 @@ fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
         } else {
             Icon::ChevronDown
         };
+        let text = Elide::new(ui, rect.right() - 52.0).text(
+            pos2(rect.left() + 14.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            name,
+            font(Weight::Medium, 14.0),
+            tint,
+        );
         paint_icon(
             ui,
             chevron,
-            pos2(rect.left() + 10.0, rect.center().y),
+            pos2(text.right() + 9.0, rect.center().y),
             12.0,
             tint,
         );
-        let clip = Rect::from_min_max(rect.min, pos2(rect.right() - 32.0, rect.bottom()));
-        Elide::new(ui, clip.right()).text(
-            pos2(rect.left() + 18.0, rect.center().y),
-            Align2::LEFT_CENTER,
-            name,
-            font(Weight::SemiBold, 12.0),
-            tint,
-        );
-        paint_icon(
-            ui,
-            Icon::Plus,
-            pos2(rect.right() - 18.0, rect.center().y),
-            16.0,
-            palette.muted,
-        );
+        if response.hovered() {
+            paint_icon(
+                ui,
+                Icon::Plus,
+                pos2(rect.right() - 18.0, rect.center().y),
+                16.0,
+                palette.muted,
+            );
+        }
         if response.clicked() {
             app.actions.push(Action::ToggleCategory(category));
         }
@@ -293,7 +327,14 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
         ui.painter()
             .rect_filled(pill, CornerRadius::same(4), palette.strong);
     }
-    let tint = if selected || unread {
+    // The voice channel the user is in: its speaker green and its name
+    // lit, as Discord.
+    let joined = app
+        .call
+        .as_ref()
+        .filter(|c| c.channel == id)
+        .map(|c| c.since);
+    let tint = if selected || unread || joined.is_some() {
         palette.strong
     } else if hovered {
         palette.text
@@ -310,14 +351,18 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
         icon,
         pos2(rect.left() + 18.0, rect.center().y),
         20.0,
-        palette.muted,
+        if joined.is_some() {
+            super::call::TALKING
+        } else {
+            palette.muted
+        },
     );
-    let weight = if unread || selected {
+    let weight = if unread || selected || joined.is_some() {
         Weight::SemiBold
     } else {
         Weight::Medium
     };
-    let reserve = if channel.mentions > 0 || hovered || selected {
+    let reserve = if channel.mentions > 0 || hovered || selected || joined.is_some() {
         52.0
     } else {
         8.0
@@ -327,9 +372,31 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
         pos2(rect.left() + 36.0, rect.center().y),
         Align2::LEFT_CENTER,
         &channel.name,
-        font(weight, 15.0),
+        font(weight, 16.0),
         tint,
     );
+    if let Some(since) = joined
+        && !hovered
+    {
+        let seconds = since.elapsed().as_secs();
+        let time = if seconds >= 3600 {
+            format!(
+                "{}:{:02}:{:02}",
+                seconds / 3600,
+                seconds / 60 % 60,
+                seconds % 60
+            )
+        } else {
+            format!("{}:{:02}", seconds / 60, seconds % 60)
+        };
+        ui.painter().text(
+            pos2(rect.right() - 8.0, rect.center().y),
+            Align2::RIGHT_CENTER,
+            time,
+            egui::FontId::monospace(12.0),
+            super::call::TALKING,
+        );
+    }
     if channel.mentions > 0 {
         badge(
             ui,
@@ -339,7 +406,7 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
             None,
         );
     } else if hovered || selected {
-        if channel.kind == ChannelKind::Text {
+        if matches!(channel.kind, ChannelKind::Text | ChannelKind::Voice) {
             paint_icon(
                 ui,
                 Icon::UserPlus,
@@ -572,147 +639,272 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
 }
 
 /// Your avatar and name, with mute, deafen and settings.
-fn user_panel(app: &mut App, ui: &mut Ui) {
+/// The card at the foot of the rail and the sidebar, as Discord's: the
+/// call above, when there is one, and the user with their buttons.
+const CARD_MARGIN: f32 = 8.0;
+const USER_ROW: f32 = 56.0;
+
+/// How much the card covers at the foot of the rail and the sidebar.
+pub fn card_space(app: &App) -> f32 {
+    let call = if app.call.is_some() {
+        super::call::SECTION + 1.0
+    } else {
+        0.0
+    };
+    USER_ROW + call + CARD_MARGIN * 2.0
+}
+
+/// Draws the card over the foot of the rail and the sidebar. `window` is
+/// the whole window, for its bottom left corner.
+pub fn card(app: &mut App, ui: &Ui, window: Rect) {
     let palette = app.palette;
-    egui::Panel::bottom("user-panel")
-        .resizable(false)
-        .exact_size(USER_PANEL_HEIGHT)
-        .show_separator_line(false)
-        .frame(
-            Frame::new()
-                .fill(palette.user_panel)
-                .inner_margin(Margin::symmetric(8, 0)),
-        )
-        .show(ui, |ui| {
-            let rect = ui.max_rect();
-            let identity = Rect::from_min_max(
-                pos2(rect.left() - 2.0, rect.top() + 8.0),
-                pos2(rect.right() - 102.0, rect.bottom() - 8.0),
+    let height = card_space(app) - CARD_MARGIN * 2.0;
+    let rect = Rect::from_min_size(
+        pos2(
+            window.left() + CARD_MARGIN,
+            window.bottom() - CARD_MARGIN - height,
+        ),
+        vec2(RAIL_WIDTH + SIDEBAR_WIDTH - CARD_MARGIN * 2.0, height),
+    );
+    egui::Area::new(egui::Id::new("user-card"))
+        .order(egui::Order::Middle)
+        .fixed_pos(rect.min)
+        .show(ui.ctx(), |ui| {
+            ui.allocate_exact_size(rect.size(), Sense::hover());
+            ui.painter().rect(
+                rect,
+                CornerRadius::same(8),
+                palette.user_panel,
+                Stroke::new(1.0, palette.divider),
+                egui::StrokeKind::Inside,
             );
-            let response = ui.interact(identity, ui.id().with("me"), Sense::click());
-            if response.clicked() {
-                let me = app.model.me;
-                app.actions
-                    .push(Action::Chat(crate::chat::ChatAction::ShowProfile {
-                        user: me,
-                        anchor: identity,
-                        side: crate::chat::Side::Above,
-                    }));
-            }
-            let behind = if response.hovered() {
-                palette.selected
-            } else {
-                palette.user_panel
-            };
-            if response.hovered() {
-                ui.painter()
-                    .rect_filled(identity, CornerRadius::same(4), behind);
-            }
-            if let Some(me) = app.model.user(app.model.me) {
-                avatar(
-                    ui,
-                    app,
-                    me,
-                    pos2(identity.left() + 18.0, identity.center().y),
-                    16.0,
-                    Some(behind),
+            let mut top = rect.top();
+            if app.call.is_some() {
+                let section =
+                    Rect::from_min_size(rect.min, vec2(rect.width(), super::call::SECTION));
+                super::call::section(app, ui, section);
+                top = section.bottom();
+                ui.painter().hline(
+                    rect.x_range().shrink(1.0),
+                    top + 0.5,
+                    Stroke::new(1.0, palette.divider),
                 );
-                let clip = Rect::from_min_max(identity.min, identity.max);
-                let painter = Elide::new(ui, clip.right());
-                painter.text(
-                    pos2(identity.left() + 42.0, identity.center().y - 8.0),
-                    Align2::LEFT_CENTER,
-                    &me.name,
-                    font(Weight::SemiBold, 14.0),
-                    palette.strong,
-                );
-                let status = match me.status {
-                    Status::Online => "Disponível",
-                    Status::Idle => "Ausente",
-                    Status::DoNotDisturb => "Não perturbar",
-                    Status::Offline => "Invisível",
-                };
-                painter.text(
-                    pos2(identity.left() + 42.0, identity.center().y + 9.0),
-                    Align2::LEFT_CENTER,
-                    if response.hovered() {
-                        me.username.as_str()
-                    } else {
-                        status
-                    },
-                    font(Weight::Regular, 12.0),
-                    palette.muted,
-                );
+                top += 1.0;
             }
-            let buttons =
-                Rect::from_min_max(pos2(rect.right() - 98.0, rect.top()), rect.right_bottom());
-            let (muted, deafened) = (app.settings.muted, app.settings.deafened);
-            ui.scope_builder(
-                egui::UiBuilder::new()
-                    .max_rect(buttons)
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(1.0, 0.0);
-                    let mic = icon_button(
-                        ui,
-                        &palette,
-                        Icon::Mic,
-                        32.0,
-                        false,
-                        if muted {
-                            "Desativar silêncio"
-                        } else {
-                            "Silenciar"
-                        },
-                    );
-                    if muted {
-                        strike(ui, mic.rect, palette.dnd);
-                    }
-                    if mic.clicked() {
-                        app.actions.push(Action::ToggleMute);
-                    }
-                    let ears = icon_button(
-                        ui,
-                        &palette,
-                        Icon::Headphones,
-                        32.0,
-                        false,
-                        if deafened {
-                            "Desativar ensurdecer"
-                        } else {
-                            "Ensurdecer"
-                        },
-                    );
-                    if deafened {
-                        strike(ui, ears.rect, palette.dnd);
-                    }
-                    if ears.clicked() {
-                        app.actions.push(Action::ToggleDeafen);
-                    }
-                    let settings = icon_button(
-                        ui,
-                        &palette,
-                        Icon::Settings,
-                        32.0,
-                        false,
-                        "Configurações de usuário",
-                    );
-                    if settings.clicked() {
-                        app.actions
-                            .push(Action::OpenSettings(crate::app::SettingsPage::Account));
-                    }
-                },
+            user_row(
+                app,
+                ui,
+                Rect::from_min_max(pos2(rect.left(), top), rect.max),
             );
         });
 }
 
-/// The red slash over a muted microphone or deafened headphones.
-fn strike(ui: &Ui, rect: Rect, color: Color32) {
-    let c = rect.center();
-    ui.painter().line_segment(
-        [c + vec2(-9.0, -9.0), c + vec2(9.0, 9.0)],
-        Stroke::new(2.0, color),
+/// An icon button with a chevron beside it that opens its menu, as
+/// Discord's microphone and headphones. Red behind both while `off`.
+fn split_button(
+    ui: &mut Ui,
+    palette: &crate::theme::Palette,
+    at: Rect,
+    icon: Icon,
+    off: bool,
+    hint: &str,
+) -> (egui::Response, egui::Response) {
+    let main = Rect::from_min_size(at.min, vec2(32.0, at.height()));
+    let more = Rect::from_min_max(pos2(main.right(), at.top()), at.max);
+    let main = ui.interact(main, ui.id().with((hint, "main")), Sense::click());
+    let more = ui.interact(more, ui.id().with((hint, "more")), Sense::click());
+    if off {
+        ui.painter().rect_filled(
+            at,
+            CornerRadius::same(6),
+            palette.danger.gamma_multiply(0.18),
+        );
+    }
+    for part in [&main, &more] {
+        if part.hovered() {
+            ui.painter().rect_filled(
+                part.rect,
+                CornerRadius::same(6),
+                if off {
+                    palette.danger.gamma_multiply(0.18)
+                } else {
+                    palette.hover
+                },
+            );
+        }
+    }
+    let tint = |r: &egui::Response| {
+        if off {
+            palette.danger
+        } else if r.hovered() {
+            palette.strong
+        } else {
+            palette.icon
+        }
+    };
+    paint_icon(ui, icon, main.rect.center(), 20.0, tint(&main));
+    paint_icon(ui, Icon::ChevronDown, more.rect.center(), 14.0, tint(&more));
+    (main.on_hover_text(hint), more)
+}
+
+/// The user: picture, name and status (or "Em voz"), then microphone,
+/// headphones and settings.
+fn user_row(app: &mut App, ui: &mut Ui, rect: Rect) {
+    let palette = app.palette;
+    let rect = rect.shrink2(vec2(8.0, 0.0));
+    let identity = Rect::from_min_max(
+        pos2(rect.left(), rect.top() + 8.0),
+        pos2(rect.right() - 152.0, rect.bottom() - 8.0),
     );
+    let response = ui.interact(identity, ui.id().with("me"), Sense::click());
+    if response.clicked() {
+        let me = app.model.me;
+        app.actions
+            .push(Action::Chat(crate::chat::ChatAction::ShowProfile {
+                user: me,
+                anchor: identity,
+                side: crate::chat::Side::Above,
+            }));
+    }
+    let behind = if response.hovered() {
+        palette.selected
+    } else {
+        palette.user_panel
+    };
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(identity, CornerRadius::same(6), behind);
+    }
+    let in_voice = app.call.is_some();
+    if let Some(me) = app.model.user(app.model.me) {
+        avatar(
+            ui,
+            app,
+            me,
+            pos2(identity.left() + 20.0, identity.center().y),
+            16.0,
+            Some(behind),
+        );
+        let painter = Elide::new(ui, identity.right() - 4.0);
+        painter.text(
+            pos2(identity.left() + 44.0, identity.center().y - 9.0),
+            Align2::LEFT_CENTER,
+            &me.name,
+            font(Weight::SemiBold, 15.0),
+            palette.strong,
+        );
+        let below = pos2(identity.left() + 44.0, identity.center().y + 9.0);
+        if response.hovered() {
+            painter.text(
+                below,
+                Align2::LEFT_CENTER,
+                me.username.as_str(),
+                font(Weight::Regular, 12.0),
+                palette.muted,
+            );
+        } else if in_voice {
+            paint_icon(
+                ui,
+                Icon::Speaker,
+                below + vec2(6.0, 0.0),
+                12.0,
+                super::call::TALKING,
+            );
+            painter.text(
+                below + vec2(15.0, 0.0),
+                Align2::LEFT_CENTER,
+                "Em voz",
+                font(Weight::Regular, 12.0),
+                super::call::TALKING,
+            );
+        } else {
+            let status = match me.status {
+                Status::Online => "Disponível",
+                Status::Idle => "Ausente",
+                Status::DoNotDisturb => "Não perturbar",
+                Status::Offline => "Invisível",
+            };
+            painter.text(
+                below,
+                Align2::LEFT_CENTER,
+                status,
+                font(Weight::Regular, 12.0),
+                palette.muted,
+            );
+        }
+    }
+    let (muted, deafened) = (app.settings.muted, app.settings.deafened);
+    let y = rect.center().y;
+    let mic_at = Rect::from_min_size(pos2(rect.right() - 148.0, y - 16.0), vec2(52.0, 32.0));
+    let (mic, mic_more) = split_button(
+        ui,
+        &palette,
+        mic_at,
+        if muted { Icon::MicOff } else { Icon::Mic },
+        muted,
+        if muted {
+            "Desativar silêncio"
+        } else {
+            "Silenciar"
+        },
+    );
+    if mic.clicked() {
+        app.actions.push(Action::ToggleMute);
+    }
+    let ears_at = Rect::from_min_size(pos2(mic_at.right() + 4.0, y - 16.0), vec2(52.0, 32.0));
+    let (ears, ears_more) = split_button(
+        ui,
+        &palette,
+        ears_at,
+        if deafened {
+            Icon::HeadphonesOff
+        } else {
+            Icon::Headphones
+        },
+        deafened,
+        if deafened {
+            "Desativar ensurdecer"
+        } else {
+            "Ensurdecer"
+        },
+    );
+    if ears.clicked() {
+        app.actions.push(Action::ToggleDeafen);
+    }
+    for more in [mic_more, ears_more] {
+        let mut chosen = None;
+        egui::Popup::menu(&more).show(|ui| {
+            ui.set_min_width(200.0);
+            if ui.button("Configurações de voz").clicked() {
+                chosen = Some(Action::OpenSettings(crate::app::SettingsPage::Voice));
+                ui.close();
+            }
+        });
+        if let Some(action) = chosen {
+            app.actions.push(action);
+        }
+    }
+    let gear = Rect::from_center_size(pos2(rect.right() - 18.0, y), Vec2::splat(32.0));
+    let gear = ui.interact(gear, ui.id().with("settings"), Sense::click());
+    if gear.hovered() {
+        ui.painter()
+            .rect_filled(gear.rect, CornerRadius::same(6), palette.hover);
+    }
+    paint_icon(
+        ui,
+        Icon::Settings,
+        gear.rect.center(),
+        20.0,
+        if gear.hovered() {
+            palette.strong
+        } else {
+            palette.icon
+        },
+    );
+    if gear.on_hover_text("Configurações de usuário").clicked() {
+        app.actions
+            .push(Action::OpenSettings(crate::app::SettingsPage::Account));
+    }
 }
 
 /// Discord's "Log Out" confirmation.

@@ -4,7 +4,7 @@
 //! interface thread (they cannot move between threads on every platform);
 //! the rings are shared with the driver in the backend.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -132,6 +132,8 @@ pub struct Shared {
     pub talking: AtomicBool,
     /// Who else is talking right now.
     pub speaking: Mutex<HashSet<Id>>,
+    /// The gain for each person who is not at 100%: 0 for one silenced.
+    pub volumes: Mutex<HashMap<Id, f32>>,
 }
 
 impl Default for Shared {
@@ -150,7 +152,23 @@ impl Default for Shared {
             },
             talking: AtomicBool::new(false),
             speaking: Mutex::new(HashSet::new()),
+            volumes: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+impl Shared {
+    /// Takes each person's volume and local mute from the settings.
+    pub fn set_volumes(&self, settings: &crate::settings::Settings) {
+        let mut volumes: HashMap<Id, f32> = settings
+            .user_volumes
+            .iter()
+            .map(|(user, percent)| (*user, f32::from(*percent) / 100.0))
+            .collect();
+        for user in &settings.local_mutes {
+            volumes.insert(*user, 0.0);
+        }
+        *self.volumes.lock().unwrap_or_else(|e| e.into_inner()) = volumes;
     }
 }
 
@@ -587,6 +605,8 @@ pub struct Session {
     pub _audio: Option<Audio>,
     /// The connection info has gone to the driver.
     pub sent: bool,
+    /// When the call started, for the time beside the channel.
+    pub since: Instant,
 }
 
 #[cfg(test)]
@@ -696,6 +716,7 @@ impl crate::app::App {
         let shared = Arc::new(Shared::default());
         shared.deaf.store(self.settings.deafened, Ordering::Relaxed);
         shared.filter.set(&self.settings);
+        shared.set_volumes(&self.settings);
         let audio = match Audio::start(Arc::clone(&shared)) {
             Ok(audio) => Some(audio),
             Err(error) => {
@@ -712,6 +733,7 @@ impl crate::app::App {
             shared,
             _audio: audio,
             sent: false,
+            since: Instant::now(),
         });
         self.send_voice_state();
     }

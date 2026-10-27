@@ -25,7 +25,8 @@ impl<'a> Elide<'a> {
         Self { ui, right }
     }
 
-    /// Like `Painter::text`, for left-anchored text.
+    /// Like `Painter::text`, for left-anchored text; returns where it
+    /// went.
     pub fn text(
         &self,
         pos: Pos2,
@@ -33,7 +34,7 @@ impl<'a> Elide<'a> {
         text: impl ToString,
         font_id: FontId,
         color: Color32,
-    ) {
+    ) -> Rect {
         let mut job = egui::text::LayoutJob::single_section(
             text.to_string(),
             egui::TextFormat {
@@ -49,6 +50,7 @@ impl<'a> Elide<'a> {
         let galley = self.ui.painter().layout_job(job);
         let rect = anchor.anchor_size(pos, galley.size());
         self.ui.painter().galley(rect.min, galley, color);
+        rect
     }
 }
 
@@ -66,17 +68,37 @@ pub fn icon_button(
     active: bool,
     hint: &str,
 ) -> Response {
+    tinted_button(
+        ui,
+        palette,
+        icon,
+        size,
+        active.then_some(palette.strong),
+        hint,
+    )
+}
+
+/// An icon button in a colour of its own, as the red of a muted
+/// microphone; with no colour it brightens under the pointer.
+pub fn tinted_button(
+    ui: &mut Ui,
+    palette: &Palette,
+    icon: Icon,
+    size: f32,
+    tint: Option<Color32>,
+    hint: &str,
+) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
     let hovered = response.hovered();
     if hovered && size >= 32.0 {
         ui.painter()
             .rect_filled(rect, CornerRadius::same(4), palette.hover);
     }
-    let tint = if active || hovered {
+    let tint = tint.unwrap_or(if hovered {
         palette.strong
     } else {
         palette.icon
-    };
+    });
     paint_icon(ui, icon, rect.center(), 20.0, tint);
     response.on_hover_text(hint)
 }

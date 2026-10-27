@@ -52,8 +52,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 app.actions.push(crate::app::Action::StepChannel(1));
             }
             composer::type_anywhere(app, ui.ctx());
+            let window = ui.max_rect();
             rail::show(app, ui);
             sidebar::show(app, ui);
+            sidebar::card(app, ui, window);
             chat::show(app, ui);
             profile::popout(app, ui);
             sidebar::logout_dialog(app, ui);

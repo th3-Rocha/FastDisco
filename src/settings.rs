@@ -2,6 +2,7 @@
 //! once at start; saved whole through fastframe-file's writer, so the
 //! interface never waits on the disk and a crash never leaves half a file.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,11 @@ pub struct Settings {
     pub auto_sensitivity: bool,
     /// The app's little sounds: calls, muting, messages.
     pub sounds: bool,
+    /// Each person's volume in calls, in percent (100 is unchanged), as
+    /// Discord's "Volume do usuário".
+    pub user_volumes: BTreeMap<crate::model::Id, u16>,
+    /// People silenced on this machine only.
+    pub local_mutes: BTreeSet<crate::model::Id>,
 }
 
 impl Default for Settings {
@@ -77,6 +83,8 @@ impl Default for Settings {
             auto_gain: true,
             auto_sensitivity: true,
             sounds: true,
+            user_volumes: BTreeMap::new(),
+            local_mutes: BTreeSet::new(),
         }
     }
 }

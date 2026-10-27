@@ -7,6 +7,8 @@ fastframe_icons::icons! {
         Speaker => lucide "volume-2",
         Headphones => "headphones",
         Mic => lucide "mic",
+        MicOff => "mic-off",
+        HeadphonesOff => "headphone-off",
         Settings => lucide "settings",
         Plus => lucide "plus",
         PlusCircle => "circle-plus",
@@ -57,6 +59,12 @@ fastframe_icons::icons! {
         Folder => "folder",
         PhoneOff => "phone-off",
         Signal => "signal",
+        Connection => "rss",
+        NoiseSuppression => "audio-lines",
+        Video => "video",
+        ScreenShare => "screen-share",
+        Activities => "shapes",
+        Soundboard => "megaphone",
         Send => "send-horizontal",
     }
 }

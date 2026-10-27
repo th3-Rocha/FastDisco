@@ -132,6 +132,7 @@ everything Discord's desktop app does.
 - [ ] Stage channels
 - [x] Voice channels: joining, speaking and hearing, mute and deafen, who is talking, with Discord's DAVE end-to-end encryption
 - [x] Voice filter: noise suppression, echo cancellation, automatic gain and input sensitivity
+- [x] Right-click on someone in a voice channel: their volume and a local mute, and for moderators server mute, server deafen, disconnect and move
 - [ ] Video calls and screen sharing
 - [ ] Direct message calls
 - [ ] Scheduled events

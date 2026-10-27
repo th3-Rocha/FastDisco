@@ -709,6 +709,9 @@ pub mod permission {
     pub const MANAGE_CHANNELS: u64 = 1 << 4;
     pub const MANAGE_GUILD: u64 = 1 << 5;
     pub const VIEW_AUDIT_LOG: u64 = 1 << 7;
+    pub const MUTE_MEMBERS: u64 = 1 << 22;
+    pub const DEAFEN_MEMBERS: u64 = 1 << 23;
+    pub const MOVE_MEMBERS: u64 = 1 << 24;
     pub const CHANGE_NICKNAME: u64 = 1 << 26;
     pub const MANAGE_ROLES: u64 = 1 << 28;
     pub const MANAGE_EMOJIS: u64 = 1 << 30;

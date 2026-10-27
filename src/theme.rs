@@ -242,4 +242,3 @@ pub const RAIL_WIDTH: f32 = 72.0;
 pub const SIDEBAR_WIDTH: f32 = 240.0;
 pub const MEMBERS_WIDTH: f32 = 240.0;
 pub const HEADER_HEIGHT: f32 = 48.0;
-pub const USER_PANEL_HEIGHT: f32 = 52.0;

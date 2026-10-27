@@ -121,6 +121,12 @@ impl EventHandler for Tick {
         let now = Instant::now();
         let mut mixed = vec![0f32; RATE as usize * 2 / 50];
         let ssrcs = self.ssrcs.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let volumes = self
+            .shared
+            .volumes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let mut heard = self.heard.lock().unwrap_or_else(|e| e.into_inner());
         for (ssrc, data) in &tick.speaking {
             let Some(pcm) = &data.decoded_voice else {
@@ -134,8 +140,16 @@ impl EventHandler for Tick {
             {
                 heard.insert(*user, now);
             }
+            let gain = ssrcs
+                .get(ssrc)
+                .and_then(|user| volumes.get(user))
+                .copied()
+                .unwrap_or(1.0);
+            if gain == 0.0 {
+                continue;
+            }
             for (out, sample) in mixed.iter_mut().zip(pcm) {
-                *out += f32::from(*sample) / 32_768.0;
+                *out += f32::from(*sample) / 32_768.0 * gain;
             }
         }
         for sample in &mut mixed {

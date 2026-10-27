@@ -15,18 +15,39 @@ use crate::model::Id;
 #[derive(Clone, Debug)]
 pub enum Tag {
     Invite,
-    Nick { guild: Id, nick: String },
+    Nick {
+        guild: Id,
+        nick: String,
+    },
     Created,
-    Left { guild: Id },
+    Left {
+        guild: Id,
+    },
     GuildSaved,
     RoleSaved,
-    Invites { guild: Id },
-    Revoked { code: String },
-    Bans { guild: Id },
-    Unbanned { user: Id },
-    Removed { user: Id },
-    Audit { guild: Id },
-    Deleted { guild: Id },
+    Invites {
+        guild: Id,
+    },
+    Revoked {
+        code: String,
+    },
+    Bans {
+        guild: Id,
+    },
+    Unbanned {
+        user: Id,
+    },
+    Removed {
+        user: Id,
+    },
+    Audit {
+        guild: Id,
+    },
+    Deleted {
+        guild: Id,
+    },
+    /// A server mute, deafen, disconnect or move; the gateway shows it.
+    VoiceMember,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,6 +137,13 @@ pub enum AdminAction {
     SaveRole,
     Revoke(String),
     Unban(Id),
+    /// Changes someone's voice state in the server: `mute`, `deaf` or
+    /// `channel_id` (null disconnects).
+    VoiceMember {
+        guild: Id,
+        user: Id,
+        change: Value,
+    },
 }
 
 impl App {
@@ -131,6 +159,16 @@ impl App {
     pub fn apply_admin(&mut self, action: AdminAction) {
         match action {
             AdminAction::ToggleMenu => self.admin.menu = !self.admin.menu,
+            AdminAction::VoiceMember {
+                guild,
+                user,
+                change,
+            } => self.api(
+                Tag::VoiceMember,
+                Method::PATCH,
+                format!("/guilds/{guild}/members/{user}"),
+                Some(change),
+            ),
             AdminAction::CloseMenu => self.admin.menu = false,
             AdminAction::Open(modal) => {
                 self.admin.menu = false;
@@ -380,7 +418,9 @@ impl App {
         let value = match result {
             Ok(value) => value,
             Err(error) => {
-                if self.admin.modal.is_some() {
+                if let Tag::VoiceMember = tag {
+                    self.chat.dialog = Some(crate::chat::Dialog::Failed(error));
+                } else if self.admin.modal.is_some() {
                     self.admin.error = Some(error);
                 } else if let Some(settings) = &mut self.admin.settings {
                     settings.message = Some(error);
@@ -460,6 +500,7 @@ impl App {
                     list.retain(|b| crate::discord::parse::id(&b["user"]["id"]) != Some(user));
                 }
             }
+            Tag::VoiceMember => {}
             Tag::Audit { guild } => {
                 if let Some(settings) = self.admin.settings.as_mut().filter(|s| s.guild == guild) {
                     settings.audit = Some(value);

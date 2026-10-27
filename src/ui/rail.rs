@@ -25,6 +25,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         .show_separator_line(false)
         .frame(Frame::new().fill(palette.rail).inner_margin(Margin::ZERO))
         .show(ui, |ui| {
+            // Room for the user's card, which spans the rail and sidebar.
+            egui::Panel::bottom("rail-foot")
+                .resizable(false)
+                .exact_size(super::sidebar::card_space(app))
+                .show_separator_line(false)
+                .frame(Frame::new().fill(palette.rail))
+                .show(ui, |_| {});
             egui::ScrollArea::vertical()
                 .id_salt("server-rail")
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)

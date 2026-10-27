@@ -100,6 +100,10 @@ pub enum Action {
     SetZoom(f32),
     /// The voice filter's noise suppression, 0 off to 3 very high.
     SetNoiseSuppression(u8),
+    /// A person's volume in calls, in percent.
+    SetUserVolume(Id, u16),
+    /// Silences a person on this machine only, or hears them again.
+    ToggleLocalMute(Id),
     SaveProfile,
     AskAutostart,
     MarkRead(Id),
@@ -833,6 +837,27 @@ impl App {
                     self.save_settings();
                     if let Some(call) = &self.call {
                         call.shared.filter.set(&self.settings);
+                    }
+                }
+                Action::SetUserVolume(user, percent) => {
+                    if percent == 100 {
+                        self.settings.user_volumes.remove(&user);
+                    } else {
+                        self.settings.user_volumes.insert(user, percent.min(200));
+                    }
+                    self.save_settings();
+                    if let Some(call) = &self.call {
+                        call.shared.set_volumes(&self.settings);
+                    }
+                }
+                Action::ToggleLocalMute(user) => {
+                    let mutes = &mut self.settings.local_mutes;
+                    if !mutes.remove(&user) {
+                        mutes.insert(user);
+                    }
+                    self.save_settings();
+                    if let Some(call) = &self.call {
+                        call.shared.set_volumes(&self.settings);
                     }
                 }
                 Action::CheckUpdate => self.backend.send(Command::CheckUpdate),
