@@ -51,6 +51,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowDown)) {
                 app.actions.push(crate::app::Action::StepChannel(1));
             }
+            composer::paste_files(app, ui.ctx());
             composer::type_anywhere(app, ui.ctx());
             let window = ui.max_rect();
             rail::show(app, ui);

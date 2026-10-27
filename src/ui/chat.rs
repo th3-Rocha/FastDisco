@@ -290,7 +290,10 @@ fn messages(app: &mut App, ui: &mut Ui, id: Id) {
         } else {
             welcome(app, ui, id, width);
         }
-        if channel.requested && channel.messages.is_empty() && channel.last_message.is_some() {
+        if channel.age_gated {
+            age_gate(&palette, &mut out, ui, width);
+        } else if channel.requested && channel.messages.is_empty() && channel.last_message.is_some()
+        {
             skeleton(ui, &palette, width);
         }
         let mut row = message::Row {
@@ -495,6 +498,59 @@ fn welcome(app: &App, ui: &mut Ui, id: Id, width: f32) {
 }
 
 /// Grey rows shaped like messages while the history loads.
+/// Discord's notice for an age-restricted channel the account may not
+/// see yet, in place of the messages.
+fn age_gate(palette: &Palette, out: &mut Vec<Action>, ui: &mut Ui, width: f32) {
+    ui.add_space(32.0);
+    ui.vertical_centered(|ui| {
+        ui.set_max_width(width.min(440.0));
+        ui.spacing_mut().item_spacing = vec2(0.0, 8.0);
+        let (rect, _) = ui.allocate_exact_size(vec2(80.0, 80.0), Sense::hover());
+        ui.painter()
+            .circle_filled(rect.center(), 40.0, palette.hover);
+        super::widgets::paint_icon(
+            ui,
+            crate::icons::Icon::EyeOff,
+            rect.center(),
+            40.0,
+            palette.muted,
+        );
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("Canal restrito por idade")
+                .font(font(Weight::Bold, 20.0))
+                .color(palette.strong),
+        );
+        ui.label(
+            egui::RichText::new(
+                "O Discord só mostra este canal a contas que confirmaram ser adultas. \
+                 Confirme sua faixa etária em Configurações › Status da conta, no app \
+                 do Discord ou no navegador, e abra o canal de novo.",
+            )
+            .font(font(Weight::Regular, 15.0))
+            .color(palette.muted),
+        );
+        ui.add_space(8.0);
+        let button = egui::Button::new(
+            egui::RichText::new("Abrir o Discord no navegador")
+                .font(font(Weight::Medium, 14.0))
+                .color(Color32::WHITE),
+        )
+        .fill(palette.accent)
+        .corner_radius(8)
+        .min_size(vec2(0.0, 38.0));
+        if ui
+            .add(button)
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            out.push(Action::Chat(crate::chat::ChatAction::OpenUrl(
+                "https://discord.com/channels/@me".into(),
+            )));
+        }
+    });
+}
+
 fn skeleton(ui: &mut Ui, palette: &Palette, width: f32) {
     let shade = palette.selected.gamma_multiply(0.6);
     let lines: [&[f32]; 6] = [

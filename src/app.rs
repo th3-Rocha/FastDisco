@@ -100,6 +100,15 @@ pub enum Action {
     SetZoom(f32),
     /// The voice filter's noise suppression, 0 off to 3 very high.
     SetNoiseSuppression(u8),
+    /// The microphone or speakers by system name; None for the default.
+    SetInputDevice(Option<String>),
+    SetOutputDevice(Option<String>),
+    SetInputVolume(u16),
+    SetOutputVolume(u16),
+    SetInputProfile(u8),
+    /// The manual input sensitivity, in dB.
+    SetSensitivity(f32),
+    ToggleMicTest,
     /// A person's volume in calls, in percent.
     SetUserVolume(Id, u16),
     /// Silences a person on this machine only, or hears them again.
@@ -175,6 +184,11 @@ pub struct App {
     pub speller: Option<std::sync::Arc<crate::spell::Speller>>,
     /// The voice call the user is in.
     pub call: Option<crate::call::Session>,
+    /// The microphone test of the voice settings, while it runs.
+    pub mic_test: Option<crate::call::MicTest>,
+    /// The microphones and speakers, listed in the background when the
+    /// voice settings open.
+    pub devices: std::sync::Arc<std::sync::Mutex<Option<crate::devices::Devices>>>,
     /// The call's tiles fill the middle instead of a text channel.
     pub call_view: bool,
     sounds: crate::sounds::Sounds,
@@ -242,6 +256,8 @@ impl App {
             interact: crate::interact::Interact::default(),
             speller: None,
             call: None,
+            mic_test: None,
+            devices: Default::default(),
             call_view: false,
             sounds: crate::sounds::Sounds::default(),
             update: crate::updates::Status::Idle,
@@ -433,6 +449,30 @@ impl App {
         }
     }
 
+    /// The voice settings saved and given to the call and the microphone
+    /// test, as they run.
+    fn apply_voice(&self) {
+        self.save_settings();
+        let running = self
+            .call
+            .as_ref()
+            .map(|c| &c.shared)
+            .into_iter()
+            .chain(self.mic_test.as_ref().map(|t| &t.shared));
+        for shared in running {
+            shared.filter.set(&self.settings);
+            shared.set_gains(&self.settings);
+        }
+    }
+
+    /// Puts FastDisco's sound on the chosen microphone and speakers.
+    fn route_sound(&self) {
+        crate::devices::route(
+            self.settings.input_device.clone(),
+            self.settings.output_device.clone(),
+        );
+    }
+
     pub fn save_settings(&self) {
         self.settings.save(&self.files);
     }
@@ -539,6 +579,12 @@ impl App {
                     list,
                     older: true,
                 } => self.older(channel, &list),
+                Event::AgeGated(channel) => {
+                    if let Some(channel) = self.model.channels.get_mut(&channel) {
+                        channel.age_gated = true;
+                        channel.loading = false;
+                    }
+                }
                 Event::SendFailed {
                     channel,
                     nonce,
@@ -714,6 +760,7 @@ impl App {
         if let Ok(page) = std::env::var("FASTDISCO_SETTINGS") {
             self.settings_page = Some(match page.as_str() {
                 "profiles" => SettingsPage::Profiles,
+                "voice" => SettingsPage::Voice,
                 "appearance" => SettingsPage::Appearance,
                 "accessibility" => SettingsPage::Accessibility,
                 "notifications" => SettingsPage::Notifications,
@@ -834,9 +881,42 @@ impl App {
                 Action::Interact(action) => self.apply_interact(action),
                 Action::SetNoiseSuppression(level) => {
                     self.settings.noise_suppression = level.min(3);
-                    self.save_settings();
-                    if let Some(call) = &self.call {
-                        call.shared.filter.set(&self.settings);
+                    self.apply_voice();
+                }
+                Action::SetInputDevice(device) => {
+                    self.settings.input_device = device;
+                    self.apply_voice();
+                    self.route_sound();
+                }
+                Action::SetOutputDevice(device) => {
+                    self.settings.output_device = device;
+                    self.apply_voice();
+                    self.route_sound();
+                }
+                Action::SetInputVolume(percent) => {
+                    self.settings.input_volume = percent.min(200);
+                    self.apply_voice();
+                }
+                Action::SetOutputVolume(percent) => {
+                    self.settings.output_volume = percent.min(200);
+                    self.apply_voice();
+                }
+                Action::SetInputProfile(profile) => {
+                    self.settings.input_profile = profile.min(2);
+                    self.apply_voice();
+                }
+                Action::SetSensitivity(db) => {
+                    self.settings.sensitivity = db.clamp(-100.0, 0.0);
+                    self.apply_voice();
+                }
+                Action::ToggleMicTest => {
+                    if self.mic_test.take().is_none() {
+                        match crate::call::MicTest::start(&self.settings) {
+                            Ok(test) => self.mic_test = Some(test),
+                            Err(error) => {
+                                self.chat.dialog = Some(crate::chat::Dialog::Failed(error));
+                            }
+                        }
                     }
                 }
                 Action::SetUserVolume(user, percent) => {
@@ -867,9 +947,13 @@ impl App {
                 Action::ShowCall(shown) => self.call_view = shown && self.call.is_some(),
                 Action::OpenSettings(page) => {
                     self.chat.popout = None;
+                    if page != SettingsPage::Voice {
+                        self.mic_test = None;
+                    }
                     self.settings_page = Some(page);
                 }
                 Action::CloseSettings => {
+                    self.mic_test = None;
                     self.settings_page = None;
                     self.profile_form = None;
                     self.chat.focus_composer = true;
@@ -899,10 +983,7 @@ impl App {
                             }
                         }
                     }
-                    self.save_settings();
-                    if let Some(call) = &self.call {
-                        call.shared.filter.set(&self.settings);
-                    }
+                    self.apply_voice();
                 }
                 Action::SetTheme(theme) => {
                     self.settings.theme = theme;

@@ -895,87 +895,213 @@ fn keybinds(app: &mut App, ui: &mut Ui) {
 
 /// The call's voice filter and the app's sounds, as Discord's "Voice &
 /// Video" page.
+/// "Voz e vídeo" as Discord lays it out: the devices and their volumes,
+/// the microphone test, the input profile, and the filter.
 fn voice(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
     title(ui, &palette, "Voz e vídeo");
-    ui.label(
-        RichText::new("SUPRESSÃO DE RUÍDO")
-            .font(font(Weight::Bold, 12.0))
-            .color(palette.muted),
-    );
-    ui.label(
-        RichText::new("Tira do seu microfone o barulho de fundo: ventilador, teclado, rua.")
-            .font(font(Weight::Regular, 14.0))
-            .color(palette.muted),
-    );
-    let current = app.settings.noise_suppression;
-    for (level, label, note) in [
-        (0, "Desligada", "O microfone vai como está."),
-        (1, "Padrão", "Tira ruídos constantes, como um ventilador."),
-        (
-            2,
-            "Alta",
-            "Também tira boa parte do teclado e de vozes ao fundo.",
-        ),
-        (
-            3,
-            "Muito alta",
-            "O máximo; pode deixar a voz um pouco abafada.",
-        ),
-    ] {
-        let (rect, response) =
-            ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::click());
-        let selected = current == level;
-        let fill = if selected {
-            palette.selected
-        } else if response.hovered() {
-            palette.hover
-        } else {
-            palette.sidebar
-        };
-        ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
-        let dot = pos2(rect.left() + 20.0, rect.center().y);
-        ui.painter().circle_stroke(
-            dot,
-            9.0,
-            Stroke::new(
-                2.0,
-                if selected {
-                    palette.strong
-                } else {
-                    palette.muted
-                },
-            ),
-        );
-        if selected {
-            ui.painter().circle_filled(dot, 5.0, palette.strong);
+    // The devices, listed once in the background.
+    let devices = {
+        let mut slot = app.devices.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            *slot = Some(Default::default());
+            let shared = std::sync::Arc::clone(&app.devices);
+            let ctx = ui.ctx().clone();
+            std::thread::spawn(move || {
+                let list = crate::devices::list();
+                *shared.lock().unwrap_or_else(|e| e.into_inner()) = Some(list);
+                ctx.request_repaint();
+            });
         }
-        ui.painter().text(
-            pos2(rect.left() + 40.0, rect.center().y - 8.0),
-            Align2::LEFT_CENTER,
-            label,
-            font(Weight::Medium, 15.0),
-            palette.strong,
-        );
-        ui.painter().text(
-            pos2(rect.left() + 40.0, rect.center().y + 10.0),
-            Align2::LEFT_CENTER,
-            note,
-            font(Weight::Regular, 13.0),
-            palette.muted,
-        );
-        if response.clicked() {
-            app.actions.push(Action::SetNoiseSuppression(level));
-        }
+        slot.clone().unwrap_or_default()
+    };
+    // The live level, from the call or the microphone test.
+    let level = app
+        .mic_test
+        .as_ref()
+        .map(|t| &t.shared)
+        .or(app.call.as_ref().map(|c| &c.shared))
+        .map(|s| s.level());
+    if level.is_some() {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(33));
     }
-    ui.add_space(16.0);
     let s = &app.settings;
-    let (echo, gain, sensitivity, sounds) = (
+    let (input, output) = (s.input_device.clone(), s.output_device.clone());
+    let (input_volume, output_volume) = (s.input_volume, s.output_volume);
+    let (profile, sensitivity, auto) = (s.input_profile, s.sensitivity, s.auto_sensitivity);
+    let (noise, echo, gain, sounds) = (
+        s.noise_suppression,
         s.echo_cancellation,
         s.auto_gain,
-        s.auto_sensitivity,
         s.sounds,
     );
+    let width = ui.available_width();
+    let half = (width - 16.0) / 2.0;
+    section(ui, &palette, "Voz");
+    ui.add_space(4.0);
+    // Microfone | Alto-falante
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = vec2(16.0, 0.0);
+        ui.vertical(|ui| {
+            ui.set_width(half);
+            label(ui, &palette, "Microfone");
+            if let Some(chosen) = device_picker(
+                ui,
+                &palette,
+                Icon::Mic,
+                &devices.inputs,
+                devices.default_input.as_deref(),
+                input.as_deref(),
+            ) {
+                app.actions.push(Action::SetInputDevice(chosen));
+            }
+        });
+        ui.vertical(|ui| {
+            ui.set_width(half);
+            label(ui, &palette, "Alto-falante");
+            if let Some(chosen) = device_picker(
+                ui,
+                &palette,
+                Icon::Headphones,
+                &devices.outputs,
+                devices.default_output.as_deref(),
+                output.as_deref(),
+            ) {
+                app.actions.push(Action::SetOutputDevice(chosen));
+            }
+        });
+    });
+    ui.add_space(16.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = vec2(16.0, 0.0);
+        ui.vertical(|ui| {
+            ui.set_width(half);
+            label(ui, &palette, "Volume do Microfone");
+            if let Some(v) = percent_slider(ui, &palette, input_volume, half) {
+                app.actions.push(Action::SetInputVolume(v));
+            }
+        });
+        ui.vertical(|ui| {
+            ui.set_width(half);
+            label(ui, &palette, "Volume do Alto-falante");
+            if let Some(v) = percent_slider(ui, &palette, output_volume, half) {
+                app.actions.push(Action::SetOutputVolume(v));
+            }
+        });
+    });
+    ui.add_space(16.0);
+    // Teste do microfone and its meter.
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = vec2(16.0, 0.0);
+        let testing = app.mic_test.is_some();
+        let in_call = app.call.is_some();
+        let text = if testing {
+            "Parar teste"
+        } else {
+            "Teste do microfone"
+        };
+        let button = egui::Button::new(
+            RichText::new(text)
+                .font(font(Weight::Medium, 14.0))
+                .color(Color32::WHITE),
+        )
+        .fill(palette.accent)
+        .corner_radius(8)
+        .min_size(vec2(178.0, 40.0));
+        let response = ui.add_enabled(!in_call, button);
+        let response = if in_call {
+            response.on_disabled_hover_text("Indisponível durante uma chamada.")
+        } else {
+            response.on_hover_cursor(egui::CursorIcon::PointingHand)
+        };
+        if response.clicked() {
+            app.actions.push(Action::ToggleMicTest);
+        }
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
+        meter(ui, &palette, rect, level);
+    });
+    divider(ui, &palette);
+    // Perfil de entrada
+    label(ui, &palette, "Perfil de entrada");
+    ui.add_space(4.0);
+    for (value, name, note) in [
+        (
+            0,
+            "Isolamento de Voz",
+            "Só a sua linda voz: deixe o FastDisco equalizar o ruído",
+        ),
+        (
+            1,
+            "Estúdio",
+            "Áudio puro: microfone aberto e sem processamento",
+        ),
+        (
+            2,
+            "Personalizado",
+            "Modo avançado: me dê todos os botões e mostradores!",
+        ),
+    ] {
+        if radio(ui, &palette, profile == value, name, note) {
+            app.actions.push(Action::SetInputProfile(value));
+        }
+    }
+    if profile != 2 {
+        ui.add_space(12.0);
+        switch_row(app, ui, Flag::Sounds, "Sons do app", SOUNDS_NOTE, sounds);
+        return;
+    }
+    ui.add_space(12.0);
+    switch_row(
+        app,
+        ui,
+        Flag::AutoSensitivity,
+        "Ajustar Automaticamente a Sensibilidade de Entrada",
+        "Controla quanto som o FastDisco transmite do seu microfone.",
+        auto,
+    );
+    // The divider of the switch row sits under it; the bar goes above.
+    if let Some(db) = sensitivity_bar(ui, &palette, auto, sensitivity, level) {
+        app.actions.push(Action::SetSensitivity(db));
+    }
+    ui.add_space(20.0);
+    // Supressão de ruído, with its choice on the right.
+    let row_width = ui.available_width();
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(row_width - 150.0);
+            ui.label(
+                RichText::new("Supressão de ruído")
+                    .font(font(Weight::Medium, 16.0))
+                    .color(palette.strong),
+            );
+            ui.label(
+                RichText::new("Reduz o ruído de fundo do seu microfone.")
+                    .font(font(Weight::Regular, 14.0))
+                    .color(palette.muted),
+            );
+        });
+        let names = ["Desligada", "Padrão", "Alta", "Muito alta"];
+        let (rect, response) = ui.allocate_exact_size(vec2(130.0, 40.0), Sense::click());
+        picker_box(
+            ui,
+            &palette,
+            rect,
+            &response,
+            None,
+            names[usize::from(noise.min(3))],
+        );
+        egui::Popup::menu(&response).width(130.0).show(|ui| {
+            ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+            for (level, name) in names.iter().enumerate() {
+                if super::call::menu_item(ui, &palette, name, palette.text).clicked() {
+                    app.actions.push(Action::SetNoiseSuppression(level as u8));
+                    ui.close();
+                }
+            }
+        });
+    });
+    divider(ui, &palette);
     switch_row(
         app,
         ui,
@@ -992,23 +1118,294 @@ fn voice(app: &mut App, ui: &mut Ui) {
         "Ajusta o volume da sua voz para os outros te ouvirem sempre por igual.",
         gain,
     );
-    switch_row(
-        app,
-        ui,
-        Flag::AutoSensitivity,
-        "Determinar a sensibilidade de entrada automaticamente",
-        "O microfone só transmite enquanto você fala.",
-        sensitivity,
+    switch_row(app, ui, Flag::Sounds, "Sons do app", SOUNDS_NOTE, sounds);
+}
+
+const SOUNDS_NOTE: &str =
+    "Entrar e sair de canais de voz, silenciar, ensurdecer e mensagens novas.";
+
+/// A page's section title, as Discord's "Voz".
+fn section(ui: &mut Ui, palette: &Palette, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .font(font(Weight::SemiBold, 24.0))
+            .color(palette.strong),
     );
-    ui.add_space(16.0);
-    switch_row(
-        app,
-        ui,
-        Flag::Sounds,
-        "Sons do app",
-        "Entrar e sair de canais de voz, silenciar, ensurdecer e mensagens novas.",
-        sounds,
+    ui.add_space(8.0);
+}
+
+/// The name over a control.
+fn label(ui: &mut Ui, palette: &Palette, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .font(font(Weight::Medium, 16.0))
+            .color(palette.strong),
     );
+    ui.add_space(6.0);
+}
+
+/// Discord's select box: an icon, the choice, the arrow.
+fn picker_box(
+    ui: &Ui,
+    palette: &Palette,
+    rect: Rect,
+    response: &egui::Response,
+    icon: Option<Icon>,
+    text: &str,
+) {
+    let edge = if response.hovered() {
+        palette.muted
+    } else {
+        palette.divider
+    };
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(8),
+        palette.rail,
+        Stroke::new(1.0, edge),
+        egui::StrokeKind::Inside,
+    );
+    let mut left = rect.left() + 12.0;
+    if let Some(icon) = icon {
+        paint_icon(
+            ui,
+            icon,
+            pos2(left + 9.0, rect.center().y),
+            18.0,
+            palette.text,
+        );
+        left += 28.0;
+    }
+    super::widgets::Elide::new(ui, rect.right() - 34.0).text(
+        pos2(left, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        font(Weight::Medium, 16.0),
+        palette.strong,
+    );
+    paint_icon(
+        ui,
+        Icon::ChevronDown,
+        pos2(rect.right() - 18.0, rect.center().y),
+        18.0,
+        palette.text,
+    );
+}
+
+/// A device select; Some(choice) when one is picked, None inside for the
+/// system's default.
+fn device_picker(
+    ui: &mut Ui,
+    palette: &Palette,
+    icon: Icon,
+    list: &[crate::devices::Device],
+    default: Option<&str>,
+    chosen: Option<&str>,
+) -> Option<Option<String>> {
+    let default_label = default
+        .and_then(|d| crate::devices::Devices::label(list, d))
+        .map_or_else(
+            || "Padrão do sistema".to_owned(),
+            |name| format!("Padrão do sistema: {name}"),
+        );
+    let shown = chosen
+        .and_then(|c| crate::devices::Devices::label(list, c))
+        .or_else(|| chosen.map(str::to_owned))
+        .unwrap_or_else(|| default_label.clone());
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(&shown);
+    picker_box(ui, palette, rect, &response, Some(icon), &shown);
+    let mut picked = None;
+    egui::Popup::menu(&response).width(rect.width()).show(|ui| {
+        ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+        if super::call::menu_item(ui, palette, &default_label, palette.text).clicked() {
+            picked = Some(None);
+            ui.close();
+        }
+        for device in list {
+            let color = if chosen == Some(device.name.as_str()) {
+                palette.strong
+            } else {
+                palette.text
+            };
+            if super::call::menu_item(ui, palette, &device.label, color).clicked() {
+                picked = Some(Some(device.name.clone()));
+                ui.close();
+            }
+        }
+        if list.is_empty() {
+            ui.label(
+                RichText::new("Nenhum outro dispositivo encontrado.")
+                    .font(font(Weight::Regular, 14.0))
+                    .color(palette.muted),
+            );
+        }
+    });
+    picked
+}
+
+/// Discord's slider, blue up to a white knob, for 0–200%; the new value
+/// while it is dragged.
+fn percent_slider(ui: &mut Ui, palette: &Palette, value: u16, width: f32) -> Option<u16> {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click_and_drag());
+    let track = Rect::from_min_max(
+        pos2(rect.left() + 2.0, rect.center().y - 2.0),
+        pos2(rect.right() - 10.0, rect.center().y + 2.0),
+    );
+    let mut t = f32::from(value.min(200)) / 200.0;
+    let mut changed = None;
+    if let Some(pos) = response.interact_pointer_pos()
+        && (response.dragged() || response.clicked())
+    {
+        t = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0);
+        let v = (t * 200.0).round() as u16;
+        if v != value {
+            changed = Some(v);
+        }
+    }
+    let knob = pos2(track.left() + t * track.width(), track.center().y);
+    ui.painter()
+        .rect_filled(track, CornerRadius::same(2), palette.divider);
+    ui.painter().rect_filled(
+        Rect::from_min_max(track.min, pos2(knob.x, track.max.y)),
+        CornerRadius::same(2),
+        palette.accent,
+    );
+    ui.painter().circle_filled(knob, 10.0, Color32::WHITE);
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if response.hovered() || response.dragged() {
+        response.on_hover_text_at_pointer(format!("{}%", (t * 200.0).round()));
+    }
+    changed
+}
+
+/// The microphone's level as Discord's row of bars.
+fn meter(ui: &Ui, palette: &Palette, rect: Rect, level: Option<f32>) {
+    let bars = ((rect.width() + 4.0) / 8.0).floor().max(1.0) as usize;
+    // -80 dB to 0 dB across the row.
+    let lit = level.map_or(0.0, |db| ((db + 80.0) / 80.0).clamp(0.0, 1.0));
+    for i in 0..bars {
+        let x = rect.left() + i as f32 * 8.0;
+        let bar = Rect::from_min_size(pos2(x, rect.top() + 6.0), vec2(4.0, rect.height() - 12.0));
+        let on = (i as f32 + 0.5) / bars as f32 <= lit;
+        let color = if on { palette.online } else { palette.divider };
+        ui.painter().rect_filled(bar, CornerRadius::same(2), color);
+    }
+}
+
+/// Discord's input sensitivity: yellow below the threshold, green above,
+/// the live level brighter; with automatic sensitivity only the level.
+/// The new threshold while it is dragged.
+fn sensitivity_bar(
+    ui: &mut Ui,
+    palette: &Palette,
+    auto: bool,
+    threshold: f32,
+    level: Option<f32>,
+) -> Option<f32> {
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(width, 28.0),
+        if auto {
+            Sense::hover()
+        } else {
+            Sense::click_and_drag()
+        },
+    );
+    let track = Rect::from_min_max(
+        pos2(rect.left() + 2.0, rect.center().y - 2.0),
+        pos2(rect.right() - 10.0, rect.center().y + 2.0),
+    );
+    let at = |db: f32| track.left() + ((db + 100.0) / 100.0).clamp(0.0, 1.0) * track.width();
+    let mut value = threshold;
+    let mut changed = None;
+    if !auto
+        && let Some(pos) = response.interact_pointer_pos()
+        && (response.dragged() || response.clicked())
+    {
+        value = (((pos.x - track.left()) / track.width()).clamp(0.0, 1.0) * 100.0 - 100.0).round();
+        if (value - threshold).abs() >= 1.0 {
+            changed = Some(value);
+        }
+    }
+    let yellow = Color32::from_rgb(0xf0, 0xb2, 0x32);
+    let dim = |c: Color32| crate::theme::mix(c, palette.chat, 0.55);
+    let split = if auto { track.left() } else { at(value) };
+    let live = level.map(at);
+    if auto {
+        ui.painter()
+            .rect_filled(track, CornerRadius::same(2), palette.divider);
+        if let Some(x) = live {
+            ui.painter().rect_filled(
+                Rect::from_min_max(track.min, pos2(x, track.max.y)),
+                CornerRadius::same(2),
+                palette.online,
+            );
+        }
+        return None;
+    }
+    let left = Rect::from_min_max(track.min, pos2(split, track.max.y));
+    let right = Rect::from_min_max(pos2(split, track.min.y), track.max);
+    ui.painter()
+        .rect_filled(left, CornerRadius::same(2), dim(yellow));
+    ui.painter()
+        .rect_filled(right, CornerRadius::same(2), dim(palette.online));
+    if let Some(x) = live {
+        let lit_left = Rect::from_min_max(track.min, pos2(x.min(split), track.max.y));
+        ui.painter()
+            .rect_filled(lit_left, CornerRadius::same(2), yellow);
+        if x > split {
+            ui.painter().rect_filled(
+                Rect::from_min_max(pos2(split, track.min.y), pos2(x, track.max.y)),
+                CornerRadius::same(2),
+                palette.online,
+            );
+        }
+    }
+    ui.painter()
+        .circle_filled(pos2(split, track.center().y), 10.0, Color32::WHITE);
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if response.hovered() || response.dragged() {
+        response.on_hover_text_at_pointer(format!("{value:.0} dB"));
+    }
+    changed
+}
+
+/// Discord's round choice with a note under it; true when clicked.
+fn radio(ui: &mut Ui, palette: &Palette, on: bool, name: &str, note: &str) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 56.0), Sense::click());
+    let dot = pos2(rect.left() + 12.0, rect.top() + 18.0);
+    if on {
+        ui.painter().circle_filled(dot, 11.0, palette.accent);
+        ui.painter().circle_filled(dot, 4.5, Color32::WHITE);
+    } else {
+        let edge = if response.hovered() {
+            palette.strong
+        } else {
+            palette.muted
+        };
+        ui.painter()
+            .circle_stroke(dot, 10.0, Stroke::new(2.0, edge));
+    }
+    ui.painter().text(
+        pos2(rect.left() + 36.0, dot.y),
+        Align2::LEFT_CENTER,
+        name,
+        font(Weight::Medium, 16.0),
+        palette.strong,
+    );
+    ui.painter().text(
+        pos2(rect.left() + 36.0, dot.y + 22.0),
+        Align2::LEFT_CENTER,
+        note,
+        font(Weight::Regular, 14.0),
+        palette.muted,
+    );
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
 }
 
 fn linux(app: &mut App, ui: &mut Ui) {

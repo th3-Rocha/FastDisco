@@ -187,6 +187,8 @@ pub enum Event {
         nonce: String,
         reason: String,
     },
+    /// The history was refused because the channel is age-restricted.
+    AgeGated(u64),
     GifHome(rest::GifHome),
     Speller(Result<std::sync::Arc<crate::spell::Speller>, String>),
     VoiceConnected,
@@ -400,6 +402,10 @@ impl Worker {
                                 list,
                                 older: before.is_some(),
                             });
+                        }
+                        // 50269: "Falta acesso a conteúdo restrito por idade".
+                        Err(error) if error.contains("50269") => {
+                            let _ = events.send(Event::AgeGated(channel));
                         }
                         Err(error) => log::warn!("history of {channel}: {error}"),
                     }

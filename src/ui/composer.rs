@@ -1697,6 +1697,29 @@ pub fn drop_zone(app: &mut App, ui: &mut Ui) {
 }
 
 /// Typing anywhere writes in the field, as in Discord.
+/// Ctrl+V of a picture or files, in the composer or with nothing else
+/// focused, before the composer takes the text; other fields keep their
+/// paste.
+pub fn paste_files(app: &mut App, ctx: &egui::Context) {
+    let requested = crate::paste::requested(ctx);
+    let Some(channel) = app.channel else { return };
+    let composer = composer_id(channel);
+    let free = ctx.memory(|m| m.focused().is_none_or(|f| f == composer));
+    if requested
+        && free
+        && app.chat.dialog.is_none()
+        && app.chat.viewer.is_none()
+        && app.chat.editing.is_none()
+        && let Some(files) = crate::paste::files()
+    {
+        // A picture copied from a browser or files from a file manager come
+        // with text too; the files are what was meant.
+        ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Paste(_))));
+        app.actions.push(Action::Chat(ChatAction::AddFiles(files)));
+        app.chat.focus_composer = true;
+    }
+}
+
 pub fn type_anywhere(app: &mut App, ctx: &egui::Context) {
     let Some(channel) = app.channel else { return };
     if app.chat.dialog.is_some()

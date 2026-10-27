@@ -313,7 +313,7 @@ fn menu_row(
     )
 }
 
-fn menu_item(
+pub fn menu_item(
     ui: &mut Ui,
     palette: &crate::theme::Palette,
     label: &str,

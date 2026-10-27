@@ -47,8 +47,10 @@ pub async fn messages(
         .send()
         .await
         .map_err(|e| e.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("{}", response.status()));
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("{status} {body}"));
     }
     response.json().await.map_err(|e| e.to_string())
 }

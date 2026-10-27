@@ -225,6 +225,9 @@ pub struct Channel {
     pub loading: bool,
     /// For direct messages and groups.
     pub recipients: Vec<Id>,
+    /// Discord refused the history: the channel is age-restricted and the
+    /// account has not confirmed its age.
+    pub age_gated: bool,
 }
 
 impl Channel {

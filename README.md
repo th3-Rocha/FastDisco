@@ -119,7 +119,7 @@ everything Discord's desktop app does.
 - [x] Video, audio and voice messages played in the app
 - [x] YouTube inline through yt-dlp
 - [x] Link previews and bot embeds with fields, images, thumbnails and footers
-- [x] Sending files by picker or drag and drop, with spoilers
+- [x] Sending files by picker, drag and drop or Ctrl+V of a picture or copied files, with spoilers
 - [x] GIF and sticker pickers
 - [x] Avatars and server icons
 - [x] Recording and sending voice messages, from the desktop too (Discord's own app only records on the phone)
@@ -132,6 +132,8 @@ everything Discord's desktop app does.
 - [ ] Stage channels
 - [x] Voice channels: joining, speaking and hearing, mute and deafen, who is talking, with Discord's DAVE end-to-end encryption
 - [x] Voice filter: noise suppression, echo cancellation, automatic gain and input sensitivity
+- [x] Voice settings: microphone and speaker choice, their volumes, microphone test, input profiles and manual sensitivity
+- [x] Age-restricted channels show Discord's notice when the account has not confirmed its age
 - [x] Right-click on someone in a voice channel: their volume and a local mute, and for moderators server mute, server deafen, disconnect and move
 - [ ] Video calls and screen sharing
 - [ ] Direct message calls

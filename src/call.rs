@@ -98,21 +98,23 @@ pub struct Filter {
     pub echo: AtomicBool,
     pub gain: AtomicBool,
     /// Sends nothing while the user is not talking, as Discord's
-    /// automatic input sensitivity.
+    /// automatic input sensitivity; otherwise only above `threshold`.
     pub gate: AtomicBool,
+    /// The manual sensitivity in dB, as f32 bits.
+    pub threshold: AtomicU32,
     /// Bumped on a change, for the filter to be built again.
     pub version: AtomicU32,
 }
 
 impl Filter {
     pub fn set(&self, settings: &crate::settings::Settings) {
-        self.noise
-            .store(settings.noise_suppression, Ordering::Relaxed);
-        self.echo
-            .store(settings.echo_cancellation, Ordering::Relaxed);
-        self.gain.store(settings.auto_gain, Ordering::Relaxed);
-        self.gate
-            .store(settings.auto_sensitivity, Ordering::Relaxed);
+        let filter = settings.voice_filter();
+        self.noise.store(filter.noise, Ordering::Relaxed);
+        self.echo.store(filter.echo, Ordering::Relaxed);
+        self.gain.store(filter.gain, Ordering::Relaxed);
+        self.gate.store(filter.auto, Ordering::Relaxed);
+        self.threshold
+            .store(filter.threshold.to_bits(), Ordering::Relaxed);
         self.version.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -134,6 +136,13 @@ pub struct Shared {
     pub speaking: Mutex<HashSet<Id>>,
     /// The gain for each person who is not at 100%: 0 for one silenced.
     pub volumes: Mutex<HashMap<Id, f32>>,
+    /// The microphone's and the speakers' volume, as f32 bits.
+    pub mic_gain: AtomicU32,
+    pub speaker_gain: AtomicU32,
+    /// The microphone's level in dB, as f32 bits, for the meters.
+    pub level: AtomicU32,
+    /// The microphone test: the microphone plays back on the speakers.
+    pub loopback: AtomicBool,
 }
 
 impl Default for Shared {
@@ -148,16 +157,35 @@ impl Default for Shared {
                 echo: AtomicBool::new(true),
                 gain: AtomicBool::new(true),
                 gate: AtomicBool::new(true),
+                threshold: AtomicU32::new((-60f32).to_bits()),
                 version: AtomicU32::new(0),
             },
             talking: AtomicBool::new(false),
             speaking: Mutex::new(HashSet::new()),
             volumes: Mutex::new(HashMap::new()),
+            mic_gain: AtomicU32::new(1f32.to_bits()),
+            speaker_gain: AtomicU32::new(1f32.to_bits()),
+            level: AtomicU32::new((-100f32).to_bits()),
+            loopback: AtomicBool::new(false),
         }
     }
 }
 
 impl Shared {
+    /// The microphone's and the speakers' volume from the settings.
+    pub fn set_gains(&self, settings: &crate::settings::Settings) {
+        let gain = |percent: u16| (f32::from(percent) / 100.0).to_bits();
+        self.mic_gain
+            .store(gain(settings.input_volume), Ordering::Relaxed);
+        self.speaker_gain
+            .store(gain(settings.output_volume), Ordering::Relaxed);
+    }
+
+    /// The microphone's level now, in dB.
+    pub fn level(&self) -> f32 {
+        f32::from_bits(self.level.load(Ordering::Relaxed))
+    }
+
     /// Takes each person's volume and local mute from the settings.
     pub fn set_volumes(&self, settings: &crate::settings::Settings) {
         let mut volumes: HashMap<Id, f32> = settings
@@ -247,10 +275,22 @@ impl VoiceDetector {
         }
     }
 
-    /// One 10 ms chunk; whether the user is talking.
-    fn feed(&mut self, chunk: &[f32]) -> bool {
+    /// One 10 ms chunk; whether the user is talking. With a threshold,
+    /// as Discord's manual sensitivity, louder than it is talking.
+    fn feed(&mut self, chunk: &[f32], threshold: Option<f32>) -> bool {
         let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt();
         let db = 20.0 * rms.max(1e-6).log10();
+        if let Some(threshold) = threshold {
+            if threshold <= -99.0 {
+                return true;
+            }
+            if db > threshold {
+                self.hold = Self::HOLD;
+            } else {
+                self.hold = self.hold.saturating_sub(1);
+            }
+            return self.hold > 0;
+        }
         // The floor follows quiet quickly, and a steady sound (a fan the
         // level control raised) within about half a second; speech rises
         // and falls too often to be taken for it.
@@ -320,7 +360,9 @@ impl MicSource {
             f.version = version;
             f.processor = processor(&shared.filter);
         }
-        let gate = shared.filter.gate.load(Ordering::Relaxed);
+        let auto = shared.filter.gate.load(Ordering::Relaxed);
+        let threshold =
+            (!auto).then(|| f32::from_bits(shared.filter.threshold.load(Ordering::Relaxed)));
         let mut talking = false;
         for chunk in mono.chunks_mut(CHUNK) {
             if let Some(p) = &mut f.processor {
@@ -335,8 +377,8 @@ impl MicSource {
                     chunk.copy_from_slice(&out);
                 }
             }
-            talking = f.voice.feed(chunk);
-            let target = if !gate || talking { 1.0 } else { 0.0 };
+            talking = f.voice.feed(chunk, threshold);
+            let target = if talking { 1.0 } else { 0.0 };
             for sample in chunk.iter_mut() {
                 f.open += (target - f.open) * 0.01;
                 *sample *= f.open;
@@ -424,6 +466,31 @@ impl Resampler {
     }
 }
 
+/// "Teste do microfone": the microphone played back on the speakers, and
+/// its level for the meter, until it is dropped.
+pub struct MicTest {
+    pub shared: Arc<Shared>,
+    _audio: Audio,
+}
+
+impl MicTest {
+    pub fn start(settings: &crate::settings::Settings) -> Result<Self, String> {
+        let shared = Arc::new(Shared::default());
+        shared.filter.set(settings);
+        shared.set_gains(settings);
+        shared.loopback.store(true, Ordering::Relaxed);
+        let audio = Audio::start(
+            Arc::clone(&shared),
+            settings.input_device.clone(),
+            settings.output_device.clone(),
+        )?;
+        Ok(Self {
+            shared,
+            _audio: audio,
+        })
+    }
+}
+
 /// The call's two streams; dropping it closes them.
 pub struct Audio {
     _mic: Option<cpal::Stream>,
@@ -433,7 +500,11 @@ pub struct Audio {
 impl Audio {
     /// Opens the default microphone and speakers. A missing microphone
     /// still lets the user listen.
-    pub fn start(shared: Arc<Shared>) -> Result<Self, String> {
+    pub fn start(
+        shared: Arc<Shared>,
+        input: Option<String>,
+        output: Option<String>,
+    ) -> Result<Self, String> {
         let host = cpal::default_host();
         let mic = match host.default_input_device() {
             Some(device) => match open_mic(&device, &shared) {
@@ -449,6 +520,7 @@ impl Audio {
             .default_output_device()
             .ok_or("Nenhuma saída de áudio encontrada.")?;
         let speakers = open_speakers(&device, &shared)?;
+        crate::devices::route(input, output);
         Ok(Self {
             _mic: mic,
             _speakers: speakers,
@@ -496,12 +568,22 @@ where
             out.clear();
             resampler.feed(&converted, &mut out);
             // The filter works on one channel.
+            let gain = f32::from_bits(shared.mic_gain.load(Ordering::Relaxed));
             let mono: Vec<f32> = out
                 .as_chunks::<2>()
                 .0
                 .iter()
-                .map(|[l, r]| (l + r) * 0.5)
+                .map(|[l, r]| (l + r) * 0.5 * gain)
                 .collect();
+            if !mono.is_empty() {
+                let rms = (mono.iter().map(|s| s * s).sum::<f32>() / mono.len() as f32).sqrt();
+                let db = (20.0 * rms.max(1e-5).log10()).max(-100.0);
+                shared.level.store(db.to_bits(), Ordering::Relaxed);
+            }
+            if shared.loopback.load(Ordering::Relaxed) {
+                let stereo: Vec<f32> = mono.iter().flat_map(|s| [*s, *s]).collect();
+                shared.speakers.push(&stereo);
+            }
             shared.mic.push(&mono);
         },
         |error| log::warn!("call microphone: {error}"),
@@ -554,6 +636,7 @@ fn open_speakers(device: &cpal::Device, shared: &Arc<Shared>) -> Result<cpal::St
                     pending.extend(pulled.as_chunks::<2>().0.iter().copied());
                 }
                 let deaf = shared.deaf.load(Ordering::Relaxed);
+                let gain = f32::from_bits(shared.speaker_gain.load(Ordering::Relaxed));
                 for (i, frame) in data.chunks_mut(channels.max(1)).enumerate() {
                     let at = position + i as f64 * step;
                     let k = at as usize;
@@ -563,7 +646,10 @@ fn open_speakers(device: &cpal::Device, shared: &Arc<Shared>) -> Result<cpal::St
                     let (l, r) = if deaf {
                         (0.0, 0.0)
                     } else {
-                        (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+                        (
+                            (a[0] + (b[0] - a[0]) * t) * gain,
+                            (a[1] + (b[1] - a[1]) * t) * gain,
+                        )
                     };
                     for (c, sample) in frame.iter_mut().enumerate() {
                         *sample = if c % 2 == 0 { l } else { r };
@@ -683,21 +769,21 @@ mod tests {
         let quiet = vec![0.0005f32; CHUNK];
         let voice: Vec<f32> = (0..CHUNK).map(|i| (i as f32 * 0.3).sin() * 0.2).collect();
         for _ in 0..50 {
-            assert!(!v.feed(&quiet));
+            assert!(!v.feed(&quiet, None));
         }
         // One loud chunk alone is a click.
-        assert!(!v.feed(&voice));
-        assert!(!v.feed(&quiet));
-        assert!(!v.feed(&voice));
-        assert!(v.feed(&voice));
+        assert!(!v.feed(&voice, None));
+        assert!(!v.feed(&quiet, None));
+        assert!(!v.feed(&voice, None));
+        assert!(v.feed(&voice, None));
         // A pause between words keeps it on, a long silence turns it off.
         for _ in 0..20 {
-            assert!(v.feed(&quiet));
+            assert!(v.feed(&quiet, None));
         }
         for _ in 0..20 {
-            v.feed(&quiet);
+            v.feed(&quiet, None);
         }
-        assert!(!v.feed(&quiet));
+        assert!(!v.feed(&quiet, None));
     }
 }
 
@@ -717,7 +803,14 @@ impl crate::app::App {
         shared.deaf.store(self.settings.deafened, Ordering::Relaxed);
         shared.filter.set(&self.settings);
         shared.set_volumes(&self.settings);
-        let audio = match Audio::start(Arc::clone(&shared)) {
+        shared.set_gains(&self.settings);
+        // The microphone test gives its devices to the call.
+        self.mic_test = None;
+        let audio = match Audio::start(
+            Arc::clone(&shared),
+            self.settings.input_device.clone(),
+            self.settings.output_device.clone(),
+        ) {
             Ok(audio) => Some(audio),
             Err(error) => {
                 self.chat.dialog = Some(crate::chat::Dialog::Failed(error));

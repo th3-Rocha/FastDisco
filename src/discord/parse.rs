@@ -174,6 +174,7 @@ pub fn channel(value: &Value, guild: Option<Id>) -> Option<Channel> {
         more: true,
         loading: false,
         recipients,
+        age_gated: false,
     })
 }
 

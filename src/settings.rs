@@ -54,6 +54,19 @@ pub struct Settings {
     pub auto_sensitivity: bool,
     /// The app's little sounds: calls, muting, messages.
     pub sounds: bool,
+    /// The microphone and speakers by their system name; None follows the
+    /// system's default, as Discord's "Padrão do sistema".
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
+    /// The microphone's and the speakers' volume, in percent.
+    pub input_volume: u16,
+    pub output_volume: u16,
+    /// Discord's "Perfil de entrada": 0 voice isolation, 1 studio, 2 the
+    /// user's own choices.
+    pub input_profile: u8,
+    /// Without automatic sensitivity, the level in dB above which the
+    /// microphone sends.
+    pub sensitivity: f32,
     /// Each person's volume in calls, in percent (100 is unchanged), as
     /// Discord's "Volume do usuário".
     pub user_volumes: BTreeMap<crate::model::Id, u16>,
@@ -83,8 +96,55 @@ impl Default for Settings {
             auto_gain: true,
             auto_sensitivity: true,
             sounds: true,
+            input_device: None,
+            output_device: None,
+            input_volume: 100,
+            output_volume: 100,
+            input_profile: 2,
+            sensitivity: -60.0,
             user_volumes: BTreeMap::new(),
             local_mutes: BTreeSet::new(),
+        }
+    }
+}
+
+/// The voice filter the input profile makes of the settings.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoiceFilter {
+    pub noise: u8,
+    pub echo: bool,
+    pub gain: bool,
+    /// Automatic input sensitivity; otherwise `threshold`.
+    pub auto: bool,
+    pub threshold: f32,
+}
+
+impl Settings {
+    pub fn voice_filter(&self) -> VoiceFilter {
+        match self.input_profile {
+            // Voice isolation: everything that cleans the voice.
+            0 => VoiceFilter {
+                noise: 2,
+                echo: true,
+                gain: true,
+                auto: true,
+                threshold: self.sensitivity,
+            },
+            // Studio: the microphone as it is, always open.
+            1 => VoiceFilter {
+                noise: 0,
+                echo: false,
+                gain: false,
+                auto: false,
+                threshold: -100.0,
+            },
+            _ => VoiceFilter {
+                noise: self.noise_suppression,
+                echo: self.echo_cancellation,
+                gain: self.auto_gain,
+                auto: self.auto_sensitivity,
+                threshold: self.sensitivity,
+            },
         }
     }
 }

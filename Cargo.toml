@@ -1,6 +1,6 @@
 [package]
 name = "fastdisco"
-version = "0.8.1"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -18,6 +18,7 @@ egui = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["image", "svg", "gif", "webp"] }
 # Avatars, icons, attachments and stickers. GIF and WebP animate through
 # egui_extras' loaders.
+arboard = { version = "3", default-features = false, features = ["image-data", "wayland-data-control"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 # The shared foundation of Spotifast and ZapFast (crmne/fastframe). Every
 # crate comes from the same tag; move them together.
