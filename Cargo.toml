@@ -1,6 +1,6 @@
 [package]
 name = "discofast"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -19,6 +19,9 @@ egui_extras = { version = "0.36.2", features = ["image", "svg", "gif", "webp"] }
 # Avatars, icons, attachments and stickers. GIF and WebP animate through
 # egui_extras' loaders.
 arboard = { version = "3", default-features = false, features = ["image-data", "wayland-data-control"] }
+# The app icon, drawn from assets/icon.svg. The version egui_extras
+# already brings in for SVG.
+resvg = { version = "0.45.1", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 # The shared foundation of Spotifast and ZapFast (crmne/fastframe). Every
 # crate comes from the same tag; move them together.

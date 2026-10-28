@@ -1516,7 +1516,7 @@ dependencies = [
 
 [[package]]
 name = "discofast"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
@@ -1553,6 +1553,7 @@ dependencies = [
  "qrcode",
  "rand 0.8.8",
  "reqwest",
+ "resvg",
  "rfd",
  "rodio",
  "rsa",

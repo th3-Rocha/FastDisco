@@ -55,46 +55,46 @@ fn icon_unread(size: usize) -> Vec<u8> {
     draw(size, true)
 }
 
+/// The pig snout of assets/icon.svg, `size` pixels square, straight RGBA;
+/// `unread` adds the red dot of waiting messages.
 fn draw(size: usize, unread: bool) -> Vec<u8> {
-    let s = size as f32;
-    let mut pixels = vec![0u8; size * size * 4];
-    let blurple = [0x58, 0x65, 0xf2];
-    let inside_rounded = |x: f32, y: f32, x0: f32, y0: f32, x1: f32, y1: f32, r: f32| -> f32 {
-        // Signed distance to a rounded rectangle, negative inside.
-        let cx = x.clamp(x0 + r, x1 - r);
-        let cy = y.clamp(y0 + r, y1 - r);
-        ((x - cx).powi(2) + (y - cy).powi(2)).sqrt() - r
-    };
-    for py in 0..size {
-        for px in 0..size {
-            let (x, y) = (px as f32 + 0.5, py as f32 + 0.5);
-            let mut color = [0u8; 4];
-            let body = inside_rounded(x, y, 0.0, 0.0, s, s, s * 0.28);
-            if body < 0.5 {
-                let alpha = (0.5 - body).clamp(0.0, 1.0);
-                color = [blurple[0], blurple[1], blurple[2], (alpha * 255.0) as u8];
-                // Two white bubbles, the back one offset.
-                let back = inside_rounded(x, y, s * 0.36, s * 0.22, s * 0.80, s * 0.56, s * 0.08);
-                let front = inside_rounded(x, y, s * 0.20, s * 0.38, s * 0.64, s * 0.74, s * 0.08);
-                let tail = x > s * 0.24
-                    && x < s * 0.36
-                    && y > s * 0.70
-                    && y < s * 0.84
-                    && (y - s * 0.70) < (s * 0.36 - x);
-                if front < 0.5 || tail || (back < 0.5 && front > 2.5) {
-                    color = [0xff, 0xff, 0xff, color[3]];
-                }
-            }
-            if unread {
-                let d = ((x - s * 0.80).powi(2) + (y - s * 0.80).powi(2)).sqrt();
-                if d < s * 0.22 {
-                    color = [0xf2, 0x3f, 0x43, 0xff];
-                }
-            }
-            pixels[(py * size + px) * 4..][..4].copy_from_slice(&color);
+    use resvg::{tiny_skia, usvg};
+    let side = size.max(1) as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(side, side).expect("a non-empty icon");
+    let tree = usvg::Tree::from_data(
+        include_bytes!("../assets/icon.svg"),
+        &usvg::Options::default(),
+    )
+    .expect("assets/icon.svg parses");
+    let scale = side as f32 / tree.size().width();
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    if unread {
+        let s = side as f32;
+        let mut red = tiny_skia::Paint::default();
+        red.set_color_rgba8(0xf2, 0x3f, 0x43, 0xff);
+        red.anti_alias = true;
+        if let Some(dot) = tiny_skia::PathBuilder::from_circle(s * 0.80, s * 0.80, s * 0.20) {
+            pixmap.fill_path(
+                &dot,
+                &red,
+                tiny_skia::FillRule::Winding,
+                tiny_skia::Transform::identity(),
+                None,
+            );
         }
     }
-    pixels
+    pixmap
+        .pixels()
+        .iter()
+        .flat_map(|pixel| {
+            let c = pixel.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect()
 }
 
 impl App {
