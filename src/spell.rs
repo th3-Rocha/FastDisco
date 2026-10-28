@@ -255,8 +255,8 @@ mod tests {
         }
         assert!(!speller.check("jogaar"));
         assert!(speller.suggest("jogaar").contains(&"jogar".to_owned()));
-        let own = HashSet::from(["fastdisco".to_owned()]);
-        let text = "oi Fastdisco, tudo bem com voce?";
+        let own = HashSet::from(["discofast".to_owned()]);
+        let text = "oi Discofast, tudo bem com voce?";
         let wrong: Vec<&str> = speller
             .misspelled(text, &own)
             .into_iter()

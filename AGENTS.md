@@ -1,6 +1,6 @@
-# FastDisco agent guide
+# Discofast agent guide
 
-- Keep FastDisco a small native Discord client: no browser engine, no
+- Keep Discofast a small native Discord client: no browser engine, no
   telemetry, no hosted backend.
 - The interface mirrors Discord's desktop layout. Keep controls where
   Discord puts them; a change to placement is a redesign.

@@ -1,5 +1,5 @@
 //! Updating itself from GitHub releases, through fastframe-update: a
-//! check when FastDisco opens and once a day, the download in the
+//! check when Discofast opens and once a day, the download in the
 //! background, and, when the user chooses, a helper that swaps the
 //! executable and restarts it, going back to this one if the new one does
 //! not start. Releases carry a `checksums.txt` signed with the key in
@@ -13,14 +13,20 @@ use fastframe_update::{Prepared, ReqwestTransport, UpdateConfig, Updater};
 
 use crate::backend::Event;
 
+/// The command name before the rename to Discofast.
+pub const LEGACY_SLUG: &str = "fastdisco";
+
 pub const CONFIG: UpdateConfig = UpdateConfig {
     publisher_key: Some(include_str!("../assets/update-public-key.hex")),
     // The AppImage replaces itself in place.
     appimage: true,
+    // The app was FastDisco up to 0.9: its markers, executables and
+    // `--version` answer still count as this app's.
+    legacy_names: &[LEGACY_SLUG],
     ..UpdateConfig::new(
         "th3-Rocha/FastDisco",
-        "FastDisco",
-        "fastdisco",
+        "Discofast",
+        "discofast",
         env!("CARGO_PKG_VERSION"),
     )
 };
@@ -105,7 +111,7 @@ pub fn check(events: Sender<Event>, wake: impl Fn() + Send + 'static, pending: A
     });
 }
 
-/// Hands the downloaded update to the helper, which waits for FastDisco
+/// Hands the downloaded update to the helper, which waits for Discofast
 /// to close. True when the app should now quit.
 pub fn install(pending: &Pending) -> Result<(), String> {
     let Some((updater, prepared)) = pending.0.lock().unwrap_or_else(|e| e.into_inner()).take()
@@ -124,7 +130,7 @@ mod tests {
     #[test]
     fn the_update_config_is_valid() {
         CONFIG.validate().unwrap();
-        assert_eq!(CONFIG.slug, "fastdisco");
+        assert_eq!(CONFIG.slug, "discofast");
         assert_eq!(CONFIG.current_version, env!("CARGO_PKG_VERSION"));
     }
 }

@@ -1515,6 +1515,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "discofast"
+version = "0.10.0"
+dependencies = [
+ "anyhow",
+ "apple-native-keyring-store",
+ "arboard",
+ "async-trait",
+ "base64 0.22.1",
+ "cpal",
+ "eframe",
+ "egui",
+ "egui_extras",
+ "emojis",
+ "env_logger",
+ "fastframe-autostart",
+ "fastframe-dirs",
+ "fastframe-emoji",
+ "fastframe-file",
+ "fastframe-fonts",
+ "fastframe-icons",
+ "fastframe-instance",
+ "fastframe-notifications",
+ "fastframe-shell",
+ "fastframe-text",
+ "fastframe-theme",
+ "fastframe-tray",
+ "fastframe-update",
+ "futures-util",
+ "image",
+ "jiff",
+ "keyring-core",
+ "log",
+ "ogg",
+ "open",
+ "opus2",
+ "qrcode",
+ "rand 0.8.8",
+ "reqwest",
+ "rfd",
+ "rodio",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "songbird",
+ "sonora",
+ "spellbook",
+ "symphonia-core",
+ "sysinfo",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "windows-native-keyring-store",
+ "zbus-secret-service-keyring-store",
+]
+
+[[package]]
 name = "discortp"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1970,62 +2026,6 @@ name = "extended"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af9673d8203fcb076b19dfd17e38b3d4ae9f44959416ea532ce72415a6020365"
-
-[[package]]
-name = "fastdisco"
-version = "0.9.0"
-dependencies = [
- "anyhow",
- "apple-native-keyring-store",
- "arboard",
- "async-trait",
- "base64 0.22.1",
- "cpal",
- "eframe",
- "egui",
- "egui_extras",
- "emojis",
- "env_logger",
- "fastframe-autostart",
- "fastframe-dirs",
- "fastframe-emoji",
- "fastframe-file",
- "fastframe-fonts",
- "fastframe-icons",
- "fastframe-instance",
- "fastframe-notifications",
- "fastframe-shell",
- "fastframe-text",
- "fastframe-theme",
- "fastframe-tray",
- "fastframe-update",
- "futures-util",
- "image",
- "jiff",
- "keyring-core",
- "log",
- "ogg",
- "open",
- "opus2",
- "qrcode",
- "rand 0.8.8",
- "reqwest",
- "rfd",
- "rodio",
- "rsa",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "songbird",
- "sonora",
- "spellbook",
- "symphonia-core",
- "sysinfo",
- "tokio",
- "tokio-tungstenite 0.26.2",
- "windows-native-keyring-store",
- "zbus-secret-service-keyring-store",
-]
 
 [[package]]
 name = "fastframe-autostart"

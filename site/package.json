@@ -1,5 +1,5 @@
 {
-  "name": "fastdisco-site",
+  "name": "discofast-site",
   "private": true,
   "scripts": {
     "dev": "next dev",

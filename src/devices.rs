@@ -1,8 +1,8 @@
 //! The microphones and speakers to choose from, by the names the system
-//! shows, and putting FastDisco's sound on the chosen ones.
+//! shows, and putting Discofast's sound on the chosen ones.
 //!
 //! On Linux the sound server (PipeWire or PulseAudio) knows the devices
-//! by name, "UGREEN HiTune Max5c" rather than ALSA's "pipewire"; FastDisco
+//! by name, "UGREEN HiTune Max5c" rather than ALSA's "pipewire"; Discofast
 //! opens the default device and asks `pactl` to move its own streams,
 //! as pavucontrol does. Elsewhere the default device is used.
 
@@ -79,7 +79,7 @@ pub fn list() -> Devices {
     }
 }
 
-/// Moves FastDisco's playing and recording streams to the chosen devices,
+/// Moves Discofast's playing and recording streams to the chosen devices,
 /// or back to the defaults; in the background, after the streams appear.
 pub fn route(input: Option<String>, output: Option<String>) {
     #[cfg(target_os = "linux")]
@@ -88,11 +88,11 @@ pub fn route(input: Option<String>, output: Option<String>) {
         std::thread::sleep(std::time::Duration::from_millis(300));
         let pid = std::process::id().to_string();
         // PipeWire's ALSA streams carry no process id, only the program's
-        // name: alsa_playback.fastdisco, alsa_capture.fastdisco.
+        // name: alsa_playback.discofast, alsa_capture.discofast.
         let program = std::env::current_exe()
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "fastdisco".into());
+            .unwrap_or_else(|| "discofast".into());
         let ours = |kind: &str| -> Vec<String> {
             list_of(kind)
                 .iter()

@@ -1,4 +1,4 @@
-//! FastDisco outliving its window: the tray item, closing to the tray,
+//! Discofast outliving its window: the tray item, closing to the tray,
 //! and the headless ticks that keep the gateway, notifications and the
 //! unread count going while no window exists.
 
@@ -14,17 +14,17 @@ pub fn tray(waker: &fastframe_shell::Waker) -> Option<Tray> {
     let waker = waker.clone();
     Tray::spawn(
         Config {
-            id: "fastdisco",
-            title: "FastDisco".into(),
+            id: "discofast",
+            title: "Discofast".into(),
             icon: icon,
             template_icon: None,
             themed_icon: false,
             menu: vec![
-                MenuItem::action("show", "Abrir o FastDisco"),
+                MenuItem::action("show", "Abrir o Discofast"),
                 MenuItem::Separator,
                 MenuItem::action("notifications", "Silenciar notificações"),
                 MenuItem::Separator,
-                MenuItem::action("quit", "Sair do FastDisco"),
+                MenuItem::action("quit", "Sair do Discofast"),
             ],
         },
         move || waker.wake(),
@@ -37,12 +37,12 @@ pub fn show_unread(tray: Option<&mut Tray>, count: u32) {
     if count > 0 {
         tray.set_icon(icon_unread, None);
         tray.set_tooltip(format!(
-            "FastDisco\n{count} {}",
+            "Discofast\n{count} {}",
             if count == 1 { "menção" } else { "menções" }
         ));
     } else {
         tray.set_icon(icon, None);
-        tray.set_tooltip("FastDisco");
+        tray.set_tooltip("Discofast");
     }
 }
 
@@ -152,7 +152,7 @@ impl App {
         }
     }
 
-    /// Whether closing the window can leave FastDisco in the tray.
+    /// Whether closing the window can leave Discofast in the tray.
     fn can_hide(&self) -> bool {
         self.settings.close_to_tray && self.tray.as_ref().is_some_and(Tray::is_shown)
     }

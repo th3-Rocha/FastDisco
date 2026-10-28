@@ -1,4 +1,4 @@
-//! FastDisco: Discord, native and fast.
+//! Discofast: Discord, native and fast.
 
 mod admin;
 mod animation;
@@ -14,6 +14,7 @@ mod interact;
 mod login;
 mod markdown;
 mod media;
+mod migrate;
 mod model;
 mod nav;
 mod notify;
@@ -99,8 +100,8 @@ fn options() -> eframe::NativeOptions {
     };
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("FastDisco")
-            .with_app_id("fastdisco")
+            .with_title("Discofast")
+            .with_app_id("discofast")
             .with_icon(icon)
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([940.0, 500.0]),
@@ -108,7 +109,26 @@ fn options() -> eframe::NativeOptions {
     }
 }
 
-const SLOT: &str = "io.github.th3_rocha.FastDisco";
+const SLOT: &str = "io.github.th3_rocha.Discofast";
+
+/// The name `--version` answers with. A FastDisco 0.9 updater downloads
+/// this app under its old name and expects `fastdisco <version>`; that
+/// copy (a `fastdisco` executable, or a `fastdisco-*.AppImage`) answers
+/// with the old name, every other copy with the new one.
+fn version_name() -> &'static str {
+    let legacy = |path: std::path::PathBuf| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().starts_with(updates::LEGACY_SLUG))
+    };
+    let appimage = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from);
+    let running = appimage.or_else(|| std::env::current_exe().ok());
+    if running.is_some_and(legacy) {
+        updates::LEGACY_SLUG
+    } else {
+        updates::CONFIG.slug
+    }
+}
 
 fn main() -> anyhow::Result<()> {
     // First of all: the update helper runs here when asked
@@ -117,19 +137,19 @@ fn main() -> anyhow::Result<()> {
     let launch = fastframe_update::intercept(&updates::CONFIG);
     // The updater asks a downloaded copy for its version before trusting it.
     if launch.arguments.get(1).and_then(|a| a.to_str()) == Some("--version") {
-        println!("fastdisco {}", env!("CARGO_PKG_VERSION"));
+        println!("{} {}", version_name(), env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("fastdisco=info"))
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("discofast=info"))
         .init();
     let slot = fastframe_instance::Slot::new(SLOT);
-    // `fastdisco reload-themes`, from Omarchy's theme hook: tell the
+    // `discofast reload-themes`, from Omarchy's theme hook: tell the
     // running copy and leave.
     if std::env::args().nth(1).as_deref() == Some("reload-themes") {
         let _ = slot.send("reload-themes");
         return Ok(());
     }
-    // `fastdisco write-icon <file.png> [size]`: the app icon, for packaging.
+    // `discofast write-icon <file.png> [size]`: the app icon, for packaging.
     if std::env::args().nth(1).as_deref() == Some("write-icon") {
         let path = std::env::args()
             .nth(2)
@@ -160,6 +180,7 @@ fn main() -> anyhow::Result<()> {
         // Another copy runs and has been asked to show its window.
         _ => return Ok(()),
     };
+    migrate::run();
     let mut app = App::new(&waker);
     app.requests = requests;
     app.update_receipt = launch.receipt;
@@ -171,7 +192,7 @@ fn main() -> anyhow::Result<()> {
         .idle(fastframe_tray::idle)
         .run(|lease| {
             eframe::run_native(
-                "FastDisco",
+                "Discofast",
                 options(),
                 Box::new(move |cc| {
                     setup(&cc.egui_ctx);

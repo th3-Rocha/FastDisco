@@ -687,7 +687,7 @@ mod tests {
     #[test]
     #[ignore]
     fn plays_a_clip_to_the_end() {
-        let dir = std::env::temp_dir().join(format!("fastdisco-media-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("discofast-media-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let clip = dir.join("clip.mp4");
         let status = Command::new("ffmpeg")

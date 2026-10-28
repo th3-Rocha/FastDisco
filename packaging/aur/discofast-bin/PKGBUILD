@@ -1,8 +1,8 @@
 # Maintainer: th3-Rocha <https://github.com/th3-Rocha>
 #
 # The release workflow fills in pkgver and sha256sums and pushes this to
-# the AUR as fastdisco-bin.
-pkgname=fastdisco-bin
+# the AUR as discofast-bin.
+pkgname=discofast-bin
 pkgver=0.0.0
 pkgrel=1
 pkgdesc="Discord, native and fast: a lightweight Discord client"
@@ -15,17 +15,17 @@ optdepends=(
     'yt-dlp: playing YouTube links in the app'
     'gnome-keyring: keeping the login in the keyring (or another Secret Service)'
 )
-provides=('fastdisco')
-conflicts=('fastdisco')
-source=("$url/releases/download/v$pkgver/fastdisco-v$pkgver-x86_64-unknown-linux-gnu.tar.gz")
+provides=('discofast' 'fastdisco')
+conflicts=('discofast')
+source=("$url/releases/download/v$pkgver/discofast-v$pkgver-x86_64-unknown-linux-gnu.tar.gz")
 sha256sums=('SKIP')
 
 package() {
-    cd "fastdisco-v$pkgver-x86_64-unknown-linux-gnu"
-    install -Dm755 fastdisco "$pkgdir/usr/bin/fastdisco"
-    install -Dm644 fastdisco.desktop "$pkgdir/usr/share/applications/fastdisco.desktop"
+    cd "discofast-v$pkgver-x86_64-unknown-linux-gnu"
+    install -Dm755 discofast "$pkgdir/usr/bin/discofast"
+    install -Dm644 discofast.desktop "$pkgdir/usr/share/applications/discofast.desktop"
     for size in 32 64 128 256 512; do
-        install -Dm644 "icons/$size.png" "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/fastdisco.png"
+        install -Dm644 "icons/$size.png" "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/discofast.png"
     done
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

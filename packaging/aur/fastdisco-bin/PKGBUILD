@@ -1,0 +1,17 @@
+# Maintainer: th3-Rocha <https://github.com/th3-Rocha>
+#
+# FastDisco is now Discofast. This empty package pulls in discofast-bin, so
+# `yay -Syu` moves FastDisco users over. The release workflow fills in
+# pkgver and pushes this to the AUR as fastdisco-bin.
+pkgname=fastdisco-bin
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="Transitional package: FastDisco is now Discofast (discofast-bin)"
+arch=('any')
+url="https://github.com/th3-Rocha/FastDisco"
+license=('MIT')
+depends=('discofast-bin')
+
+package() {
+    :
+}

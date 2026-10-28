@@ -220,7 +220,7 @@ fn opus_head(pre_skip: u16) -> Vec<u8> {
 }
 
 fn opus_tags() -> Vec<u8> {
-    let vendor = b"FastDisco";
+    let vendor = b"Discofast";
     let mut tags = Vec::with_capacity(20 + vendor.len());
     tags.extend_from_slice(b"OpusTags");
     tags.extend_from_slice(&(vendor.len() as u32).to_le_bytes());

@@ -72,7 +72,10 @@ export async function allReleases(): Promise<Release[]> {
 
 export function downloadsOf(release: Release): Download[] {
   return PLATFORMS.flatMap(({ match, ...platform }) => {
-    const asset = release.assets.find((a) => match.test(a.name));
+    // Releases since the rename also carry copies under FastDisco's old
+    // name, for installs that update from 0.9; link the Discofast ones.
+    const matching = release.assets.filter((a) => match.test(a.name));
+    const asset = matching.find((a) => a.name.startsWith("discofast")) ?? matching[0];
     return asset ? [{ ...platform, url: asset.url, size: asset.size, file: asset.name }] : [];
   });
 }

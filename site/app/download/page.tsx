@@ -5,7 +5,7 @@ import { RELEASES_URL, allReleases, downloadsOf, formatDate, formatSize } from "
 
 export const revalidate = 600;
 
-export const metadata: Metadata = { title: "Download FastDisco" };
+export const metadata: Metadata = { title: "Download Discofast" };
 
 export default async function DownloadPage() {
   const releases = await allReleases();

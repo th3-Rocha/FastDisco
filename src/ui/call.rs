@@ -524,7 +524,7 @@ pub fn section(app: &mut App, ui: &mut Ui, rect: Rect) {
         app.actions.push(Action::LeaveVoice);
     }
     // Camera, screen, activities and soundboard, as Discord's row; not in
-    // FastDisco yet, so drawn dim.
+    // Discofast yet, so drawn dim.
     let row = Rect::from_min_max(
         pos2(rect.left() + 10.0, badge.bottom() + 8.0),
         pos2(rect.right() - 10.0, badge.bottom() + 40.0),
@@ -555,7 +555,7 @@ pub fn section(app: &mut App, ui: &mut Ui, rect: Rect) {
             20.0,
             palette.icon.gamma_multiply(0.5),
         );
-        response.on_hover_text(format!("{hint} (ainda não disponível no FastDisco)"));
+        response.on_hover_text(format!("{hint} (ainda não disponível no Discofast)"));
     }
 }
 

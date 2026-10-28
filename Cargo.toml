@@ -1,6 +1,6 @@
 [package]
-name = "fastdisco"
-version = "0.9.0"
+name = "discofast"
+version = "0.10.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -32,7 +32,7 @@ fastframe-emoji = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" 
 fastframe-theme = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 # Settings written whole, never half, off the interface thread.
 fastframe-file = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
-# Keeps FastDisco running without a window, in the tray, and recreates
+# Keeps Discofast running without a window, in the tray, and recreates
 # the window on demand (Wayland cannot hide one).
 fastframe-shell = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
 fastframe-tray = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" }
@@ -78,7 +78,7 @@ cpal = "0.16"
 opus2 = { version = "0.4", features = ["bundled"] }
 ogg = "0.9"
 # Voice channels: Discord's voice gateway, UDP, encryption, the DAVE
-# end-to-end protocol, Opus and mixing. Only its driver, which FastDisco
+# end-to-end protocol, Opus and mixing. Only its driver, which Discofast
 # feeds from its own gateway. ("gateway" only because its driver needs
 # dashmap from it.)
 songbird = { version = "0.6.1", default-features = false, features = ["driver", "gateway", "rustls", "tungstenite", "receive"] }

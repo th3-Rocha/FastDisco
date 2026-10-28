@@ -212,7 +212,7 @@ async fn connect(
     }
 }
 
-/// Says who we are. FastDisco names itself; it does not pose as the
+/// Says who we are. Discofast names itself; it does not pose as the
 /// official client.
 fn identify(token: &str) -> Value {
     json!({
@@ -222,8 +222,8 @@ fn identify(token: &str) -> Value {
             "capabilities": 0,
             "properties": {
                 "os": std::env::consts::OS,
-                "browser": "FastDisco",
-                "device": "FastDisco",
+                "browser": "Discofast",
+                "device": "Discofast",
                 "system_locale": "pt-BR",
             },
             "presence": { "status": "online", "since": 0, "activities": [], "afk": false },

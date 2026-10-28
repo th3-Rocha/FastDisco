@@ -102,7 +102,7 @@ pub fn files() -> Option<Vec<PathBuf>> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     let folder = std::env::temp_dir()
-        .join("fastdisco-paste")
+        .join("discofast-paste")
         .join(nanos.to_string());
     std::fs::create_dir_all(&folder).ok()?;
     let path = folder.join("image.png");

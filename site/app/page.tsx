@@ -7,11 +7,11 @@ import { REPO_URL, RELEASES_URL, downloadsOf, latestRelease } from "@/lib/releas
 export const revalidate = 600;
 
 // Resident memory with a few servers open, in MB.
-const FASTDISCO_RAM = 170;
+const DISCOFAST_RAM = 170;
 const DISCORD_RAM = 600;
 
 const FEATURES = [
-  { icon: "⚡", title: "Lightweight", text: `Opens in a blink and sits around ${FASTDISCO_RAM} MB of RAM. No browser engine inside.` },
+  { icon: "⚡", title: "Lightweight", text: `Opens in a blink and sits around ${DISCOFAST_RAM} MB of RAM. No browser engine inside.` },
   { icon: "🦀", title: "Native, in Rust", text: "Built with egui and fastframe, the framework behind Spotifast and ZapFast. No Electron." },
   { icon: "🧭", title: "The layout you know", text: "Server rail, channels, chat, member list and user panel, each button where Discord puts it." },
   { icon: "🔊", title: "Voice channels", text: "Talk and listen with noise suppression, echo cancellation and Discord's DAVE end-to-end encryption." },
@@ -42,7 +42,7 @@ export default async function Home() {
             </h1>
             <p className="lead">
               A lightweight Discord app written in Rust. Servers, DMs, voice channels and media, in about{" "}
-              <strong>{FASTDISCO_RAM} MB of RAM</strong>.
+              <strong>{DISCOFAST_RAM} MB of RAM</strong>.
             </p>
             <div className="cta">
               <a href="#download" className="btn btn-primary">
@@ -59,7 +59,7 @@ export default async function Home() {
         <section className="wrap ram">
           <h2>Less memory, same Discord</h2>
           <div className="bars">
-            <Bar label="FastDisco" mb={FASTDISCO_RAM} max={DISCORD_RAM} accent />
+            <Bar label="Discofast" mb={DISCOFAST_RAM} max={DISCORD_RAM} accent />
             <Bar label="Discord desktop (Electron)" mb={DISCORD_RAM} max={DISCORD_RAM} prefix="~" />
           </div>
           <p className="muted small">
@@ -98,11 +98,11 @@ export default async function Home() {
           <div className="extra">
             <div>
               <h4>Arch Linux</h4>
-              <code>yay -S fastdisco-bin</code>
+              <code>yay -S discofast-bin</code>
             </div>
             <div>
               <h4>AppImage</h4>
-              <code>chmod +x fastdisco-*.AppImage && ./fastdisco-*.AppImage</code>
+              <code>chmod +x discofast-*.AppImage && ./discofast-*.AppImage</code>
             </div>
           </div>
           <p className="muted small">
@@ -112,8 +112,8 @@ export default async function Home() {
 
         <section className="wrap warn">
           <p>
-            <strong>Heads up:</strong> FastDisco is in early development. Sign in with the QR code from the Discord
-            phone app; email and password often trigger an hCaptcha that FastDisco cannot show yet.
+            <strong>Heads up:</strong> Discofast is in early development. Sign in with the QR code from the Discord
+            phone app; email and password often trigger an hCaptcha that Discofast cannot show yet.
           </p>
         </section>
       </main>
@@ -183,7 +183,7 @@ function AppMock() {
         <div className="mock-input">Message #rust</div>
       </div>
       <div className="mock-ram">
-        <span className="dot" /> {FASTDISCO_RAM} MB
+        <span className="dot" /> {DISCOFAST_RAM} MB
       </div>
     </div>
   );

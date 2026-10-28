@@ -18,7 +18,7 @@ pub fn avatar_url(user: &str, hash: &str) -> Option<String> {
 pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(concat!(
-            "FastDisco/",
+            "Discofast/",
             env!("CARGO_PKG_VERSION"),
             " (+https://github.com/th3-Rocha/FastDisco)"
         ))

@@ -619,7 +619,7 @@ fn draw_select(row: &mut Row<'_>, ui: &mut Ui, message: &Message, select: &Selec
             .map(|o| o.value.clone())
             .collect()
     });
-    // The other menus list what FastDisco knows of the server.
+    // The other menus list what Discofast knows of the server.
     let options: Vec<(String, String, Option<String>)> = match select.kind {
         3 => select
             .options

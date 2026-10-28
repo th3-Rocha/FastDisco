@@ -32,7 +32,7 @@ pub struct Settings {
     /// Desktop notifications for direct messages and mentions.
     pub notifications: bool,
     pub notification_sound: bool,
-    /// Closing the window keeps FastDisco running in the tray.
+    /// Closing the window keeps Discofast running in the tray.
     pub close_to_tray: bool,
     pub start_at_login: bool,
     /// Show GIFs and animated emoji moving.
@@ -149,9 +149,9 @@ impl Settings {
     }
 }
 
-/// Where FastDisco keeps its files.
+/// Where Discofast keeps its files.
 pub const DIRS: fastframe_dirs::App =
-    fastframe_dirs::App::new("fastdisco", "io.github", "th3-Rocha", "fastdisco");
+    fastframe_dirs::App::new("discofast", "io.github", "th3-Rocha", "discofast");
 
 pub fn config_dir() -> Option<PathBuf> {
     DIRS.installed().map(|d| d.config)

@@ -1,7 +1,7 @@
 fastframe_icons::icons! {
     /// Every icon the interface draws.
     pub enum Icon {
-        prefix: "fastdisco-icon-",
+        prefix: "discofast-icon-",
         directory: "../assets/icons/",
         Hash => "hash",
         Speaker => lucide "volume-2",

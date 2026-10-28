@@ -125,7 +125,7 @@ pub enum Action {
     Nav(crate::nav::NavAction),
     /// Forwarding, pins, polls, bots' components and commands.
     Interact(crate::interact::InteractAction),
-    /// Looks for a newer FastDisco now.
+    /// Looks for a newer Discofast now.
     CheckUpdate,
     /// Restarts into the downloaded update.
     InstallUpdate,
@@ -192,13 +192,13 @@ pub struct App {
     /// The call's tiles fill the middle instead of a text channel.
     pub call_view: bool,
     sounds: crate::sounds::Sounds,
-    /// Where updating FastDisco stands.
+    /// Where updating Discofast stands.
     pub update: crate::updates::Status,
     /// Given to a copy the updater just installed, to say it started.
     pub update_receipt: Option<fastframe_update::Receipt>,
     last_update_check: std::time::Instant,
     pub profile_form: Option<ProfileForm>,
-    /// Whether FastDisco starts at login; `None` where it cannot.
+    /// Whether Discofast starts at login; `None` where it cannot.
     pub autostart: Option<bool>,
     pub autostart_asked: bool,
     /// The F12 performance overlay.
@@ -284,7 +284,7 @@ impl App {
     pub fn start_themes(&mut self) {
         self.themes
             .enable_desktop_themes(fastframe_theme::DesktopThemes {
-                slug: "fastdisco",
+                slug: "discofast",
                 omarchy_template: fastframe_theme::omarchy::BASE_TEMPLATE,
                 omarchy_previous_templates: &[],
                 presets: true,
@@ -377,15 +377,15 @@ impl App {
         self.scan_themes();
     }
 
-    /// "(3) FastDisco" while direct messages or mentions wait, as Discord.
+    /// "(3) Discofast" while direct messages or mentions wait, as Discord.
     fn update_title(&mut self, ctx: &egui::Context) {
         let count: u32 = self.model.channels.values().map(|c| c.mentions).sum();
         if count != self.title_count {
             self.title_count = count;
             let title = if count > 0 {
-                format!("({count}) FastDisco")
+                format!("({count}) Discofast")
             } else {
-                "FastDisco".to_owned()
+                "Discofast".to_owned()
             };
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
             crate::resident::show_unread(self.tray.as_mut(), count);
@@ -465,7 +465,7 @@ impl App {
         }
     }
 
-    /// Puts FastDisco's sound on the chosen microphone and speakers.
+    /// Puts Discofast's sound on the chosen microphone and speakers.
     fn route_sound(&self) {
         crate::devices::route(
             self.settings.input_device.clone(),
@@ -604,7 +604,7 @@ impl App {
                 Event::VoiceConnected => self.voice_connected(Ok(())),
                 Event::Update(status) => self.update = status,
                 Event::UpdateHandedOff => {
-                    // The helper installs once FastDisco is gone.
+                    // The helper installs once Discofast is gone.
                     self.leave_voice();
                     self.flush_files();
                     self.quit_requested = true;
@@ -683,7 +683,7 @@ impl App {
                     }
                     let mut pictures = self.pictures.borrow_mut();
                     self.loaded += 1;
-                    let uri = format!("bytes://fastdisco/{}.{ext}", self.loaded);
+                    let uri = format!("bytes://discofast/{}.{ext}", self.loaded);
                     pictures.insert(url, Picture::Loaded(uri.clone()));
                     ctx.include_bytes(uri, bytes);
                 }
@@ -718,10 +718,10 @@ impl App {
         }
     }
 
-    /// Development aid: `FASTDISCO_OPEN=name` opens the first text channel
+    /// Development aid: `DISCOFAST_OPEN=name` opens the first text channel
     /// whose name contains it, to check a screen without clicking there.
     fn open_named(&mut self) {
-        if let Ok(wanted) = std::env::var("FASTDISCO_OPEN") {
+        if let Ok(wanted) = std::env::var("DISCOFAST_OPEN") {
             let wanted = crate::text::hyphens(&wanted).into_owned();
             let found = self.model.guilds.iter().find_map(|g| {
                 g.channels
@@ -740,15 +740,15 @@ impl App {
                 self.open_channel(channel);
             }
         }
-        let tab = match std::env::var("FASTDISCO_PICKER").as_deref() {
+        let tab = match std::env::var("DISCOFAST_PICKER").as_deref() {
             Ok("emoji") => Some(crate::chat::PickerTab::Emoji),
             Ok("gif") => Some(crate::chat::PickerTab::Gif),
             Ok("sticker") => Some(crate::chat::PickerTab::Sticker),
             _ => None,
         };
-        // FASTDISCO_DM opens the newest direct message; FASTDISCO_PROFILE
+        // DISCOFAST_DM opens the newest direct message; DISCOFAST_PROFILE
         // shows the user's own card.
-        if std::env::var("FASTDISCO_DM").is_ok()
+        if std::env::var("DISCOFAST_DM").is_ok()
             && let Some(first) = self.model.sorted_direct().into_iter().find(|c| {
                 self.model
                     .channel(*c)
@@ -757,7 +757,7 @@ impl App {
         {
             self.go_direct(first);
         }
-        if let Ok(page) = std::env::var("FASTDISCO_SETTINGS") {
+        if let Ok(page) = std::env::var("DISCOFAST_SETTINGS") {
             self.settings_page = Some(match page.as_str() {
                 "profiles" => SettingsPage::Profiles,
                 "voice" => SettingsPage::Voice,
@@ -770,7 +770,7 @@ impl App {
                 _ => SettingsPage::Account,
             });
         }
-        if std::env::var("FASTDISCO_PROFILE").is_ok() {
+        if std::env::var("DISCOFAST_PROFILE").is_ok() {
             let anchor =
                 egui::Rect::from_min_size(egui::pos2(80.0, 900.0), egui::vec2(160.0, 40.0));
             let me = self.model.me;

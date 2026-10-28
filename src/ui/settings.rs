@@ -282,7 +282,7 @@ fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
     separator(ui, &palette);
     ui.add_space(4.0);
     let (rect, _) = ui.allocate_exact_size(vec2(NAV_WIDTH, 20.0), Sense::hover());
-    let version = concat!("FastDisco ", env!("CARGO_PKG_VERSION"));
+    let version = concat!("Discofast ", env!("CARGO_PKG_VERSION"));
     ui.painter().text(
         pos2(rect.left() + 10.0, rect.center().y),
         Align2::LEFT_CENTER,
@@ -772,7 +772,7 @@ fn appearance(app: &mut App, ui: &mut Ui) {
     });
     if omarchy {
         ui.label(
-            RichText::new("Com \"Omarchy\" o FastDisco segue o tema do desktop e muda junto quando você troca de tema.")
+            RichText::new("Com \"Omarchy\" o Discofast segue o tema do desktop e muda junto quando você troca de tema.")
                 .font(font(Weight::Regular, 14.0))
                 .color(palette.muted),
         );
@@ -1029,7 +1029,7 @@ fn voice(app: &mut App, ui: &mut Ui) {
         (
             0,
             "Isolamento de Voz",
-            "Só a sua linda voz: deixe o FastDisco equalizar o ruído",
+            "Só a sua linda voz: deixe o Discofast equalizar o ruído",
         ),
         (
             1,
@@ -1057,7 +1057,7 @@ fn voice(app: &mut App, ui: &mut Ui) {
         ui,
         Flag::AutoSensitivity,
         "Ajustar Automaticamente a Sensibilidade de Entrada",
-        "Controla quanto som o FastDisco transmite do seu microfone.",
+        "Controla quanto som o Discofast transmite do seu microfone.",
         auto,
     );
     // The divider of the switch row sits under it; the bar goes above.
@@ -1420,7 +1420,7 @@ fn linux(app: &mut App, ui: &mut Ui) {
         ui,
         Flag::CloseToTray,
         "Minimizar para a bandeja",
-        "Fechar a janela deixa o FastDisco rodando na bandeja do sistema.",
+        "Fechar a janela deixa o Discofast rodando na bandeja do sistema.",
         tray,
     );
     match app.autostart {
@@ -1428,7 +1428,7 @@ fn linux(app: &mut App, ui: &mut Ui) {
             app,
             ui,
             Flag::StartAtLogin,
-            "Abrir o FastDisco ao iniciar a sessão",
+            "Abrir o Discofast ao iniciar a sessão",
             "Começa junto com o seu login.",
             on,
         ),
@@ -1446,7 +1446,7 @@ fn updates(app: &mut App, ui: &mut Ui) {
     use crate::updates::Status;
     let palette = app.palette;
     ui.label(
-        RichText::new(format!("FastDisco {}", env!("CARGO_PKG_VERSION")))
+        RichText::new(format!("Discofast {}", env!("CARGO_PKG_VERSION")))
             .font(font(Weight::Medium, 15.0))
             .color(palette.strong),
     );

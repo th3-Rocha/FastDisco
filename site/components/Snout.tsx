@@ -1,4 +1,4 @@
-/** The FastDisco mark: a pig's snout. Same drawing as app/icon.svg. */
+/** The Discofast mark: a pig's snout. Same drawing as app/icon.svg. */
 export function Snout({ size = 32 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">

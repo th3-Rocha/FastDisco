@@ -1,8 +1,8 @@
-<h1 align="center">FastDisco</h1>
+<h1 align="center">Discofast</h1>
 
 <p align="center"><strong>Discord, native and fast.</strong><br>A lightweight Discord app for Linux, macOS, and Windows.</p>
 
-FastDisco is a Discord client written in Rust with [egui](https://www.egui.rs)
+Discofast is a Discord client written in Rust with [egui](https://www.egui.rs)
 and [fastframe](https://fastframe.dev), the framework behind Spotifast and
 ZapFast. No browser engine, no Electron.
 
@@ -11,15 +11,19 @@ the left, channels beside it with your user panel at the foot, the
 conversation in the middle and the member list on the right. Every button
 sits where Discord users expect it.
 
+> **Renamed:** Discofast was called FastDisco up to 0.9. Installed
+> copies update onto the new name by themselves and keep their settings
+> and login; on Arch, `fastdisco-bin` now pulls in `discofast-bin`.
+
 > **Status:** early development. Login, servers, channels, direct messages
 > and chatting work against Discord.
 
 Signing in with email and password from outside a browser usually makes
-Discord ask for an hCaptcha, which FastDisco cannot show. Use the QR code
+Discord ask for an hCaptcha, which Discofast cannot show. Use the QR code
 with the Discord phone app instead.
 
 > **Warning:** Discord's Terms of Service do not allow third-party clients
-> that log in with a user account. Using FastDisco may put your account at
+> that log in with a user account. Using Discofast may put your account at
 > risk. Use it at your own discretion.
 
 ## Download
@@ -27,14 +31,14 @@ with the Discord phone app instead.
 Every version is built for Linux, Windows and macOS and published on the
 [releases page](https://github.com/th3-Rocha/FastDisco/releases/latest).
 
-- **Arch Linux**: `yay -S fastdisco-bin` (or any other AUR helper).
+- **Arch Linux**: `yay -S discofast-bin` (or any other AUR helper).
 - **Ubuntu and other Linux desktops**: download
-  `fastdisco-<version>-x86_64.AppImage`, then
-  `chmod +x fastdisco-*.AppImage` and run it. Needs Ubuntu 24.04 or newer.
+  `discofast-<version>-x86_64.AppImage`, then
+  `chmod +x discofast-*.AppImage` and run it. Needs Ubuntu 24.04 or newer.
 - **Linux, by hand**: the `x86_64-unknown-linux-gnu` archive has the
   binary, the launcher entry and the icons.
 - **Windows** (x86_64) and **macOS** (Apple Silicon): unpack the archive
-  and run `fastdisco`.
+  and run `discofast`.
 
 ## Build
 
@@ -63,7 +67,7 @@ cd site && npm install && npm run dev
 
 ## Updates
 
-FastDisco checks GitHub for a newer release when it opens and once a
+Discofast checks GitHub for a newer release when it opens and once a
 day, downloads it in the background, and shows a green arrow in the
 header when it is ready; clicking it restarts into the new version, and
 a version that does not start is rolled back. Only copies that can
@@ -81,7 +85,7 @@ minor version, a fix bumps the patch.
 
 ## Roadmap
 
-What works today, and what is still missing for FastDisco to do
+What works today, and what is still missing for Discofast to do
 everything Discord's desktop app does.
 
 ### Account and connection
@@ -187,7 +191,7 @@ everything Discord's desktop app does.
 - [x] Automatic releases for Linux, Windows and macOS
 - [x] Updating itself from the releases page (the AppImage, and the Linux and Windows archives; the AUR updates through yay)
 - [x] AppImage for Ubuntu and other Linux desktops
-- [x] AUR package (`fastdisco-bin`)
+- [x] AUR package (`discofast-bin`)
 - [ ] Flatpak
 - [ ] Windows installer and macOS app bundle
 - [ ] Rich presence (what game or music you are playing)

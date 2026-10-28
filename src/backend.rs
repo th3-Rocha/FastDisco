@@ -82,7 +82,7 @@ pub enum Command {
         bio: String,
         pronouns: String,
     },
-    /// Starts FastDisco at login, or stops.
+    /// Starts Discofast at login, or stops.
     SetAutostart(bool),
     AutostartState,
     /// Any API call; the reply comes back tagged with `tag`.
@@ -127,9 +127,9 @@ pub enum Command {
     FetchImage(String),
     /// The spell checker's dictionaries, downloaded the first time.
     LoadSpeller,
-    /// Looks for a newer FastDisco and downloads it.
+    /// Looks for a newer Discofast and downloads it.
     CheckUpdate,
-    /// Installs the downloaded update; FastDisco quits after.
+    /// Installs the downloaded update; Discofast quits after.
     InstallUpdate,
     /// Tells the gateway which voice channel the user is in, if any, and
     /// whether muted and deafened.
@@ -512,7 +512,7 @@ impl Worker {
             Command::SetAutostart(on) => {
                 let (events, ctx) = (self.events.clone(), self.ctx.clone());
                 tokio::task::spawn_blocking(move || {
-                    let autostart = fastframe_autostart::Autostart::new("fastdisco", "FastDisco");
+                    let autostart = fastframe_autostart::Autostart::new("discofast", "Discofast");
                     let start = on.then_some(fastframe_autostart::Start::Window);
                     if let Err(error) = autostart.set(start) {
                         log::warn!("autostart: {error}");
@@ -524,7 +524,7 @@ impl Worker {
             Command::AutostartState => {
                 let (events, ctx) = (self.events.clone(), self.ctx.clone());
                 tokio::task::spawn_blocking(move || {
-                    let autostart = fastframe_autostart::Autostart::new("fastdisco", "FastDisco");
+                    let autostart = fastframe_autostart::Autostart::new("discofast", "Discofast");
                     let _ = events.send(Event::Autostart(autostart_on(&autostart)));
                     ctx.wake();
                 });
@@ -937,7 +937,7 @@ async fn forget() {
     }
 }
 
-/// Whether FastDisco starts at login; `None` where the desktop cannot.
+/// Whether Discofast starts at login; `None` where the desktop cannot.
 fn autostart_on(autostart: &fastframe_autostart::Autostart) -> Option<bool> {
     match autostart.state() {
         fastframe_autostart::State::Unsupported => None,

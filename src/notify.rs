@@ -29,9 +29,9 @@ impl Notifier {
         std::thread::Builder::new()
             .name("notifications".into())
             .spawn(move || {
-                let app = App::new("io.github.th3_rocha.FastDisco", "FastDisco")
-                    .desktop_entry("fastdisco")
-                    .icon("fastdisco");
+                let app = App::new("io.github.th3_rocha.Discofast", "Discofast")
+                    .desktop_entry("discofast")
+                    .icon("discofast");
                 match Client::new(app) {
                     Ok(c) => *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(c),
                     Err(error) => log::warn!("notifications: {error}"),
