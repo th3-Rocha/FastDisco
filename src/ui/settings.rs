@@ -1081,7 +1081,8 @@ fn voice(app: &mut App, ui: &mut Ui) {
                     .color(palette.muted),
             );
         });
-        let names = ["Desligada", "Padrão", "Alta", "Muito alta"];
+        // As Discord's Krisp, Standard and None: the neural one first.
+        let names = ["Nenhuma", "Padrão", "Inteligente"];
         let (rect, response) = ui.allocate_exact_size(vec2(130.0, 40.0), Sense::click());
         picker_box(
             ui,
@@ -1089,11 +1090,11 @@ fn voice(app: &mut App, ui: &mut Ui) {
             rect,
             &response,
             None,
-            names[usize::from(noise.min(3))],
+            names[usize::from(noise.min(2))],
         );
         egui::Popup::menu(&response).width(130.0).show(|ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
-            for (level, name) in names.iter().enumerate() {
+            for (level, name) in names.iter().enumerate().rev() {
                 if super::call::menu_item(ui, &palette, name, palette.text).clicked() {
                     app.actions.push(Action::SetNoiseSuppression(level as u8));
                     ui.close();

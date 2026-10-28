@@ -85,11 +85,17 @@ ogg = "0.9"
 # feeds from its own gateway. ("gateway" only because its driver needs
 # dashmap from it.)
 songbird = { version = "0.6.1", default-features = false, features = ["driver", "gateway", "rustls", "tungstenite", "receive"] }
+# songbird reports through tracing; "log" hands its warnings (DAVE, the
+# voice connection) to the app's own logger.
+tracing = { version = "0.1", default-features = false, features = ["std", "log"] }
 # songbird's event handlers are async traits.
 async-trait = "0.1"
 # Echo cancelling, noise suppression and level control for the call's
 # microphone: WebRTC's audio processing ported to Rust.
 sonora = "0.2"
+# The "Inteligente" noise suppression: RNNoise's neural network, which
+# also tells the voice gate when someone is talking. 48 kHz, 10 ms frames.
+nnnoiseless = { version = "0.5.2", default-features = false }
 # The microphone reaches songbird as a symphonia media source.
 symphonia-core = "0.5"
 emojis = "0.9.1"

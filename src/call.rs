@@ -93,7 +93,7 @@ impl Ring {
 
 /// The voice filter's settings, which can change during a call.
 pub struct Filter {
-    /// 0 off, 1 moderate, 2 high, 3 very high.
+    /// 0 off, 1 standard (WebRTC's), 2 and up RNNoise's neural network.
     pub noise: AtomicU8,
     pub echo: AtomicBool,
     pub gain: AtomicBool,
@@ -206,19 +206,19 @@ impl std::fmt::Debug for Shared {
     }
 }
 
+/// Whether the filter asks for RNNoise rather than WebRTC's suppression.
+fn neural(filter: &Filter) -> bool {
+    filter.noise.load(Ordering::Relaxed) >= 2
+}
+
 /// WebRTC's processing as the settings ask: echo cancelling against what
-/// the speakers play, noise suppression and level control.
+/// the speakers play, the standard noise suppression and level control.
 fn processor(filter: &Filter) -> Option<sonora::AudioProcessing> {
     use sonora::config::{
         AdaptiveDigital, EchoCanceller, GainController2, HighPassFilter, NoiseSuppression,
         NoiseSuppressionLevel,
     };
-    let noise = match filter.noise.load(Ordering::Relaxed) {
-        0 => None,
-        1 => Some(NoiseSuppressionLevel::Moderate),
-        2 => Some(NoiseSuppressionLevel::High),
-        _ => Some(NoiseSuppressionLevel::VeryHigh),
-    };
+    let noise = (filter.noise.load(Ordering::Relaxed) == 1).then_some(NoiseSuppressionLevel::High);
     let echo = filter.echo.load(Ordering::Relaxed);
     let gain = filter.gain.load(Ordering::Relaxed);
     if noise.is_none() && !echo && !gain {
@@ -276,8 +276,9 @@ impl VoiceDetector {
     }
 
     /// One 10 ms chunk; whether the user is talking. With a threshold,
-    /// as Discord's manual sensitivity, louder than it is talking.
-    fn feed(&mut self, chunk: &[f32], threshold: Option<f32>) -> bool {
+    /// as Discord's manual sensitivity, louder than it is talking; with
+    /// RNNoise's voice probability, by that rather than by loudness.
+    fn feed(&mut self, chunk: &[f32], threshold: Option<f32>, voice: Option<f32>) -> bool {
         let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt();
         let db = 20.0 * rms.max(1e-6).log10();
         if let Some(threshold) = threshold {
@@ -299,7 +300,10 @@ impl VoiceDetector {
         } else {
             self.floor + (db - self.floor) * 0.01
         };
-        let loud = db > (self.floor + 10.0).max(-45.0);
+        let loud = match voice {
+            Some(probability) => probability > 0.6 && db > -60.0,
+            None => db > (self.floor + 10.0).max(-45.0),
+        };
         self.above = if loud { self.above + 1 } else { 0 };
         // Two chunks in a row start it: a click does not.
         if self.above >= 2 {
@@ -321,6 +325,8 @@ pub struct MicSource {
 
 struct Filtering {
     processor: Option<sonora::AudioProcessing>,
+    /// RNNoise, when the filter asks for it.
+    denoiser: Option<Box<nnnoiseless::DenoiseState<'static>>>,
     version: u32,
     voice: VoiceDetector,
     /// The gate's gain now, moving smoothly so it never clicks.
@@ -332,6 +338,7 @@ impl MicSource {
         Self {
             filter: Mutex::new(Filtering {
                 processor: processor(&shared.filter),
+                denoiser: neural(&shared.filter).then(nnnoiseless::DenoiseState::new),
                 version: shared.filter.version.load(Ordering::Relaxed),
                 voice: VoiceDetector::new(),
                 open: 0.0,
@@ -359,6 +366,7 @@ impl MicSource {
         if version != f.version {
             f.version = version;
             f.processor = processor(&shared.filter);
+            f.denoiser = neural(&shared.filter).then(nnnoiseless::DenoiseState::new);
         }
         let auto = shared.filter.gate.load(Ordering::Relaxed);
         let threshold =
@@ -377,7 +385,9 @@ impl MicSource {
                     chunk.copy_from_slice(&out);
                 }
             }
-            talking = f.voice.feed(chunk, threshold);
+            // After the echo canceller, so the network never hears the call.
+            let voice = f.denoiser.as_mut().map(|denoiser| denoise(denoiser, chunk));
+            talking = f.voice.feed(chunk, threshold, voice);
             let target = if talking { 1.0 } else { 0.0 };
             for sample in chunk.iter_mut() {
                 f.open += (target - f.open) * 0.01;
@@ -387,6 +397,18 @@ impl MicSource {
         shared.talking.store(talking, Ordering::Relaxed);
         mono.iter().flat_map(|s| [*s, *s]).collect()
     }
+}
+
+/// Cleans one 10 ms chunk in place with RNNoise; the chance it is a voice.
+fn denoise(denoiser: &mut nnnoiseless::DenoiseState, chunk: &mut [f32]) -> f32 {
+    // RNNoise works on 16-bit sample values.
+    let input: Vec<f32> = chunk.iter().map(|s| s * 32_768.0).collect();
+    let mut output = [0f32; nnnoiseless::FRAME_SIZE];
+    let voice = denoiser.process_frame(&mut output, &input);
+    for (sample, clean) in chunk.iter_mut().zip(output) {
+        *sample = (clean / 32_768.0).clamp(-1.0, 1.0);
+    }
+    voice
 }
 
 impl Read for MicSource {
@@ -764,26 +786,51 @@ mod tests {
     }
 
     #[test]
+    fn rnnoise_quiets_a_hiss_and_does_not_call_it_a_voice() {
+        let mut denoiser = nnnoiseless::DenoiseState::new();
+        // Deterministic white noise around -30 dBFS.
+        let mut seed = 1u32;
+        let mut hiss = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 * 0.06 - 0.03
+        };
+        let (mut before, mut after, mut voice) = (0f32, 0f32, 0f32);
+        for frame in 0..200 {
+            let mut chunk: Vec<f32> = (0..CHUNK).map(|_| hiss()).collect();
+            let energy = chunk.iter().map(|s| s * s).sum::<f32>();
+            let probability = denoise(&mut denoiser, &mut chunk);
+            // The network needs a moment to learn the room.
+            if frame >= 100 {
+                before += energy;
+                after += chunk.iter().map(|s| s * s).sum::<f32>();
+                voice = voice.max(probability);
+            }
+        }
+        assert!(after < before / 3.0, "{after} of {before}");
+        assert!(voice < 0.5, "{voice}");
+    }
+
+    #[test]
     fn the_voice_detector_holds_between_words_and_ignores_a_click() {
         let mut v = VoiceDetector::new();
         let quiet = vec![0.0005f32; CHUNK];
         let voice: Vec<f32> = (0..CHUNK).map(|i| (i as f32 * 0.3).sin() * 0.2).collect();
         for _ in 0..50 {
-            assert!(!v.feed(&quiet, None));
+            assert!(!v.feed(&quiet, None, None));
         }
         // One loud chunk alone is a click.
-        assert!(!v.feed(&voice, None));
-        assert!(!v.feed(&quiet, None));
-        assert!(!v.feed(&voice, None));
-        assert!(v.feed(&voice, None));
+        assert!(!v.feed(&voice, None, None));
+        assert!(!v.feed(&quiet, None, None));
+        assert!(!v.feed(&voice, None, None));
+        assert!(v.feed(&voice, None, None));
         // A pause between words keeps it on, a long silence turns it off.
         for _ in 0..20 {
-            assert!(v.feed(&quiet, None));
+            assert!(v.feed(&quiet, None, None));
         }
         for _ in 0..20 {
-            v.feed(&quiet, None);
+            v.feed(&quiet, None, None);
         }
-        assert!(!v.feed(&quiet, None));
+        assert!(!v.feed(&quiet, None, None));
     }
 }
 

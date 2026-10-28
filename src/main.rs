@@ -140,8 +140,10 @@ fn main() -> anyhow::Result<()> {
         println!("{} {}", version_name(), env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("discofast=info"))
-        .init();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("discofast=info,songbird=warn"),
+    )
+    .init();
     let slot = fastframe_instance::Slot::new(SLOT);
     // `discofast reload-themes`, from Omarchy's theme hook: tell the
     // running copy and leave.
