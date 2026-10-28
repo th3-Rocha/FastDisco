@@ -132,7 +132,13 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                     channel.name.clone()
                 }
             };
-            let buttons_left = rect.right() - 420.0;
+            // Room for the buttons at the right: the search field (wider
+            // while in use) and three or four icons.
+            let searching = !app.nav.search_text.is_empty()
+                || ui.memory(|m| m.has_focus(egui::Id::new("header-search")));
+            let buttons = if app.server().is_some() { 170.0 } else { 130.0 }
+                + if searching { 250.0 } else { 155.0 };
+            let buttons_left = rect.right() - buttons;
             let title =
                 ui.painter()
                     .layout_no_wrap(title, font(Weight::SemiBold, 16.0), palette.strong);
