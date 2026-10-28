@@ -49,6 +49,18 @@ cargo run
 `scripts/install.sh` builds a release and installs it for the current
 user, with the launcher entry and icons.
 
+## Website
+
+`site/` is the Next.js website, deployed on Vercel with `site` as the
+project's root directory. Its download links come from the GitHub
+releases API, refreshed every ten minutes, so a new release shows up
+without touching the site. A `GITHUB_TOKEN` environment variable is
+optional and only raises GitHub's rate limit.
+
+```sh
+cd site && npm install && npm run dev
+```
+
 ## Updates
 
 FastDisco checks GitHub for a newer release when it opens and once a
