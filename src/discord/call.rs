@@ -1,15 +1,24 @@
 //! The voice driver: songbird, given the voice server our own gateway was
 //! told about, sends the microphone and hands back what everyone says,
 //! mixed for the speakers, and who is talking.
+//!
+//! songbird only decrypts what it receives; the Opus is decoded here.
+//! songbird 0.6.1 hands its own decoder a DAVE frame with the frame's
+//! trailer (tag, nonce, size and magic marker) still on its end. Opus in
+//! voice mode, as Discord's apps send, mostly shrugs that off; the music
+//! mode another songbird client sends reads bits from the end of the
+//! frame, and comes out low and robotic. Cut here, the trailer never
+//! reaches the decoder.
 
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use songbird::driver::{Channels, DecodeConfig, DecodeMode, SampleRate};
+use songbird::driver::DecodeMode;
 use songbird::id::{ChannelId, GuildId, UserId};
 use songbird::input::RawAdapter;
+use songbird::packet::Packet as _;
 use songbird::{Config, ConnectionInfo, CoreEvent, Driver, Event, EventContext, EventHandler};
 
 use crate::call::{MicSource, RATE, Shared};
@@ -38,10 +47,7 @@ pub async fn connect(
     wake: impl Fn() + Send + Sync + 'static,
     gone: impl Fn(String) + Send + Sync + 'static,
 ) -> Result<Driver, String> {
-    let config = Config::default().decode_mode(DecodeMode::Decode(DecodeConfig::new(
-        Channels::Stereo,
-        SampleRate::Hz48000,
-    )));
+    let config = Config::default().decode_mode(DecodeMode::Decrypt);
     let mut driver = Driver::new(config);
     let ssrcs: Arc<Mutex<HashMap<u32, u64>>> = Arc::default();
     driver.add_global_event(
@@ -55,6 +61,7 @@ pub async fn connect(
         Tick {
             shared: Arc::clone(&shared),
             ssrcs,
+            decoders: Mutex::default(),
             heard: Mutex::default(),
             wake: Box::new(wake),
         },
@@ -103,6 +110,8 @@ impl EventHandler for Speaking {
 struct Tick {
     shared: Arc<Shared>,
     ssrcs: Arc<Mutex<HashMap<u32, u64>>>,
+    /// An Opus decoder for each stream, 48 kHz stereo.
+    decoders: Mutex<HashMap<u32, opus2::Decoder>>,
     /// When each person was last heard, to keep their ring lit between
     /// words.
     heard: Mutex<HashMap<u64, Instant>>,
@@ -128,14 +137,27 @@ impl EventHandler for Tick {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         let mut heard = self.heard.lock().unwrap_or_else(|e| e.into_inner());
+        let mut decoders = self.decoders.lock().unwrap_or_else(|e| e.into_inner());
+        decoders.retain(|ssrc, _| tick.speaking.contains_key(ssrc) || tick.silent.contains(ssrc));
         for (ssrc, data) in &tick.speaking {
-            let Some(pcm) = &data.decoded_voice else {
+            let decoder = match decoders.entry(*ssrc) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    match opus2::Decoder::new(RATE, opus2::Channels::Stereo) {
+                        Ok(decoder) => entry.insert(decoder),
+                        Err(error) => {
+                            log::warn!("voice decoder: {error}");
+                            continue;
+                        }
+                    }
+                }
+            };
+            let Some(pcm) = decode(decoder, data.packet.as_ref()) else {
                 continue;
             };
-            let energy =
-                pcm.iter().map(|s| f32::from(*s).powi(2)).sum::<f32>() / pcm.len().max(1) as f32;
+            let energy = pcm.iter().map(|s| s * s).sum::<f32>() / pcm.len().max(1) as f32;
             // About -45 dBFS: a voice, not a breath or comfort noise.
-            if energy.sqrt() > 180.0
+            if energy.sqrt() > 0.0055
                 && let Some(user) = ssrcs.get(ssrc)
             {
                 heard.insert(*user, now);
@@ -148,10 +170,11 @@ impl EventHandler for Tick {
             if gain == 0.0 {
                 continue;
             }
-            for (out, sample) in mixed.iter_mut().zip(pcm) {
-                *out += f32::from(*sample) / 32_768.0 * gain;
+            for (out, sample) in mixed.iter_mut().zip(&pcm) {
+                *out += sample * gain;
             }
         }
+        drop(decoders);
         for sample in &mut mixed {
             *sample = sample.clamp(-1.0, 1.0);
         }
@@ -182,6 +205,61 @@ impl EventHandler for Tick {
     }
 }
 
+/// One tick of a stream, 48 kHz stereo: the packet's Opus, or what the
+/// decoder makes up for a packet that was lost.
+fn decode(
+    decoder: &mut opus2::Decoder,
+    packet: Option<&songbird::events::context_data::RtpData>,
+) -> Option<Vec<f32>> {
+    // Room for the longest Opus frame, 120 ms.
+    let mut pcm = vec![0f32; RATE as usize * 2 * 120 / 1000];
+    let samples = match packet {
+        Some(data) => {
+            let rtp = data.rtp();
+            let payload = rtp.payload();
+            let end = payload.len().checked_sub(data.payload_end_pad)?;
+            let body = payload.get(data.payload_offset..end)?;
+            // A header extension sits before the Opus: its 4-byte header,
+            // then as many 4-byte words as it says.
+            let start = if rtp.get_extension() != 0 {
+                4 + 4 * usize::from(u16::from_be_bytes([*body.get(2)?, *body.get(3)?]))
+            } else {
+                0
+            };
+            decoder.decode_float(without_dave_trailer(body.get(start..)?), &mut pcm, false)
+        }
+        None => decoder.decode_float(&[], &mut pcm, false),
+    };
+    match samples {
+        Ok(samples) => {
+            pcm.truncate(samples * 2);
+            Some(pcm)
+        }
+        Err(error) => {
+            log::debug!("voice decode: {error}");
+            None
+        }
+    }
+}
+
+/// The DAVE magic marker that ends an end-to-end encrypted frame.
+const DAVE_MARKER: [u8; 2] = [0xfa, 0xfa];
+
+/// A decrypted DAVE frame still ends with its trailer: everything from
+/// the tag on, whose length is the byte before the marker. A frame
+/// without the marker is passed through.
+fn without_dave_trailer(frame: &[u8]) -> &[u8] {
+    let n = frame.len();
+    if n < 11 || frame[n - 2..] != DAVE_MARKER {
+        return frame;
+    }
+    let trailer = usize::from(frame[n - 3]);
+    if trailer < 11 || trailer > n {
+        return frame;
+    }
+    &frame[..n - trailer]
+}
+
 /// The connection ended without being asked to.
 struct Gone {
     report: Box<dyn Fn(String) + Send + Sync>,
@@ -196,5 +274,26 @@ impl EventHandler for Gone {
             (self.report)(format!("{reason:?}"));
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_dave_trailer_is_cut_and_plain_opus_kept() {
+        let opus = [0xfc, 1, 2, 3, 4];
+        // Tag (8), a 1-byte nonce, no ranges, the size byte and the marker.
+        let mut frame = opus.to_vec();
+        frame.extend([9; 8]);
+        frame.push(7);
+        frame.push(12);
+        frame.extend(DAVE_MARKER);
+        assert_eq!(without_dave_trailer(&frame), opus);
+        assert_eq!(without_dave_trailer(&opus), opus);
+        let mut odd = vec![0; 20];
+        odd.extend([3, 0xfa, 0xfa]);
+        assert_eq!(without_dave_trailer(&odd).len(), odd.len());
     }
 }
