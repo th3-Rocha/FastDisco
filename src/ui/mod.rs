@@ -16,6 +16,7 @@ mod profile;
 mod rail;
 mod settings;
 mod sidebar;
+mod titlebar;
 mod widgets;
 
 use crate::app::{App, Screen};
@@ -51,13 +52,26 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowDown)) {
                 app.actions.push(crate::app::Action::StepChannel(1));
             }
+            // Alt+Left and Alt+Right are the title bar's arrows.
+            if ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowLeft)) {
+                app.actions.push(crate::app::Action::Back);
+            }
+            if ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowRight)) {
+                app.actions.push(crate::app::Action::Forward);
+            }
+            app.track_location();
             composer::paste_files(app, ui.ctx());
             composer::type_anywhere(app, ui.ctx());
             let window = ui.max_rect();
+            // Behind the sidebar's rounded corner.
+            ui.painter()
+                .rect_filled(window, 0.0, app.palette.rail);
+            titlebar::show(app, ui);
             rail::show(app, ui);
-            sidebar::show(app, ui);
+            let sidebar = sidebar::show(app, ui);
             sidebar::card(app, ui, window);
             chat::show(app, ui);
+            sidebar::frame_line(app, ui, sidebar, window);
             profile::popout(app, ui);
             sidebar::logout_dialog(app, ui);
             admin::modal(app, ui);

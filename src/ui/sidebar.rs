@@ -10,17 +10,20 @@ use super::widgets::{Elide, avatar, badge, font, paint_icon};
 use crate::app::{Action, App, Place};
 use crate::icons::Icon;
 use crate::model::{ChannelKind, Id, Status};
-use crate::theme::{HEADER_HEIGHT, RAIL_WIDTH, SIDEBAR_WIDTH};
+use crate::theme::{HEADER_HEIGHT, RAIL_WIDTH, SIDEBAR_RANGE};
 
-pub fn show(app: &mut App, ui: &mut Ui) {
+/// The sidebar's place, for the line around it (`frame_line`).
+pub fn show(app: &mut App, ui: &mut Ui) -> Rect {
     let palette = app.palette;
-    egui::Panel::left("sidebar")
-        .resizable(false)
-        .exact_size(SIDEBAR_WIDTH)
+    let response = egui::Panel::left("sidebar")
+        .resizable(true)
+        .default_size(app.settings.sidebar_width)
+        .size_range(SIDEBAR_RANGE)
         .show_separator_line(false)
         .frame(
             Frame::new()
                 .fill(palette.sidebar)
+                .corner_radius(CORNER)
                 .inner_margin(Margin::ZERO),
         )
         .show(ui, |ui| {
@@ -46,7 +49,52 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             }
                         });
                 });
-        });
+        })
+        .response;
+    // Followed live, saved once the drag ends.
+    let width = response.rect.width();
+    let dirty = egui::Id::new("sidebar-width-dirty");
+    if (width - app.settings.sidebar_width).abs() > 0.5 {
+        app.settings.sidebar_width = width;
+        ui.data_mut(|d| d.insert_temp(dirty, true));
+    }
+    if !ui.input(|i| i.pointer.any_down())
+        && ui.data_mut(|d| d.remove_temp::<bool>(dirty).unwrap_or(false))
+    {
+        app.save_settings();
+    }
+    response.rect
+}
+
+/// The channel list's width now, which the user can drag.
+pub fn width(app: &App) -> f32 {
+    app.settings.sidebar_width.clamp(*SIDEBAR_RANGE.start(), *SIDEBAR_RANGE.end())
+}
+
+/// The sidebar's top left corner is round, as in Discord.
+const CORNER: CornerRadius = CornerRadius {
+    nw: 8,
+    ne: 0,
+    sw: 0,
+    se: 0,
+};
+
+/// Discord's thin line under the title bar, rounding the sidebar's corner
+/// and going down its left side.
+pub fn frame_line(app: &App, ui: &Ui, sidebar: Rect, window: Rect) {
+    let stroke = Stroke::new(1.0, crate::theme::mix(app.palette.rail, app.palette.selected, 0.5));
+    let r = f32::from(CORNER.nw);
+    let left = sidebar.left() + 0.5;
+    let top = sidebar.top() + 0.5;
+    let mut points = vec![pos2(left, sidebar.bottom())];
+    let steps = 8;
+    for i in 0..=steps {
+        let angle = std::f32::consts::PI * (1.0 + 0.5 * i as f32 / steps as f32);
+        points.push(pos2(left + r + r * angle.cos(), top + r + r * angle.sin()));
+    }
+    points.push(pos2(window.right(), top));
+    ui.painter()
+        .add(egui::Shape::line(points, stroke));
 }
 
 fn header(app: &mut App, ui: &mut Ui) {
@@ -67,8 +115,7 @@ fn header(app: &mut App, ui: &mut Ui) {
                     }
                     let open = app.admin.menu;
                     if response.hovered() || open {
-                        ui.painter()
-                            .rect_filled(rect, CornerRadius::ZERO, palette.hover);
+                        ui.painter().rect_filled(rect, CORNER, palette.hover);
                     }
                     let name = app
                         .model
@@ -169,7 +216,7 @@ fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
             .channel(category)
             .map(|c| c.name.clone())
             .unwrap_or_default();
-        let (rect, response) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 24.0), Sense::click());
+        let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
         let tint = if response.hovered() {
             palette.text
         } else {
@@ -271,7 +318,7 @@ fn drag_channel(app: &mut App, ui: &mut Ui, rows: &[Row]) {
         layer.rect_filled(
             Rect::from_min_max(
                 pos2(left, y - 1.0),
-                pos2(left + SIDEBAR_WIDTH - 16.0, y + 1.0),
+                pos2(ui.max_rect().right() - 8.0, y + 1.0),
             ),
             CornerRadius::same(1),
             app.palette.online,
@@ -306,7 +353,7 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     } else {
         Sense::click()
     };
-    let (slot, response) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 34.0), sense);
+    let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), sense);
     if response.drag_started() {
         ui.data_mut(|d| d.insert_temp(egui::Id::new(CHANNEL_DRAG), id));
     }
@@ -466,7 +513,7 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
 fn direct_messages(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
     ui.add_space(8.0);
-    let (slot, response) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 44.0), Sense::click());
+    let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
     let rect = Rect::from_min_max(
         pos2(slot.left() + 8.0, slot.top() + 1.0),
         pos2(slot.right() - 8.0, slot.bottom() - 1.0),
@@ -516,7 +563,7 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
     }
 
     ui.add_space(16.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 24.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
     ui.painter().text(
         pos2(rect.left() + 18.0, rect.center().y),
         Align2::LEFT_CENTER,
@@ -539,7 +586,7 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
             continue;
         };
         let selected = app.channel == Some(id);
-        let (slot, response) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 44.0), Sense::click());
+        let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
         if !ui.is_rect_visible(slot) {
             continue;
         }
@@ -664,7 +711,7 @@ pub fn card(app: &mut App, ui: &Ui, window: Rect) {
             window.left() + CARD_MARGIN,
             window.bottom() - CARD_MARGIN - height,
         ),
-        vec2(RAIL_WIDTH + SIDEBAR_WIDTH - CARD_MARGIN * 2.0, height),
+        vec2(RAIL_WIDTH + width(app) - CARD_MARGIN * 2.0, height),
     );
     egui::Area::new(egui::Id::new("user-card"))
         .order(egui::Order::Middle)

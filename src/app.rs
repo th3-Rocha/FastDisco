@@ -70,10 +70,21 @@ pub enum Place {
     Server(Id),
 }
 
+/// A place and the conversation open in it, for the back and forward
+/// arrows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Location {
+    pub place: Place,
+    pub channel: Option<Id>,
+}
+
 #[derive(Clone, Debug)]
 pub enum Action {
     GoHome,
     OpenServer(Id),
+    /// The title bar's arrows, or Alt+Left and Alt+Right.
+    Back,
+    Forward,
     OpenChannel(Id),
     ToggleCategory(Id),
     ToggleMembers,
@@ -155,6 +166,10 @@ pub struct App {
     pub channel: Option<Id>,
     /// The channel last open on each server.
     last_channel: HashMap<Id, Id>,
+    /// Where the arrows go, the latest last.
+    pub back: Vec<Location>,
+    pub forward: Vec<Location>,
+    here: Option<Location>,
     pub collapsed: HashSet<Id>,
     /// What the user is typing, per channel.
     pub drafts: HashMap<Id, String>,
@@ -235,6 +250,9 @@ impl App {
             place: Place::Home,
             channel: None,
             last_channel: HashMap::new(),
+            back: Vec::new(),
+            forward: Vec::new(),
+            here: None,
             collapsed: HashSet::new(),
             drafts: HashMap::new(),
             actions: Vec::new(),
@@ -864,6 +882,8 @@ impl App {
                 }
                 Action::GoHome => self.go_home(),
                 Action::OpenServer(id) => self.open_server(id),
+                Action::Back => self.step(true),
+                Action::Forward => self.step(false),
                 Action::OpenChannel(id) => self.open_channel(id),
                 Action::ToggleCategory(id) => {
                     if !self.collapsed.remove(&id) {
@@ -1104,6 +1124,60 @@ impl App {
         {
             self.open_channel(channel);
         }
+    }
+
+    fn location(&self) -> Location {
+        Location {
+            place: self.place,
+            channel: self.channel,
+        }
+    }
+
+    /// Notes a move for the arrows; runs once a frame, so a move made of
+    /// several steps (a server, then its channel) counts once.
+    pub fn track_location(&mut self) {
+        let now = self.location();
+        if let Some(here) = self.here
+            && here != now
+        {
+            self.back.push(here);
+            if self.back.len() > 100 {
+                self.back.remove(0);
+            }
+            self.forward.clear();
+        }
+        self.here = Some(now);
+    }
+
+    fn step(&mut self, back: bool) {
+        let target = if back {
+            self.back.pop()
+        } else {
+            self.forward.pop()
+        };
+        let Some(target) = target else {
+            return;
+        };
+        let now = self.location();
+        if back {
+            self.forward.push(now);
+        } else {
+            self.back.push(now);
+        }
+        match target
+            .channel
+            .filter(|c| self.model.channels.contains_key(c))
+        {
+            Some(channel) => self.open_channel(channel),
+            None => match target.place {
+                Place::Home => {
+                    self.place = Place::Home;
+                    self.channel = None;
+                }
+                Place::Server(id) => self.open_server(id),
+            },
+        }
+        self.here = Some(self.location());
     }
 
     fn open_server(&mut self, id: Id) {

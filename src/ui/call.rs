@@ -10,7 +10,6 @@ use crate::app::{Action, App};
 use crate::call::State;
 use crate::icons::Icon;
 use crate::model::{Id, VoiceMember};
-use crate::theme::SIDEBAR_WIDTH;
 
 /// Discord's green for a voice that is talking.
 pub const TALKING: Color32 = Color32::from_rgb(0x23, 0xa5, 0x5a);
@@ -20,7 +19,7 @@ pub fn members(app: &mut App, ui: &mut Ui, channel: Id) {
     let palette = app.palette;
     let guild = app.model.channel(channel).and_then(|c| c.guild);
     for (user, state) in app.model.in_voice(channel) {
-        let (slot, response) = ui.allocate_exact_size(vec2(SIDEBAR_WIDTH, 35.0), Sense::click());
+        let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), 35.0), Sense::click());
         let rect = Rect::from_min_max(
             pos2(slot.left() + 38.0, slot.top() + 1.0),
             pos2(slot.right() - 8.0, slot.bottom() - 1.0),

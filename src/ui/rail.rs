@@ -57,7 +57,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             let fill = if lit { palette.accent } else { palette.chat };
                             ui.painter().rect_filled(rect, radius(lit), fill);
                             let tint = if lit { Color32::WHITE } else { palette.text };
-                            paint_icon(ui, Icon::Threads, rect.center(), 26.0, tint);
+                            paint_icon(ui, Icon::Discord, rect.center(), 28.0, tint);
                         },
                     );
                     if home.clicked() {
@@ -294,7 +294,7 @@ fn guild_item(app: &App, ui: &mut Ui, id: Id, out: &mut Vec<Action>) -> egui::Re
 }
 
 /// A server's picture, or its initials on a plain tile.
-fn paint_guild(ui: &Ui, app: &App, guild: &crate::model::Guild, rect: Rect, lit: bool) {
+pub(super) fn paint_guild(ui: &Ui, app: &App, guild: &crate::model::Guild, rect: Rect, lit: bool) {
     let palette = app.palette;
     let small = rect.width() < 30.0;
     let corner = if small {

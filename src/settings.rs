@@ -29,6 +29,8 @@ pub struct Settings {
     pub zoom: f32,
     pub show_members: bool,
     pub dm_profile: bool,
+    /// The channel list's width, dragged at its right edge as in Discord.
+    pub sidebar_width: f32,
     /// Desktop notifications for direct messages and mentions.
     pub notifications: bool,
     pub notification_sound: bool,
@@ -81,6 +83,7 @@ impl Default for Settings {
             zoom: 1.0,
             show_members: true,
             dm_profile: true,
+            sidebar_width: crate::theme::SIDEBAR_WIDTH,
             notifications: true,
             notification_sound: true,
             close_to_tray: true,

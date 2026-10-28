@@ -1,6 +1,6 @@
 //! The app's little sounds, as Discord has: joining and leaving a call,
 //! someone coming and going, muting, deafening, a new message, a dropped
-//! call. Made here from soft sine tones (Discord's own are its own), played
+//! call. Made here from soft, low mallet tones (Discord's own are its own), played
 //! through rodio on the default output.
 
 use std::time::Duration;
@@ -29,39 +29,36 @@ pub enum Sound {
     Lost,
 }
 
-/// Notes as (frequency in Hz, start in seconds, length in seconds).
+/// Notes as (frequency in Hz, start in seconds, length in seconds), and
+/// the loudness. Low and in major or pentatonic steps, ringing into each
+/// other, so they come out as a little melody rather than beeps.
 fn notes(sound: Sound) -> (&'static [(f32, f32, f32)], f32) {
-    // Loudness: the call's own events softer than a message.
+    const D3: f32 = 146.83;
+    const E3: f32 = 164.81;
+    const F3: f32 = 174.61;
+    const G3: f32 = 196.0;
+    const A3: f32 = 220.0;
+    const C4: f32 = 261.63;
+    const E4: f32 = 329.63;
+    const G4: f32 = 392.0;
+    const A4: f32 = 440.0;
     match sound {
-        Sound::Join => (&[(523.25, 0.0, 0.16), (783.99, 0.09, 0.26)], 0.22),
-        Sound::Leave => (&[(783.99, 0.0, 0.16), (523.25, 0.09, 0.26)], 0.22),
-        Sound::Arrive => (&[(880.0, 0.0, 0.10), (1174.66, 0.06, 0.16)], 0.16),
-        Sound::Depart => (&[(1174.66, 0.0, 0.10), (880.0, 0.06, 0.16)], 0.16),
-        Sound::Mute => (&[(392.0, 0.0, 0.07), (293.66, 0.05, 0.10)], 0.18),
-        Sound::Unmute => (&[(293.66, 0.0, 0.07), (392.0, 0.05, 0.10)], 0.18),
-        Sound::Deafen => (
-            &[
-                (523.25, 0.0, 0.07),
-                (392.0, 0.05, 0.07),
-                (293.66, 0.10, 0.12),
-            ],
-            0.18,
-        ),
-        Sound::Undeafen => (
-            &[
-                (293.66, 0.0, 0.07),
-                (392.0, 0.05, 0.07),
-                (523.25, 0.10, 0.12),
-            ],
-            0.18,
-        ),
-        Sound::Message => (&[(1318.51, 0.0, 0.12), (1760.0, 0.07, 0.22)], 0.20),
-        Sound::Lost => (&[(220.0, 0.0, 0.18), (164.81, 0.14, 0.30)], 0.22),
+        Sound::Join => (&[(G3, 0.0, 0.32), (C4, 0.07, 0.32), (E4, 0.14, 0.34)], 0.20),
+        Sound::Leave => (&[(E4, 0.0, 0.32), (C4, 0.07, 0.32), (G3, 0.14, 0.34)], 0.20),
+        Sound::Arrive => (&[(C4, 0.0, 0.26), (G4, 0.08, 0.30)], 0.15),
+        Sound::Depart => (&[(G4, 0.0, 0.26), (C4, 0.08, 0.30)], 0.15),
+        Sound::Mute => (&[(A3, 0.0, 0.18), (E3, 0.06, 0.24)], 0.20),
+        Sound::Unmute => (&[(E3, 0.0, 0.18), (A3, 0.06, 0.24)], 0.20),
+        Sound::Deafen => (&[(C4, 0.0, 0.20), (G3, 0.06, 0.20), (E3, 0.12, 0.26)], 0.18),
+        Sound::Undeafen => (&[(E3, 0.0, 0.20), (G3, 0.06, 0.20), (C4, 0.12, 0.26)], 0.18),
+        Sound::Message => (&[(E4, 0.0, 0.28), (A4, 0.09, 0.36)], 0.18),
+        Sound::Lost => (&[(A3, 0.0, 0.26), (F3, 0.12, 0.26), (D3, 0.24, 0.32)], 0.20),
     }
 }
 
-/// The sound as mono samples: each note a sine with its octave, a quick
-/// rise and a smooth fall, so nothing clicks.
+/// The sound as mono samples. Each note is a soft mallet: a sine whose
+/// first moments carry a little FM shimmer that fades out, a rounded
+/// attack and a long fall to silence, so nothing clicks or beeps.
 pub fn render(sound: Sound) -> Vec<f32> {
     let (notes, gain) = notes(sound);
     let end = notes
@@ -70,17 +67,22 @@ pub fn render(sound: Sound) -> Vec<f32> {
         .fold(0f32, f32::max);
     let total = (end * RATE as f32) as usize + RATE as usize / 50;
     let mut out = vec![0f32; total];
+    let tau = std::f32::consts::TAU;
     for &(frequency, start, length) in notes {
         let first = (start * RATE as f32) as usize;
         let count = (length * RATE as f32) as usize;
         for i in 0..count {
             let t = i as f32 / RATE as f32;
-            let attack = (t / 0.008).min(1.0);
-            let release = (1.0 - i as f32 / count as f32).powf(2.0);
-            let tau = std::f32::consts::TAU;
-            let tone = (tau * frequency * t).sin() + 0.25 * (tau * 2.0 * frequency * t).sin();
+            let x = i as f32 / count as f32;
+            let attack = (t / 0.012).min(1.0);
+            let attack = (attack * std::f32::consts::FRAC_PI_2).sin();
+            let decay = (-t / (length * 0.45)).exp();
+            let release = (1.0 - x).powf(1.5);
+            let shimmer = 0.9 * (-t / 0.05).exp() * (tau * 2.0 * frequency * t).sin();
+            let tone = (tau * frequency * t + shimmer).sin()
+                + 0.08 * (tau * 3.0 * frequency * t).sin() * (-t / 0.03).exp();
             if let Some(slot) = out.get_mut(first + i) {
-                *slot += tone * attack * release * gain;
+                *slot += tone * attack * decay * release * gain;
             }
         }
     }

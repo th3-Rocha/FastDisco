@@ -100,6 +100,9 @@ everything Discord's desktop app does.
 ### Layout and navigation
 
 - [x] Discord's layout: server rail, channels, chat, member list, user panel
+- [x] Discord's title bar: back and forward (Alt+←/→), the place in the middle, inbox and help
+- [x] Resizable channel list, remembered between runs
+- [x] Soft, low, melodic notification and call sounds
 - [x] Unread dots, mention badges, collapsible categories
 - [x] Rail tooltips, the pill beside the open server
 - [x] Alt+Up and Alt+Down between channels
