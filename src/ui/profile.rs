@@ -167,13 +167,17 @@ fn card(
     let dot = center + vec2(AVATAR * 0.35, AVATAR * 0.35);
     ui.painter().circle_filled(dot, 12.0, background);
     paint_status(ui, &user, dot, 8.0, background, palette.offline);
+    let own = popout && user_id == app.model.me;
+    if own {
+        thought(app, ui, &user, center, banner, out);
+    }
 
     // Badges in a pill at the right, under the banner.
     let badges = profile
         .as_ref()
         .map(|p| p.badges.clone())
         .unwrap_or_default();
-    if !badges.is_empty() {
+    if !badges.is_empty() && !own {
         let size = 22.0;
         let pill_w = badges.len() as f32 * (size + 2.0) + 8.0;
         let pill = Rect::from_min_size(
@@ -246,11 +250,17 @@ fn card(
                 .activities
                 .iter()
                 .find(|a| a.kind == ActivityKind::Custom)
+                .filter(|_| !own)
             {
                 ui.add_space(4.0);
                 custom_status(app, ui, custom);
             }
             ui.add_space(8.0);
+            // The user's own card is Discord's account menu instead.
+            if own {
+                own_card(app, ui, &badges, out);
+                return;
+            }
 
             let section = |ui: &mut Ui, title: &str| {
                 ui.add_space(8.0);
@@ -742,4 +752,346 @@ fn connection_name(kind: &str) -> &str {
         "instagram" => "Instagram",
         other => other,
     }
+}
+
+/// "No que você está pensando?": the bubble beside the user's own avatar,
+/// with their custom status when they have one.
+fn thought(
+    app: &App,
+    ui: &mut Ui,
+    user: &crate::model::User,
+    avatar: egui::Pos2,
+    banner: Rect,
+    out: &mut Vec<Action>,
+) {
+    let palette = app.palette;
+    let custom = user
+        .activities
+        .iter()
+        .find(|a| a.kind == ActivityKind::Custom)
+        .and_then(|a| a.state.clone());
+    let left = avatar.x + AVATAR / 2.0 + 14.0;
+    let bubble = Rect::from_min_max(
+        pos2(left, banner.bottom() - 30.0),
+        pos2(banner.right() - 12.0, banner.bottom() + 14.0),
+    );
+    let response = ui.interact(bubble, ui.id().with("thought"), Sense::click());
+    let fill = if response.hovered() {
+        crate::theme::mix(palette.rail, palette.hover, 0.5)
+    } else {
+        palette.rail
+    };
+    // The two little dots that make it a thought.
+    ui.painter()
+        .circle_filled(pos2(left - 9.0, bubble.top() + 4.0), 5.0, fill);
+    ui.painter()
+        .circle_filled(pos2(left - 16.0, bubble.top() - 4.0), 2.5, fill);
+    ui.painter().rect_filled(bubble, CornerRadius::same(14), fill);
+    let y = bubble.center().y;
+    match custom.clone() {
+        Some(text) => {
+            super::widgets::Elide::new(ui, bubble.right() - 10.0).text(
+                pos2(bubble.left() + 12.0, y),
+                Align2::LEFT_CENTER,
+                text,
+                font(Weight::Medium, 13.0),
+                palette.text,
+            );
+        }
+        None => {
+            ui.painter()
+                .circle_filled(pos2(bubble.left() + 16.0, y), 8.0, palette.hover);
+            super::widgets::paint_icon(
+                ui,
+                crate::icons::Icon::Plus,
+                pos2(bubble.left() + 16.0, y),
+                12.0,
+                palette.text,
+            );
+            let mut job = egui::text::LayoutJob::single_section(
+                "No que você está pensando?".into(),
+                egui::TextFormat {
+                    font_id: font(Weight::Medium, 13.0),
+                    color: palette.muted,
+                    italics: true,
+                    ..Default::default()
+                },
+            );
+            job.wrap.max_width = bubble.right() - bubble.left() - 40.0;
+            job.wrap.max_rows = 2;
+            let galley = ui.painter().layout_job(job);
+            ui.painter().galley(
+                pos2(bubble.left() + 30.0, y - galley.size().y / 2.0),
+                galley,
+                palette.muted,
+            );
+        }
+    }
+    if response.on_hover_text("Definir um status personalizado").clicked() {
+        out.push(Action::Admin(crate::admin::AdminAction::Open(
+            crate::admin::Modal::CustomStatus {
+                text: custom.unwrap_or_default(),
+            },
+        )));
+    }
+}
+
+/// The rest of the user's own card, as Discord's: their badges in a row,
+/// the call they are in, and the account menu.
+fn own_card(app: &App, ui: &mut Ui, badges: &[crate::model::Badge], out: &mut Vec<Action>) {
+    let palette = app.palette;
+    let boxed = crate::theme::current().rail.gamma_multiply(0.6);
+    if !badges.is_empty() {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            Frame::new()
+                .fill(boxed)
+                .corner_radius(CornerRadius::same(6))
+                .inner_margin(Margin::symmetric(4, 2))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        for badge in badges.iter().take(6) {
+                            let (rect, response) =
+                                ui.allocate_exact_size(Vec2::splat(18.0), Sense::click());
+                            if let Some(uri) = app.picture(Some(&badge.icon)) {
+                                egui::Image::new(uri).paint_at(ui, rect);
+                            }
+                            if response.on_hover_text(&badge.description).clicked()
+                                && let Some(link) = &badge.link
+                            {
+                                out.push(Action::Chat(ChatAction::OpenUrl(link.clone())));
+                            }
+                        }
+                        if badges.len() > 6 {
+                            ui.label(
+                                RichText::new(format!("+{}", badges.len() - 6))
+                                    .font(font(Weight::SemiBold, 12.0))
+                                    .color(palette.text),
+                            );
+                        }
+                    });
+                });
+        });
+        ui.add_space(8.0);
+    }
+
+    // The call the account is in, here or on another device.
+    let me = app.model.me;
+    let voice = app
+        .model
+        .voice
+        .iter()
+        .find(|((_, user), _)| *user == me)
+        .map(|((guild, _), v)| (*guild, v.channel));
+    if let Some((guild, channel)) = voice {
+        Frame::new()
+            .fill(boxed)
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(Margin::same(10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing = vec2(0.0, 8.0);
+                ui.label(
+                    RichText::new("Em voz")
+                        .font(font(Weight::SemiBold, 12.0))
+                        .color(palette.strong),
+                );
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let (faces, _) = ui.allocate_exact_size(Vec2::splat(56.0), Sense::hover());
+                    ui.painter()
+                        .rect_filled(faces, CornerRadius::same(8), palette.rail);
+                    let people = app.model.in_voice(channel);
+                    let spots = [vec2(-10.0, -10.0), vec2(10.0, -4.0), vec2(-6.0, 12.0)];
+                    for ((user, _), spot) in people.iter().zip(spots) {
+                        if let Some(person) = app.model.user(*user) {
+                            super::widgets::avatar(
+                                ui,
+                                app,
+                                person,
+                                faces.center() + spot,
+                                10.0,
+                                None,
+                            );
+                        }
+                    }
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.add_space(8.0);
+                        let name = app
+                            .model
+                            .channel(channel)
+                            .map(|c| c.name.clone())
+                            .unwrap_or_default();
+                        ui.label(
+                            RichText::new(format!("🔊 {name}"))
+                                .font(font(Weight::SemiBold, 14.0))
+                                .color(palette.strong),
+                        );
+                        if let Some(g) = guild.and_then(|g| app.model.guild(g)) {
+                            ui.label(
+                                RichText::new(format!("em {}", g.name))
+                                    .font(font(Weight::Regular, 12.0))
+                                    .color(palette.text),
+                            );
+                        }
+                    });
+                });
+                let here = app.call.as_ref().is_some_and(|c| c.channel == channel);
+                let (label, action) = if here {
+                    ("Abrir chamada", Action::ShowCall(true))
+                } else {
+                    ("Entrar na chamada de voz", Action::JoinVoice(channel))
+                };
+                if wide_button(ui, label, palette.hover, palette.strong).clicked() {
+                    out.push(action);
+                    out.push(Action::Chat(ChatAction::CloseProfile));
+                }
+            });
+        ui.add_space(8.0);
+    }
+
+    // The account menu.
+    let status = app.model.user(me).map(|u| u.status).unwrap_or_default();
+    Frame::new()
+        .fill(boxed)
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(Margin::same(6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if menu_row(ui, app, MenuIcon::Icon(crate::icons::Icon::Pencil), "Editar perfil", false)
+                .clicked()
+            {
+                out.push(Action::OpenSettings(crate::app::SettingsPage::Profiles));
+                out.push(Action::Chat(ChatAction::CloseProfile));
+            }
+            separator(ui, palette);
+            let row = menu_row(ui, app, MenuIcon::Status(status), status_name(status), true);
+            egui::Popup::menu(&row)
+                .align(egui::RectAlign::RIGHT_START)
+                .show(|ui| {
+                    ui.set_min_width(220.0);
+                    for choice in [
+                        crate::model::Status::Online,
+                        crate::model::Status::Idle,
+                        crate::model::Status::DoNotDisturb,
+                        crate::model::Status::Offline,
+                    ] {
+                        let label = format!("●  {}", status_name(choice));
+                        let text = RichText::new(label).color(super::widgets::status_color(&palette, choice));
+                        if ui.button(text).clicked() {
+                            out.push(Action::Admin(crate::admin::AdminAction::SetStatus(choice)));
+                            ui.close();
+                        }
+                    }
+                });
+        });
+    ui.add_space(8.0);
+    Frame::new()
+        .fill(boxed)
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(Margin::same(6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let row = menu_row(ui, app, MenuIcon::Icon(crate::icons::Icon::User), "Mudar de conta", true);
+            egui::Popup::menu(&row)
+                .align(egui::RectAlign::RIGHT_START)
+                .show(|ui| {
+                    ui.set_min_width(200.0);
+                    if ui
+                        .button(RichText::new("Sair").color(palette.danger))
+                        .clicked()
+                    {
+                        out.push(Action::AskLogout);
+                        out.push(Action::Chat(ChatAction::CloseProfile));
+                        ui.close();
+                    }
+                });
+        });
+}
+
+fn status_name(status: crate::model::Status) -> &'static str {
+    match status {
+        crate::model::Status::Online => "Disponível",
+        crate::model::Status::Idle => "Ausente",
+        crate::model::Status::DoNotDisturb => "Não perturbar",
+        crate::model::Status::Offline => "Invisível",
+    }
+}
+
+enum MenuIcon {
+    Icon(crate::icons::Icon),
+    Status(crate::model::Status),
+}
+
+/// One line of the account menu: an icon, the label, and a chevron when it
+/// opens more.
+fn menu_row(
+    ui: &mut Ui,
+    app: &App,
+    icon: MenuIcon,
+    label: &str,
+    more: bool,
+) -> egui::Response {
+    let palette = app.palette;
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), palette.hover);
+    }
+    let y = rect.center().y;
+    let at = pos2(rect.left() + 16.0, y);
+    match icon {
+        MenuIcon::Icon(icon) => super::widgets::paint_icon(ui, icon, at, 16.0, palette.icon),
+        MenuIcon::Status(status) => {
+            ui.painter()
+                .circle_filled(at, 6.0, super::widgets::status_color(&palette, status));
+        }
+    }
+    ui.painter().text(
+        pos2(rect.left() + 34.0, y),
+        Align2::LEFT_CENTER,
+        label,
+        font(Weight::Medium, 14.0),
+        if response.hovered() { palette.strong } else { palette.text },
+    );
+    if more {
+        super::widgets::paint_icon(
+            ui,
+            crate::icons::Icon::ChevronRight,
+            pos2(rect.right() - 14.0, y),
+            16.0,
+            palette.icon,
+        );
+    }
+    response
+}
+
+fn separator(ui: &mut Ui, palette: crate::theme::Palette) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
+    ui.painter().hline(
+        (rect.left() + 8.0)..=(rect.right() - 8.0),
+        rect.center().y,
+        egui::Stroke::new(1.0, palette.selected),
+    );
+}
+
+fn wide_button(ui: &mut Ui, label: &str, fill: Color32, text: Color32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+    let fill = if response.hovered() {
+        crate::theme::mix(fill, Color32::WHITE, 0.08)
+    } else {
+        fill
+    };
+    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font(Weight::Medium, 14.0),
+        text,
+    );
+    response
 }

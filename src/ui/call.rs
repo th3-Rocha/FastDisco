@@ -744,54 +744,7 @@ pub fn view(app: &mut App, ui: &mut Ui) {
             Color32::WHITE,
         );
     }
-    // The bottom bar: microphone, sound, hang up.
-    let center = pos2(rect.center().x, rect.bottom() - 48.0);
-    let (muted, deaf) = (app.settings.muted, app.settings.deafened);
-    let buttons = [
-        (
-            Icon::Mic,
-            muted,
-            if muted {
-                "Ativar microfone"
-            } else {
-                "Silenciar"
-            },
-            Action::ToggleMute,
-        ),
-        (
-            Icon::Headphones,
-            deaf,
-            if deaf {
-                "Ativar áudio"
-            } else {
-                "Desativar áudio"
-            },
-            Action::ToggleDeafen,
-        ),
-        (Icon::PhoneOff, false, "Desconectar", Action::LeaveVoice),
-    ];
-    for (i, (icon, off, hint, action)) in buttons.into_iter().enumerate() {
-        let c = center + vec2((i as f32 - 1.0) * 64.0, 0.0);
-        let r = Rect::from_center_size(c, Vec2::splat(52.0));
-        let response = ui.interact(r, ui.id().with(("call-button", i)), Sense::click());
-        let fill = match (icon, off, response.hovered()) {
-            (Icon::PhoneOff, _, false) => palette.danger,
-            (Icon::PhoneOff, _, true) => palette.danger.gamma_multiply(0.8),
-            (_, true, _) => Color32::WHITE,
-            (_, false, true) => Color32::from_gray(70),
-            (_, false, false) => Color32::from_gray(45),
-        };
-        ui.painter().circle_filled(c, 26.0, fill);
-        let (icon, tint) = match (icon, off) {
-            (Icon::Mic, true) => (Icon::MicOff, palette.danger),
-            (Icon::Headphones, true) => (Icon::HeadphonesOff, palette.danger),
-            _ => (icon, Color32::WHITE),
-        };
-        paint_icon(ui, icon, c, 24.0, tint);
-        if response.on_hover_text(hint).clicked() {
-            app.actions.push(action);
-        }
-    }
+    controls(app, ui, pos2(rect.center().x, rect.bottom() - 48.0));
     if let Some(State::Failed(error)) = app.call.as_ref().map(|c| c.state.clone()) {
         ui.painter().text(
             pos2(rect.center().x, rect.bottom() - 92.0),
@@ -804,4 +757,133 @@ pub fn view(app: &mut App, ui: &mut Ui) {
     // The tiles move with who talks.
     ui.ctx()
         .request_repaint_after(std::time::Duration::from_millis(100));
+}
+
+/// The call's bottom bar, as Discord's: the microphone with its menu and
+/// the camera, then activities, the soundboard and more, then the red
+/// hang-up, each group on a dark rounded tile.
+fn controls(app: &mut App, ui: &mut Ui, center: egui::Pos2) {
+    let palette = app.palette;
+    const BUTTON: f32 = 40.0;
+    const PAD: f32 = 4.0;
+    const GAP: f32 = 12.0;
+    let tile = Color32::from_rgb(0x1a, 0x1a, 0x1e);
+    let hover = Color32::from_rgb(0x2e, 0x2f, 0x35);
+    let first = PAD * 2.0 + BUTTON + 20.0 + BUTTON;
+    let second = PAD * 2.0 + BUTTON * 3.0;
+    let hang = 72.0;
+    let total = first + GAP + second + GAP + hang;
+    let top = center.y - (BUTTON + PAD * 2.0) / 2.0;
+    let height = BUTTON + PAD * 2.0;
+    let mut x = center.x - total / 2.0;
+    let group = |ui: &Ui, x: f32, width: f32| {
+        ui.painter().rect_filled(
+            Rect::from_min_size(pos2(x, top), vec2(width, height)),
+            CornerRadius::same(12),
+            tile,
+        );
+    };
+    let button = |ui: &mut Ui, at: Rect, key: &str, icon: Icon, tint: Color32, fill: Option<Color32>| {
+        let response = ui.interact(at, ui.id().with(("call-control", key)), Sense::click());
+        let fill = fill.or(response.hovered().then_some(hover));
+        if let Some(fill) = fill {
+            ui.painter().rect_filled(at, CornerRadius::same(8), fill);
+        }
+        paint_icon(ui, icon, at.center(), 20.0, tint);
+        response
+    };
+    let unavailable = Color32::from_gray(110);
+
+    group(ui, x, first);
+    let muted = app.settings.muted;
+    let mic = Rect::from_min_size(pos2(x + PAD, top + PAD), Vec2::splat(BUTTON));
+    let (icon, tint, fill) = if muted {
+        (Icon::MicOff, palette.danger, Some(Color32::from_rgb(0x3a, 0x1c, 0x1f)))
+    } else {
+        (Icon::Mic, Color32::WHITE, None)
+    };
+    let response = button(ui, mic, "mic", icon, tint, fill);
+    let hint = if muted { "Ativar microfone" } else { "Silenciar" };
+    if response.on_hover_text(hint).clicked() {
+        app.actions.push(Action::ToggleMute);
+    }
+    let chevron = Rect::from_min_size(pos2(mic.right(), top + PAD), vec2(20.0, BUTTON));
+    let more_mic = button(ui, chevron, "mic-more", Icon::ChevronDown, palette.icon, None);
+    let mut chosen = None;
+    let deaf = app.settings.deafened;
+    egui::Popup::menu(&more_mic).show(|ui| {
+        ui.set_min_width(200.0);
+        if ui
+            .button(if deaf { "Desativar ensurdecer" } else { "Ensurdecer" })
+            .clicked()
+        {
+            chosen = Some(Action::ToggleDeafen);
+            ui.close();
+        }
+        if ui.button("Configurações de voz").clicked() {
+            chosen = Some(Action::OpenSettings(crate::app::SettingsPage::Voice));
+            ui.close();
+        }
+    });
+    if let Some(action) = chosen {
+        app.actions.push(action);
+    }
+    let camera = Rect::from_min_size(pos2(chevron.right(), top + PAD), Vec2::splat(BUTTON));
+    button(ui, camera, "camera", Icon::Video, unavailable, None)
+        .on_hover_text("Ativar câmera (ainda não disponível no Discofast)");
+    x += first + GAP;
+
+    group(ui, x, second);
+    for (i, (icon, hint)) in [
+        (Icon::Activities, "Iniciar uma atividade"),
+        (Icon::Soundboard, "Abrir painel de efeitos sonoros"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = Rect::from_min_size(
+            pos2(x + PAD + i as f32 * BUTTON, top + PAD),
+            Vec2::splat(BUTTON),
+        );
+        button(ui, at, hint, icon, unavailable, None)
+            .on_hover_text(format!("{hint} (ainda não disponível no Discofast)"));
+    }
+    let more = Rect::from_min_size(pos2(x + PAD + 2.0 * BUTTON, top + PAD), Vec2::splat(BUTTON));
+    let more = button(ui, more, "more", Icon::More, Color32::WHITE, None);
+    let mut chosen = None;
+    let suppressing = app.settings.noise_suppression > 0;
+    egui::Popup::menu(&more).show(|ui| {
+        ui.set_min_width(220.0);
+        let label = if suppressing {
+            "Desativar supressão de ruído"
+        } else {
+            "Ativar supressão de ruído"
+        };
+        if ui.button(label).clicked() {
+            chosen = Some(Action::SetNoiseSuppression(if suppressing { 0 } else { 2 }));
+            ui.close();
+        }
+        if ui.button("Configurações de voz").clicked() {
+            chosen = Some(Action::OpenSettings(crate::app::SettingsPage::Voice));
+            ui.close();
+        }
+    });
+    if let Some(action) = chosen {
+        app.actions.push(action);
+    }
+    x += second + GAP;
+
+    let at = Rect::from_min_size(pos2(x, top), vec2(hang, height));
+    let response = ui.interact(at, ui.id().with("call-hang-up"), Sense::click());
+    let red = Color32::from_rgb(0xda, 0x37, 0x3c);
+    let fill = if response.hovered() {
+        red.gamma_multiply(0.85)
+    } else {
+        red
+    };
+    ui.painter().rect_filled(at, CornerRadius::same(12), fill);
+    paint_icon(ui, Icon::HangUp, at.center(), 24.0, Color32::WHITE);
+    if response.on_hover_text("Desconectar").clicked() {
+        app.actions.push(Action::LeaveVoice);
+    }
 }

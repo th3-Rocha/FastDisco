@@ -158,6 +158,10 @@ everything Discord's desktop app does.
 - [x] The call's real duration from Discord, Discord's filled speaker, "Convidar para voz" counting down
 - [x] A call taken over by another device: the call ends here and Discord's "Reconectar" bar shows
 - [x] Server events: the "Eventos" row and the calendar badge on the rail; rounded-square server icons with the call badge at the top
+- [x] Discord's call bar: microphone and its menu, camera, activities, soundboard, more, the red hang-up
+- [x] Your own profile card: "No que você está pensando?" (custom status), the call you are in, Editar perfil, status (Disponível, Ausente, Não perturbar, Invisível), Mudar de conta
+- [x] Discord's invite dialog: search friends, send the invite to each, copy the link
+- [x] Groups show their own picture
 - [ ] Video calls and screen sharing
 - [ ] Direct message calls
 - [ ] Scheduled events

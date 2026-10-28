@@ -23,6 +23,8 @@ pub enum Tag {
         channel: Id,
         status: String,
     },
+    /// The user's status or custom status saved; nothing more to do.
+    Presence,
     Created,
     Left {
         guild: Id,
@@ -80,6 +82,10 @@ pub enum Modal {
         channel: Id,
         text: String,
     },
+    /// "No que você está pensando?": the user's custom status.
+    CustomStatus {
+        text: String,
+    },
     CreateChannel {
         guild: Id,
         voice: bool,
@@ -128,6 +134,8 @@ pub struct Admin {
     pub busy: bool,
     pub error: Option<String>,
     pub settings: Option<GuildSettings>,
+    /// The channel the open invite leads to.
+    pub invite_channel: Option<Id>,
 }
 
 #[derive(Clone, Debug)]
@@ -137,6 +145,8 @@ pub enum AdminAction {
     Open(Modal),
     /// An invite to a voice channel, from its row.
     InviteTo(Id),
+    /// Online, idle, do not disturb or invisible, from the profile card.
+    SetStatus(crate::model::Status),
     /// The open dialog's main button.
     Submit,
     CloseModal,
@@ -189,6 +199,19 @@ impl App {
                     self.create_invite(self.channel);
                 }
                 self.admin.modal = Some(modal);
+            }
+            AdminAction::SetStatus(status) => {
+                let me = self.model.me;
+                if let Some(user) = self.model.users.get_mut(&me) {
+                    user.status = status;
+                }
+                self.send_presence();
+                self.api(
+                    Tag::Presence,
+                    Method::PATCH,
+                    "/users/@me/settings".into(),
+                    Some(json!({ "status": status.name() })),
+                );
             }
             AdminAction::InviteTo(channel) => {
                 self.admin.menu = false;
@@ -315,9 +338,27 @@ impl App {
         }
     }
 
+    /// The user's status and custom status, to the gateway.
+    fn send_presence(&self) {
+        let me = self.model.me;
+        let Some(user) = self.model.users.get(&me) else {
+            return;
+        };
+        let custom = user
+            .activities
+            .iter()
+            .find(|a| a.kind == crate::model::ActivityKind::Custom)
+            .and_then(|a| a.state.clone());
+        self.backend().send(Command::Presence {
+            status: user.status.name().to_owned(),
+            custom,
+        });
+    }
+
     /// A week-long invite to a channel, as Discord's default.
     fn create_invite(&mut self, channel: Option<Id>) {
         let Some(channel) = channel else { return };
+        self.admin.invite_channel = Some(channel);
         self.admin.busy = true;
         let body = json!({ "max_age": 604800, "max_uses": 0, "temporary": false });
         self.api(
@@ -351,6 +392,33 @@ impl App {
                     Method::PATCH,
                     format!("/guilds/{guild}/members/@me"),
                     Some(json!({ "nick": nick })),
+                );
+            }
+            Modal::CustomStatus { text } => {
+                let text = text.trim().to_owned();
+                let me = self.model.me;
+                if let Some(user) = self.model.users.get_mut(&me) {
+                    user.activities.retain(|a| a.kind != crate::model::ActivityKind::Custom);
+                    if !text.is_empty() {
+                        user.activities.insert(
+                            0,
+                            crate::model::Activity {
+                                kind: crate::model::ActivityKind::Custom,
+                                name: "Custom Status".into(),
+                                state: Some(text.clone()),
+                                ..crate::model::Activity::default()
+                            },
+                        );
+                    }
+                    user.activity = (!text.is_empty()).then(|| text.clone());
+                }
+                self.send_presence();
+                let custom = (!text.is_empty()).then(|| json!({ "text": text }));
+                self.api(
+                    Tag::Presence,
+                    Method::PATCH,
+                    "/users/@me/settings".into(),
+                    Some(json!({ "custom_status": custom })),
                 );
             }
             Modal::VoiceStatus { channel, text } => {
@@ -464,6 +532,7 @@ impl App {
                     *link = Some(format!("https://discord.gg/{code}"));
                 }
             }
+            Tag::Presence => self.admin.modal = None,
             Tag::VoiceStatus { channel, status } => {
                 if let Some(c) = self.model.channels.get_mut(&channel) {
                     c.voice_status = (!status.is_empty()).then_some(status);

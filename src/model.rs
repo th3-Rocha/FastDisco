@@ -18,6 +18,16 @@ pub enum Status {
 }
 
 impl Status {
+    /// The name Discord uses; offline is how invisible looks.
+    pub fn name(self) -> &'static str {
+        match self {
+            Status::Online => "online",
+            Status::Idle => "idle",
+            Status::DoNotDisturb => "dnd",
+            Status::Offline => "invisible",
+        }
+    }
+
     pub fn parse(text: &str) -> Self {
         match text {
             "online" => Status::Online,

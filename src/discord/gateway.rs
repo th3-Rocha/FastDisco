@@ -29,6 +29,9 @@ pub enum Incoming {
 
 #[derive(Debug)]
 pub enum Outgoing {
+    /// The user's status ("online", "idle", "dnd", "invisible") and
+    /// custom status, for this session.
+    Presence { status: String, custom: Option<String> },
     /// Ask for a server's member list, as seen from a channel.
     Subscribe { guild: u64, channel: u64 },
     /// Join a voice channel (or a direct message call when `guild` is
@@ -143,6 +146,17 @@ async fn connect(
                             }
                         });
                         send(&mut sink, info).await?;
+                    }
+                    Some(Outgoing::Presence { status, custom }) => {
+                        let activities: Vec<serde_json::Value> = custom
+                            .into_iter()
+                            .map(|text| json!({ "type": 4, "name": "Custom Status", "state": text }))
+                            .collect();
+                        let payload = json!({
+                            "op": 3,
+                            "d": { "status": status, "since": 0, "activities": activities, "afk": false }
+                        });
+                        send(&mut sink, payload).await?;
                     }
                     Some(Outgoing::Voice { guild, channel, mute, deaf }) => {
                         let payload = json!({

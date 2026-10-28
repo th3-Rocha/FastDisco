@@ -177,6 +177,11 @@ pub enum ChatAction {
         user: Id,
         note: String,
     },
+    /// Sends `text` to a user's direct message, staying where the user is.
+    SendQuietly {
+        user: Id,
+        text: String,
+    },
     /// Opens the direct message with a user, sending `text` if any.
     MessageUser {
         user: Id,
@@ -235,6 +240,9 @@ pub struct Chat {
     /// message exists.
     pub card_message: HashMap<Id, String>,
     pending_direct: Option<(Id, String)>,
+    /// Messages for people with no direct message yet, sent once it opens
+    /// without going to it: invites from the invite dialog.
+    quiet: HashMap<Id, String>,
     pub app_icons: HashMap<Id, Option<String>>,
     /// Where the unread messages began when a channel was opened, for the
     /// "new" line.
@@ -624,6 +632,20 @@ impl App {
                     self.backend().send(Command::SetNote { user, note });
                 }
             }
+            ChatAction::SendQuietly { user, text } => {
+                let existing = self.model.direct.iter().copied().find(|c| {
+                    self.model.channel(*c).is_some_and(|c| {
+                        c.kind == crate::model::ChannelKind::Direct && c.recipients == [user]
+                    })
+                });
+                match existing {
+                    Some(channel) => self.send_message(channel, text, Vec::new(), None),
+                    None => {
+                        self.chat.quiet.insert(user, text);
+                        self.backend().send(Command::OpenDirect(user));
+                    }
+                }
+            }
             ChatAction::MessageUser { user, text } => {
                 self.chat.popout = None;
                 self.chat.card_message.remove(&user);
@@ -726,6 +748,14 @@ impl App {
             channel.read = channel.last_message;
             self.model.channels.insert(id, channel);
             self.model.direct.push(id);
+        }
+        let recipient = self
+            .model
+            .channel(id)
+            .and_then(|c| c.recipients.first().copied());
+        if let Some(text) = recipient.and_then(|r| self.chat.quiet.remove(&r)) {
+            self.send_message(id, text, Vec::new(), None);
+            return;
         }
         let text = self
             .chat

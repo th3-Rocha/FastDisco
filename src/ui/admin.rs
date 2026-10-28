@@ -176,6 +176,10 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
     let Some(modal) = app.admin.modal.clone() else {
         return;
     };
+    if let Modal::Invite { link } = modal {
+        invite(app, ui, link);
+        return;
+    }
     let palette = app.palette;
     let busy = app.admin.busy;
     let error = app.admin.error.clone();
@@ -186,6 +190,7 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
         Modal::Invite { .. } => ("Convidar amigos", "Copiar", false),
         Modal::Nick { .. } => ("Alterar apelido", "Salvar", false),
         Modal::VoiceStatus { .. } => ("Definir status do canal", "Salvar", false),
+        Modal::CustomStatus { .. } => ("Definir um status personalizado", "Salvar", false),
         Modal::CreateChannel { .. } => ("Criar canal", "Criar canal", false),
         Modal::CreateCategory { .. } => ("Criar categoria", "Criar categoria", false),
         Modal::Leave { .. } => ("Sair do servidor", "Sair do servidor", true),
@@ -228,6 +233,12 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
                             ui.set_width(ui.available_width());
                             ui.label(RichText::new(text).font(font(Weight::Medium, 15.0)).color(palette.strong));
                         });
+                    }
+                    Modal::CustomStatus { mut text } => {
+                        if field(ui, "NO QUE VOCÊ ESTÁ PENSANDO?", &mut text, "Defina um status personalizado") {
+                            edited = Some(Modal::CustomStatus { text });
+                        }
+                        ui.label(RichText::new("Deixe vazio para apagá-lo.").font(font(Weight::Regular, 12.0)).color(palette.muted));
                     }
                     Modal::VoiceStatus { channel, mut text } => {
                         if field(ui, "STATUS", &mut text, "Do que vocês estão falando?") {
@@ -919,4 +930,178 @@ fn audit(app: &mut App, ui: &mut Ui) {
             });
         });
     }
+}
+
+/// Discord's invite dialog: who the invite is for and where it leads,
+/// friends to send it to one by one, and the link to copy.
+fn invite(app: &mut App, ui: &mut Ui, link: Option<String>) {
+    let palette = app.palette;
+    let channel = app.admin.invite_channel.and_then(|c| app.model.channel(c));
+    let guild = channel
+        .and_then(|c| c.guild)
+        .or(app.server())
+        .and_then(|g| app.model.guild(g));
+    let title = match guild {
+        Some(g) => format!("Convidar amigos para {}", g.name),
+        None => "Convidar amigos".to_owned(),
+    };
+    let place = channel.map(|c| {
+        let mark = if c.kind == crate::model::ChannelKind::Voice { "🔊" } else { "#" };
+        format!("{mark}{}", c.name)
+    });
+    let state = egui::Id::new("invite-dialog");
+    let (mut search, mut sent): (String, Vec<crate::model::Id>) =
+        ui.data(|d| d.get_temp(state)).unwrap_or_default();
+    let query = search.to_lowercase();
+    let mut friends: Vec<(crate::model::Id, String, String)> = app
+        .model
+        .relationships
+        .iter()
+        .filter(|(_, kind)| **kind == crate::nav::relationship::FRIEND)
+        .filter_map(|(id, _)| app.model.user(*id))
+        .map(|u| (u.id, u.name.clone(), u.username.clone()))
+        .filter(|(_, name, username)| {
+            query.is_empty()
+                || name.to_lowercase().contains(&query)
+                || username.to_lowercase().contains(&query)
+        })
+        .collect();
+    friends.sort_by_key(|(_, name, _)| name.to_lowercase());
+    let mut out: Vec<Action> = Vec::new();
+    let mut close = false;
+    let response = egui::Modal::new(egui::Id::new("invite-modal"))
+        .backdrop_color(Color32::from_black_alpha(180))
+        .frame(
+            Frame::new()
+                .fill(palette.chat)
+                .corner_radius(CornerRadius::same(12))
+                .stroke(egui::Stroke::new(1.0, palette.selected)),
+        )
+        .show(ui.ctx(), |ui| {
+            ui.set_width(500.0);
+            ui.spacing_mut().item_spacing = vec2(0.0, 8.0);
+            Frame::new().inner_margin(Margin { left: 24, right: 24, top: 20, bottom: 8 }).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_top(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.add_sized(
+                        vec2(ui.available_width() - 32.0, 0.0),
+                        egui::Label::new(RichText::new(title).font(font(Weight::SemiBold, 20.0)).color(palette.strong)).wrap(),
+                    );
+                    let (x, r) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
+                    paint_icon(ui, Icon::Close, x.center(), 22.0, if r.hovered() { palette.strong } else { palette.icon });
+                    if r.clicked() {
+                        close = true;
+                    }
+                });
+                if let Some(place) = &place {
+                    ui.label(RichText::new(format!("Os destinatários chegarão em {place}")).font(font(Weight::Regular, 15.0)).color(palette.muted));
+                }
+                ui.add_space(8.0);
+                Frame::new()
+                    .fill(palette.rail)
+                    .corner_radius(CornerRadius::same(8))
+                    .stroke(egui::Stroke::new(1.0, palette.selected))
+                    .inner_margin(Margin::symmetric(12, 10))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 10.0;
+                            let (icon, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+                            paint_icon(ui, Icon::Search, icon.center(), 18.0, palette.muted);
+                            ui.add(
+                                egui::TextEdit::singleline(&mut search)
+                                    .frame(Frame::NONE)
+                                    .hint_text(RichText::new("Buscar amigos").color(palette.muted))
+                                    .font(font(Weight::Regular, 16.0))
+                                    .text_color(palette.text)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
+                    });
+                ui.add_space(6.0);
+                ui.label(RichText::new("Amigos").font(font(Weight::Medium, 14.0)).color(palette.muted));
+                egui::ScrollArea::vertical()
+                    .id_salt("invite-friends")
+                    .max_height(380.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        if friends.is_empty() {
+                            ui.label(RichText::new("Nenhum amigo encontrado.").color(palette.muted));
+                        }
+                        for (id, name, username) in &friends {
+                            let (row, hover) = ui.allocate_exact_size(vec2(ui.available_width(), 53.0), Sense::hover());
+                            if hover.hovered() {
+                                ui.painter().rect_filled(row, CornerRadius::same(8), palette.hover);
+                            }
+                            let center = pos2(row.left() + 26.0, row.center().y);
+                            if let Some(user) = app.model.user(*id) {
+                                let behind = if hover.hovered() { palette.hover } else { palette.chat };
+                                super::widgets::avatar(ui, app, user, center, 17.0, Some(behind));
+                            }
+                            ui.painter().text(pos2(row.left() + 54.0, row.center().y - 8.0), Align2::LEFT_CENTER, name, font(Weight::SemiBold, 16.0), palette.strong);
+                            ui.painter().text(pos2(row.left() + 54.0, row.center().y + 10.0), Align2::LEFT_CENTER, username, font(Weight::Regular, 12.0), palette.muted);
+                            let done = sent.contains(id);
+                            let button = Rect::from_min_size(pos2(row.right() - 96.0, row.center().y - 17.0), vec2(86.0, 34.0));
+                            let response = ui.interact(button, ui.id().with(("invite-to", *id)), Sense::click());
+                            let fill = match (done, response.hovered()) {
+                                (true, _) => Color32::TRANSPARENT,
+                                (false, true) => palette.selected,
+                                (false, false) => palette.hover,
+                            };
+                            ui.painter().rect(button, CornerRadius::same(8), fill, egui::Stroke::new(1.0, palette.selected), egui::StrokeKind::Inside);
+                            ui.painter().text(button.center(), Align2::CENTER_CENTER, if done { "Enviado" } else { "Convidar" }, font(Weight::Medium, 14.0), if done { palette.muted } else { palette.strong });
+                            if response.clicked() && !done && let Some(link) = &link {
+                                sent.push(*id);
+                                out.push(Action::Chat(crate::chat::ChatAction::SendQuietly { user: *id, text: link.clone() }));
+                            }
+                        }
+                    });
+            });
+            Frame::new()
+                .fill(palette.sidebar)
+                .corner_radius(CornerRadius { nw: 0, ne: 0, sw: 12, se: 12 })
+                .inner_margin(Margin { left: 24, right: 24, top: 16, bottom: 16 })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new("Ou, envie um convite do servidor a um amigo").font(font(Weight::Medium, 16.0)).color(palette.strong));
+                    Frame::new()
+                        .fill(palette.rail)
+                        .corner_radius(CornerRadius::same(8))
+                        .stroke(egui::Stroke::new(1.0, palette.selected))
+                        .inner_margin(Margin::symmetric(10, 4))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let text = link.clone().unwrap_or_else(|| "Criando convite…".into());
+                                ui.label(RichText::new(text).font(font(Weight::Regular, 16.0)).color(palette.text));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let copied = ui.data(|d| d.get_temp::<bool>(state.with("copied")).unwrap_or(false));
+                                    let fill = if copied { palette.online } else { palette.accent };
+                                    let copy = egui::Button::new(RichText::new(if copied { "Copiado" } else { "Copiar" }).font(font(Weight::Medium, 14.0)).color(Color32::WHITE))
+                                        .fill(fill)
+                                        .corner_radius(CornerRadius::same(6))
+                                        .min_size(vec2(90.0, 32.0));
+                                    if ui.add_enabled(link.is_some(), copy).clicked() && let Some(link) = &link {
+                                        ui.ctx().copy_text(link.clone());
+                                        ui.data_mut(|d| d.insert_temp(state.with("copied"), true));
+                                    }
+                                });
+                            });
+                        });
+                    ui.label(RichText::new("Seu link de convite expira em 7 dias.").font(font(Weight::Regular, 12.0)).color(palette.muted));
+                });
+        });
+    if response.should_close() {
+        close = true;
+    }
+    if close {
+        ui.data_mut(|d| {
+            d.remove::<(String, Vec<crate::model::Id>)>(state);
+            d.remove::<bool>(state.with("copied"));
+        });
+        act(app, AdminAction::CloseModal);
+    } else {
+        ui.data_mut(|d| d.insert_temp(state, (search, sent)));
+    }
+    app.actions.extend(out);
 }

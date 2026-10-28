@@ -61,6 +61,7 @@ fastframe_icons::icons! {
         Folder => "folder",
         Calendar => "calendar",
         PhoneOff => "phone-off",
+        HangUp => "phone-hangup",
         Signal => "signal",
         Connection => "rss",
         NoiseSuppression => "audio-lines",

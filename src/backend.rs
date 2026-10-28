@@ -24,6 +24,11 @@ pub enum Tag {
 
 #[derive(Debug)]
 pub enum Command {
+    /// The user's status and custom status, sent to the gateway.
+    Presence {
+        status: String,
+        custom: Option<String>,
+    },
     /// At start: sign in with the saved token, if there is one.
     Resume,
     Login {
@@ -682,6 +687,11 @@ impl Worker {
                 };
                 let _ = self.events.send(event);
                 self.ctx.wake();
+            }
+            Command::Presence { status, custom } => {
+                if let Some((_, outgoing)) = &self.gateway {
+                    let _ = outgoing.send(Outgoing::Presence { status, custom });
+                }
             }
             Command::VoiceState {
                 guild,
