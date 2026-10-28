@@ -228,6 +228,8 @@ pub struct Channel {
     /// Discord refused the history: the channel is age-restricted and the
     /// account has not confirmed its age.
     pub age_gated: bool,
+    /// A voice channel's status, the line under its name.
+    pub voice_status: Option<String>,
 }
 
 impl Channel {

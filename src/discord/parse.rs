@@ -175,6 +175,7 @@ pub fn channel(value: &Value, guild: Option<Id>) -> Option<Channel> {
         loading: false,
         recipients,
         age_gated: false,
+        voice_status: label(&value["status"]).filter(|s| !s.is_empty()),
     })
 }
 

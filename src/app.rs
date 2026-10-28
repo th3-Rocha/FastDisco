@@ -1200,7 +1200,8 @@ impl App {
         let Some(channel) = self.model.channels.get_mut(&id) else {
             return;
         };
-        if !channel.kind.is_textual() {
+        // A voice channel has a text chat of its own.
+        if !channel.kind.is_textual() && channel.kind != ChannelKind::Voice {
             return;
         }
         // A channel opened from a mention may be on another server.
@@ -1298,6 +1299,16 @@ impl App {
         match kind {
             "READY_SUPPLEMENTAL" => parse::supplemental(&data, &mut self.model),
             "VOICE_STATE_UPDATE" => self.voice_state_event(&data),
+            "VOICE_CHANNEL_STATUS_UPDATE" => {
+                if let Some(channel) = parse::id(&data["id"])
+                    .and_then(|id| self.model.channels.get_mut(&id))
+                {
+                    channel.voice_status = data["status"]
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_owned);
+                }
+            }
             "VOICE_SERVER_UPDATE" => self.voice_server_event(&data),
             "MESSAGE_POLL_VOTE_ADD" => self.poll_vote(&data, true),
             "MESSAGE_POLL_VOTE_REMOVE" => self.poll_vote(&data, false),
@@ -1447,6 +1458,9 @@ impl App {
                     channel.requested = old.requested;
                     channel.read = old.read;
                     channel.mentions = old.mentions;
+                    if channel.voice_status.is_none() {
+                        channel.voice_status = old.voice_status;
+                    }
                 } else {
                     channel.read = channel.last_message;
                     match channel.guild {

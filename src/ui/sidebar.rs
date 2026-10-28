@@ -353,7 +353,20 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     } else {
         Sense::click()
     };
-    let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), sense);
+    let joined = app
+        .call
+        .as_ref()
+        .filter(|c| c.channel == id)
+        .map(|c| c.since);
+    // A voice channel's status under its name; the user's own channel
+    // offers to set one, as Discord.
+    let status = match (&channel.voice_status, joined) {
+        (Some(status), _) => Some((status.clone(), false)),
+        (None, Some(_)) => Some(("Definir um status do canal".to_owned(), true)),
+        (None, None) => None,
+    };
+    let height = if status.is_some() { 50.0 } else { 34.0 };
+    let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), height), sense);
     if response.drag_started() {
         ui.data_mut(|d| d.insert_temp(egui::Id::new(CHANNEL_DRAG), id));
     }
@@ -361,7 +374,8 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
         pos2(slot.left() + 8.0, slot.top() + 1.0),
         pos2(slot.right() - 8.0, slot.bottom() - 1.0),
     );
-    let hovered = response.hovered();
+    // Still the row's while the pointer is on one of its buttons.
+    let hovered = response.hovered() || response.contains_pointer();
     if selected {
         ui.painter()
             .rect_filled(rect, CornerRadius::same(4), palette.selected);
@@ -375,12 +389,8 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
             .rect_filled(pill, CornerRadius::same(4), palette.strong);
     }
     // The voice channel the user is in: its speaker green and its name
-    // lit, as Discord.
-    let joined = app
-        .call
-        .as_ref()
-        .filter(|c| c.channel == id)
-        .map(|c| c.since);
+    // lit, as Discord. With a status the name sits in the top line.
+    let line = Rect::from_min_size(rect.min, vec2(rect.width(), 32.0));
     let tint = if selected || unread || joined.is_some() {
         palette.strong
     } else if hovered {
@@ -396,7 +406,7 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     paint_icon(
         ui,
         icon,
-        pos2(rect.left() + 18.0, rect.center().y),
+        pos2(line.left() + 18.0, line.center().y),
         20.0,
         if joined.is_some() {
             super::call::TALKING
@@ -409,21 +419,24 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     } else {
         Weight::Medium
     };
-    let reserve = if channel.mentions > 0 || hovered || selected || joined.is_some() {
+    let voice = channel.kind == ChannelKind::Voice;
+    let buttons = hovered || selected;
+    let reserve = if buttons {
+        if voice { 72.0 } else { 52.0 }
+    } else if channel.mentions > 0 || joined.is_some() {
         52.0
     } else {
         8.0
     };
-    let clip = Rect::from_min_max(rect.min, pos2(rect.right() - reserve, rect.bottom()));
-    Elide::new(ui, clip.right()).text(
-        pos2(rect.left() + 36.0, rect.center().y),
+    Elide::new(ui, line.right() - reserve).text(
+        pos2(line.left() + 36.0, line.center().y),
         Align2::LEFT_CENTER,
         &channel.name,
         font(weight, 16.0),
         tint,
     );
     if let Some(since) = joined
-        && !hovered
+        && !buttons
     {
         let seconds = since.elapsed().as_secs();
         let time = if seconds >= 3600 {
@@ -437,38 +450,93 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
             format!("{}:{:02}", seconds / 60, seconds % 60)
         };
         ui.painter().text(
-            pos2(rect.right() - 8.0, rect.center().y),
+            pos2(line.right() - 8.0, line.center().y),
             Align2::RIGHT_CENTER,
             time,
             egui::FontId::monospace(12.0),
             super::call::TALKING,
         );
     }
-    if channel.mentions > 0 {
+    if let Some((text, offer)) = status {
+        let y = line.bottom() + 6.0;
+        let left = line.left() + 36.0;
+        let hit = Rect::from_min_max(pos2(left, y - 8.0), pos2(rect.right() - 8.0, y + 8.0));
+        let edit = ui.interact(hit, ui.id().with(("voice-status", id)), Sense::click());
+        let tint = if edit.hovered() {
+            palette.text
+        } else {
+            palette.muted
+        };
+        let shown = Elide::new(ui, rect.right() - 28.0).text(
+            pos2(left, y),
+            Align2::LEFT_CENTER,
+            text.clone(),
+            font(Weight::Medium, 12.0),
+            tint,
+        );
+        if offer || edit.hovered() {
+            paint_icon(ui, Icon::Pencil, pos2(shown.right() + 9.0, y), 12.0, tint);
+        }
+        if joined.is_some()
+            && edit
+                .on_hover_text("Definir um status do canal")
+                .clicked()
+        {
+            app.actions
+                .push(Action::Admin(crate::admin::AdminAction::Open(
+                    crate::admin::Modal::VoiceStatus {
+                        channel: id,
+                        text: if offer { String::new() } else { text },
+                    },
+                )));
+        }
+    }
+    let Some(channel) = app.model.channel(id) else {
+        return slot;
+    };
+    if channel.mentions > 0 && !buttons {
         badge(
             ui,
             &palette,
-            pos2(rect.right() - 8.0, rect.center().y),
+            pos2(line.right() - 8.0, line.center().y),
             channel.mentions,
             None,
         );
-    } else if hovered || selected {
-        if matches!(channel.kind, ChannelKind::Text | ChannelKind::Voice) {
-            paint_icon(
-                ui,
-                Icon::UserPlus,
-                pos2(rect.right() - 32.0, rect.center().y),
-                16.0,
-                palette.icon,
-            );
+    } else if buttons {
+        let guild = channel.guild;
+        let mut x = line.right() - 12.0;
+        let mut button = |icon: Icon, hint: &str| {
+            let at = Rect::from_center_size(pos2(x, line.center().y), Vec2::splat(18.0));
+            x -= 20.0;
+            let response = ui.interact(at, ui.id().with((hint, id)), Sense::click());
+            let tint = if response.hovered() {
+                palette.strong
+            } else {
+                palette.icon
+            };
+            paint_icon(ui, icon, at.center(), 16.0, tint);
+            response.on_hover_text(hint).clicked()
+        };
+        let settings = guild.is_some_and(|g| {
+            app.model.can(g, crate::model::permission::MANAGE_GUILD)
+        });
+        // The gear only for who can change the server, as Discord.
+        if settings
+            && button(Icon::Settings, "Editar canal")
+            && let Some(guild) = guild
+        {
+            app.actions
+                .push(Action::Admin(crate::admin::AdminAction::OpenSettings(guild)));
         }
-        paint_icon(
-            ui,
-            Icon::Settings,
-            pos2(rect.right() - 12.0, rect.center().y),
-            16.0,
-            palette.icon,
-        );
+        if matches!(channel.kind, ChannelKind::Text | ChannelKind::Voice)
+            && button(Icon::UserPlus, "Criar convite")
+        {
+            app.actions
+                .push(Action::Admin(crate::admin::AdminAction::InviteTo(id)));
+        }
+        if voice && button(Icon::MessageCircle, "Abrir chat") {
+            app.actions.push(Action::OpenChannel(id));
+        }
     }
     let unread = channel.unread() || channel.mentions > 0;
     let guild = channel.guild;

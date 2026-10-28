@@ -19,6 +19,10 @@ pub enum Tag {
         guild: Id,
         nick: String,
     },
+    VoiceStatus {
+        channel: Id,
+        status: String,
+    },
     Created,
     Left {
         guild: Id,
@@ -69,6 +73,11 @@ pub enum Modal {
     },
     Nick {
         guild: Id,
+        text: String,
+    },
+    /// The line under a voice channel's name.
+    VoiceStatus {
+        channel: Id,
         text: String,
     },
     CreateChannel {
@@ -126,6 +135,8 @@ pub enum AdminAction {
     ToggleMenu,
     CloseMenu,
     Open(Modal),
+    /// An invite to a voice channel, from its row.
+    InviteTo(Id),
     /// The open dialog's main button.
     Submit,
     CloseModal,
@@ -175,9 +186,15 @@ impl App {
                 self.admin.error = None;
                 self.admin.busy = false;
                 if let Modal::Invite { .. } = modal {
-                    self.create_invite();
+                    self.create_invite(self.channel);
                 }
                 self.admin.modal = Some(modal);
+            }
+            AdminAction::InviteTo(channel) => {
+                self.admin.menu = false;
+                self.admin.error = None;
+                self.create_invite(Some(channel));
+                self.admin.modal = Some(Modal::Invite { link: None });
             }
             AdminAction::CloseModal => {
                 self.admin.modal = None;
@@ -298,9 +315,9 @@ impl App {
         }
     }
 
-    /// A week-long invite to the open channel, as Discord's default.
-    fn create_invite(&mut self) {
-        let Some(channel) = self.channel else { return };
+    /// A week-long invite to a channel, as Discord's default.
+    fn create_invite(&mut self, channel: Option<Id>) {
+        let Some(channel) = channel else { return };
         self.admin.busy = true;
         let body = json!({ "max_age": 604800, "max_uses": 0, "temporary": false });
         self.api(
@@ -334,6 +351,18 @@ impl App {
                     Method::PATCH,
                     format!("/guilds/{guild}/members/@me"),
                     Some(json!({ "nick": nick })),
+                );
+            }
+            Modal::VoiceStatus { channel, text } => {
+                let status = text.trim().to_owned();
+                self.api(
+                    Tag::VoiceStatus {
+                        channel,
+                        status: status.clone(),
+                    },
+                    Method::PUT,
+                    format!("/channels/{channel}/voice-status"),
+                    Some(json!({ "status": status })),
                 );
             }
             Modal::CreateChannel {
@@ -434,6 +463,12 @@ impl App {
                 if let Some(Modal::Invite { link }) = &mut self.admin.modal {
                     *link = Some(format!("https://discord.gg/{code}"));
                 }
+            }
+            Tag::VoiceStatus { channel, status } => {
+                if let Some(c) = self.model.channels.get_mut(&channel) {
+                    c.voice_status = (!status.is_empty()).then_some(status);
+                }
+                self.admin.modal = None;
             }
             Tag::Nick { guild, nick } => {
                 let me = self.model.me;

@@ -103,6 +103,47 @@ pub fn members(app: &mut App, ui: &mut Ui, channel: Id) {
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         member_menu(app, &response, guild, channel, user, &state, rect);
     }
+    if app.call.as_ref().is_some_and(|c| c.channel == channel) && guild.is_some() {
+        invite_row(app, ui, channel);
+    }
+}
+
+/// "Convidar para voz" under the people in the user's own channel.
+fn invite_row(app: &mut App, ui: &mut Ui, channel: Id) {
+    let palette = app.palette;
+    let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), 35.0), Sense::click());
+    let rect = Rect::from_min_max(
+        pos2(slot.left() + 38.0, slot.top() + 1.0),
+        pos2(slot.right() - 8.0, slot.bottom() - 1.0),
+    );
+    let lit = response.hovered();
+    if lit {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), palette.hover);
+    }
+    let tint = if lit { palette.strong } else { palette.muted };
+    let center = pos2(rect.left() + 19.0, rect.center().y);
+    ui.painter()
+        .circle_stroke(center, 11.5, Stroke::new(1.5, tint));
+    paint_icon(ui, Icon::UserPlus, center, 13.0, tint);
+    ui.painter().text(
+        pos2(rect.left() + 41.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        "Convidar para voz",
+        font(Weight::Medium, 15.0),
+        tint,
+    );
+    paint_icon(
+        ui,
+        Icon::ChevronRight,
+        pos2(rect.right() - 12.0, rect.center().y),
+        16.0,
+        tint,
+    );
+    if response.clicked() {
+        app.actions
+            .push(Action::Admin(crate::admin::AdminAction::InviteTo(channel)));
+    }
 }
 
 /// The right-click menu on someone in a voice channel, as Discord's: the

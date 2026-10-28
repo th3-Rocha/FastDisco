@@ -154,6 +154,7 @@ everything Discord's desktop app does.
 - [x] Voice settings: microphone and speaker choice, their volumes, microphone test, input profiles and manual sensitivity
 - [x] Age-restricted channels show Discord's notice when the account has not confirmed its age
 - [x] Right-click on someone in a voice channel: their volume and a local mute, and for moderators server mute, server deafen, disconnect and move
+- [x] Voice channel rows as Discord's: chat, invite and settings buttons, the channel status (and setting it), "Convidar para voz", and the voice channel's text chat
 - [ ] Video calls and screen sharing
 - [ ] Direct message calls
 - [ ] Scheduled events

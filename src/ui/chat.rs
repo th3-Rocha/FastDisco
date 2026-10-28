@@ -121,6 +121,11 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                     x += 32.0;
                     app.model.direct_name(channel)
                 }
+                ChannelKind::Voice => {
+                    paint_icon(ui, Icon::Speaker, pos2(x + 12.0, y), 22.0, palette.muted);
+                    x += 30.0;
+                    channel.name.clone()
+                }
                 _ => {
                     paint_icon(ui, Icon::Hash, pos2(x + 12.0, y), 24.0, palette.muted);
                     x += 30.0;

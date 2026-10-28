@@ -185,6 +185,7 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
     let (title, button, danger) = match &modal {
         Modal::Invite { .. } => ("Convidar amigos", "Copiar", false),
         Modal::Nick { .. } => ("Alterar apelido", "Salvar", false),
+        Modal::VoiceStatus { .. } => ("Definir status do canal", "Salvar", false),
         Modal::CreateChannel { .. } => ("Criar canal", "Criar canal", false),
         Modal::CreateCategory { .. } => ("Criar categoria", "Criar categoria", false),
         Modal::Leave { .. } => ("Sair do servidor", "Sair do servidor", true),
@@ -227,6 +228,12 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
                             ui.set_width(ui.available_width());
                             ui.label(RichText::new(text).font(font(Weight::Medium, 15.0)).color(palette.strong));
                         });
+                    }
+                    Modal::VoiceStatus { channel, mut text } => {
+                        if field(ui, "STATUS", &mut text, "Do que vocês estão falando?") {
+                            edited = Some(Modal::VoiceStatus { channel, text });
+                        }
+                        ui.label(RichText::new("Todos no canal de voz veem este status. Deixe vazio para apagá-lo.").font(font(Weight::Regular, 12.0)).color(palette.muted));
                     }
                     Modal::Nick { guild, mut text } => {
                         if field(ui, "APELIDO", &mut text, &app.model.user(app.model.me).map(|u| u.name.clone()).unwrap_or_default()) {
