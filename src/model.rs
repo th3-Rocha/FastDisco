@@ -230,6 +230,8 @@ pub struct Channel {
     pub age_gated: bool,
     /// A voice channel's status, the line under its name.
     pub voice_status: Option<String>,
+    /// When the call in a voice channel started, in Unix seconds.
+    pub voice_start: Option<u64>,
 }
 
 impl Channel {
@@ -616,6 +618,17 @@ pub struct Guild {
     pub subscribed: bool,
     pub emojis: Vec<CustomEmoji>,
     pub stickers: Vec<Sticker>,
+    /// Scheduled events that have not ended.
+    pub events: Vec<Event>,
+}
+
+/// A server's scheduled event.
+#[derive(Clone, Debug)]
+pub struct Event {
+    pub id: Id,
+    pub name: String,
+    /// Happening now, rather than still to come.
+    pub live: bool,
 }
 
 #[derive(Clone, Debug, Default)]

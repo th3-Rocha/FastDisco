@@ -103,13 +103,25 @@ pub fn members(app: &mut App, ui: &mut Ui, channel: Id) {
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         member_menu(app, &response, guild, channel, user, &state, rect);
     }
-    if app.call.as_ref().is_some_and(|c| c.channel == channel) && guild.is_some() {
-        invite_row(app, ui, channel);
+    // Offered for a while after joining, a ring counting it down.
+    if let Some(since) = app.call.as_ref().filter(|c| c.channel == channel).map(|c| c.since)
+        && guild.is_some()
+    {
+        let left = 1.0 - since.elapsed().as_secs_f32() / INVITE_FOR;
+        if left > 0.0 {
+            invite_row(app, ui, channel, left);
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(50));
+        }
     }
 }
 
-/// "Convidar para voz" under the people in the user's own channel.
-fn invite_row(app: &mut App, ui: &mut Ui, channel: Id) {
+/// How long "Convidar para voz" stays after joining, in seconds.
+const INVITE_FOR: f32 = 20.0;
+
+/// "Convidar para voz" under the people in the user's own channel; its
+/// ring is the time `left`, from 1 to 0.
+fn invite_row(app: &mut App, ui: &mut Ui, channel: Id, left: f32) {
     let palette = app.palette;
     let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), 35.0), Sense::click());
     let rect = Rect::from_min_max(
@@ -124,7 +136,17 @@ fn invite_row(app: &mut App, ui: &mut Ui, channel: Id) {
     let tint = if lit { palette.strong } else { palette.muted };
     let center = pos2(rect.left() + 19.0, rect.center().y);
     ui.painter()
-        .circle_stroke(center, 11.5, Stroke::new(1.5, tint));
+        .circle_stroke(center, 11.5, Stroke::new(1.5, palette.selected));
+    let steps = 48;
+    let arc: Vec<egui::Pos2> = (0..=((steps as f32 * left).ceil() as usize))
+        .map(|i| {
+            let angle = -std::f32::consts::FRAC_PI_2
+                + std::f32::consts::TAU * (i as f32 / steps as f32).min(left);
+            center + 11.5 * vec2(angle.cos(), angle.sin())
+        })
+        .collect();
+    ui.painter()
+        .add(egui::Shape::line(arc, Stroke::new(1.5, tint)));
     paint_icon(ui, Icon::UserPlus, center, 13.0, tint);
     ui.painter().text(
         pos2(rect.left() + 41.0, rect.center().y),

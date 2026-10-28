@@ -938,6 +938,18 @@ impl crate::app::App {
         let Some(call) = &mut self.call else {
             return;
         };
+        // The same account on another device: joining a call there takes
+        // this one's place, as in Discord; leaving there changes nothing.
+        let session = data["session_id"].as_str().unwrap_or_default();
+        if !self.model.session.is_empty() && session != self.model.session {
+            if channel.is_some() {
+                self.voice_taken = Some(call.channel);
+                self.call = None;
+                self.call_view = false;
+                self.backend().send(crate::backend::Command::LeaveVoice);
+            }
+            return;
+        }
         match channel {
             None => {
                 // Disconnected from elsewhere, or by a moderator.

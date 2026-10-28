@@ -176,7 +176,19 @@ pub fn channel(value: &Value, guild: Option<Id>) -> Option<Channel> {
         recipients,
         age_gated: false,
         voice_status: label(&value["status"]).filter(|s| !s.is_empty()),
+        voice_start: voice_start(&value["voice_start_time"]),
     })
+}
+
+/// A voice call's start, in Unix seconds; Discord sends a number or a
+/// string of one.
+pub fn voice_start(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+    .filter(|t| *t > 0)
 }
 
 fn role(value: &Value) -> Option<Role> {
@@ -244,6 +256,10 @@ pub fn guild(value: &Value, model: &mut Model) -> Option<Guild> {
             .as_array()
             .map(|l| l.iter().filter_map(sticker).collect())
             .unwrap_or_default(),
+        events: value["guild_scheduled_events"]
+            .as_array()
+            .map(|l| l.iter().filter_map(event).collect())
+            .unwrap_or_default(),
         ..Default::default()
     };
     for m in value["members"].as_array().into_iter().flatten() {
@@ -253,6 +269,19 @@ pub fn guild(value: &Value, model: &mut Model) -> Option<Guild> {
         }
     }
     Some(guild)
+}
+
+/// A scheduled event; none once it is over or cancelled (status 3 and 4).
+pub fn event(value: &Value) -> Option<crate::model::Event> {
+    let status = value["status"].as_u64().unwrap_or(1);
+    if status > 2 {
+        return None;
+    }
+    Some(crate::model::Event {
+        id: id(&value["id"])?,
+        name: label(&value["name"]).unwrap_or_default(),
+        live: status == 2,
+    })
 }
 
 pub fn message(value: &Value, me: Id) -> Option<Message> {

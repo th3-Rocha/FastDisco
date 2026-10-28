@@ -155,6 +155,9 @@ everything Discord's desktop app does.
 - [x] Age-restricted channels show Discord's notice when the account has not confirmed its age
 - [x] Right-click on someone in a voice channel: their volume and a local mute, and for moderators server mute, server deafen, disconnect and move
 - [x] Voice channel rows as Discord's: chat, invite and settings buttons, the channel status (and setting it), "Convidar para voz", and the voice channel's text chat
+- [x] The call's real duration from Discord, Discord's filled speaker, "Convidar para voz" counting down
+- [x] A call taken over by another device: the call ends here and Discord's "Reconectar" bar shows
+- [x] Server events: the "Eventos" row and the calendar badge on the rail; rounded-square server icons with the call badge at the top
 - [ ] Video calls and screen sharing
 - [ ] Direct message calls
 - [ ] Scheduled events

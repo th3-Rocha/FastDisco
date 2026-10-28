@@ -133,6 +133,16 @@ async fn connect(
                             }
                         });
                         send(&mut sink, payload).await?;
+                        // The voice channels' statuses and when their calls
+                        // started, which Discord's own client asks for too.
+                        let info = json!({
+                            "op": 43,
+                            "d": {
+                                "guild_id": guild.to_string(),
+                                "fields": ["status", "voice_start_time"],
+                            }
+                        });
+                        send(&mut sink, info).await?;
                     }
                     Some(Outgoing::Voice { guild, channel, mute, deaf }) => {
                         let payload = json!({

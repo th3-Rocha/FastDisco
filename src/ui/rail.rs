@@ -54,6 +54,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         unread_dms,
                         "Mensagens diretas",
                         &[],
+                        false,
                         |ui, rect, lit| {
                             let fill = if lit { palette.accent } else { palette.chat };
                             ui.painter().rect_filled(rect, radius(lit), fill);
@@ -94,7 +95,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             "https://discord.com/download",
                         ),
                     ] {
-                        let response = item(ui, app, false, false, 0, hint, &[], |ui, rect, lit| {
+                        let response = item(ui, app, false, false, 0, hint, &[], false, |ui, rect, lit| {
                             ui.painter().rect_filled(
                                 rect,
                                 radius(lit),
@@ -177,6 +178,12 @@ fn servers(app: &mut App, ui: &mut Ui) {
             if open { 0 } else { mentions },
             &hint,
             &if open { Vec::new() } else { folder_voice },
+            !open
+                && folder
+                    .guilds
+                    .iter()
+                    .filter_map(|g| app.model.guild(*g))
+                    .any(|g| !g.events.is_empty()),
             |ui, rect, _| {
                 if open {
                     paint_icon(ui, Icon::Folder, rect.center(), 24.0, color);
@@ -241,6 +248,7 @@ fn guild_item(app: &App, ui: &mut Ui, id: Id, out: &mut Vec<Action>) -> egui::Re
         mentions,
         &guild.name,
         &voice,
+        !guild.events.is_empty(),
         |ui, rect, lit| {
             paint_guild(ui, app, guild, rect, lit);
         },
@@ -444,7 +452,8 @@ fn drag(app: &App, ui: &mut Ui, slots: &[(Rect, Slot)], out: &mut Vec<Action>) {
 
 /// A circle that becomes a rounded square under the pointer or when chosen.
 fn radius(lit: bool) -> CornerRadius {
-    CornerRadius::same(if lit { 16 } else { 24 })
+    // Discord's icons are rounded squares now, a little rounder at rest.
+    CornerRadius::same(if lit { 12 } else { 14 })
 }
 
 /// One rail slot with the pill on its left: a dot for unread, taller under
@@ -458,6 +467,7 @@ fn item(
     mentions: u32,
     hint: &str,
     voice: &[Id],
+    event: bool,
     paint: impl FnOnce(&Ui, Rect, bool),
 ) -> egui::Response {
     let palette = app.palette;
@@ -483,13 +493,22 @@ fn item(
         ui.painter()
             .rect_filled(bar, CornerRadius::same(4), palette.strong);
     }
-    // Someone is in a call here: Discord's speaker at the corner, unless
-    // a mention count takes it.
-    if !voice.is_empty() && mentions == 0 {
-        let center = pos2(rect.right() - 4.0, rect.bottom() - 4.0);
-        ui.painter().circle_filled(center, 10.0, palette.rail);
-        ui.painter().circle_filled(center, 8.0, palette.online);
-        paint_icon(ui, Icon::Speaker, center, 11.0, Color32::WHITE);
+    // Someone is in a call here, or an event is on: Discord's little
+    // dark tile at the top right corner, the call first.
+    let corner = if !voice.is_empty() {
+        Some(Icon::Speaker)
+    } else if event {
+        Some(Icon::Calendar)
+    } else {
+        None
+    };
+    if let Some(icon) = corner {
+        let tile = Rect::from_center_size(pos2(rect.right() - 3.0, rect.top() + 3.0), Vec2::splat(20.0));
+        ui.painter()
+            .rect_filled(tile.expand(2.0), CornerRadius::same(7), palette.rail);
+        ui.painter()
+            .rect_filled(tile, CornerRadius::same(6), Color32::from_rgb(0x11, 0x12, 0x14));
+        paint_icon(ui, icon, tile.center(), 13.0, palette.text);
     }
     if mentions > 0 {
         badge(

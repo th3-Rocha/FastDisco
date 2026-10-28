@@ -67,6 +67,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui.painter()
                 .rect_filled(window, 0.0, app.palette.rail);
             titlebar::show(app, ui);
+            titlebar::voice_taken(app, ui);
             rail::show(app, ui);
             let sidebar = sidebar::show(app, ui);
             sidebar::card(app, ui, window);

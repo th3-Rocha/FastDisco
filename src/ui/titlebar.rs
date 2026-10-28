@@ -142,3 +142,68 @@ fn place(app: &App, ui: &mut Ui, rect: Rect) {
         palette.strong,
     );
 }
+
+/// Discord's red bar when the account joined a call on another device:
+/// the reason, "Reconectar" and a close button.
+pub fn voice_taken(app: &mut App, ui: &mut Ui) {
+    let Some(channel) = app.voice_taken else {
+        return;
+    };
+    const FILL: egui::Color32 = egui::Color32::from_rgb(0x2a, 0x05, 0x05);
+    const TEXT: egui::Color32 = egui::Color32::from_rgb(0xf0, 0xa2, 0x32);
+    egui::Panel::top("voice-taken")
+        .resizable(false)
+        .exact_size(36.0)
+        .show_separator_line(false)
+        .frame(Frame::new().fill(FILL))
+        .show(ui, |ui| {
+            let rect = ui.max_rect();
+            let y = rect.center().y;
+            let message = "Sua voz foi desconectada porque você se conectou em outro local.";
+            let galley = ui
+                .painter()
+                .layout_no_wrap(message.into(), font(Weight::Medium, 14.0), TEXT);
+            let label = ui
+                .painter()
+                .layout_no_wrap("Reconectar".into(), font(Weight::Medium, 14.0), TEXT);
+            let button_width = label.size().x + 24.0;
+            let total = galley.size().x + 12.0 + button_width;
+            let left = rect.center().x - total / 2.0;
+            ui.painter()
+                .galley(pos2(left, y - galley.size().y / 2.0), galley, TEXT);
+            let button = Rect::from_min_size(
+                pos2(left + total - button_width, y - 12.0),
+                vec2(button_width, 24.0),
+            );
+            let response = ui.interact(button, ui.id().with("reconnect"), Sense::click());
+            let fill = if response.hovered() {
+                egui::Color32::from_rgb(0x4a, 0x10, 0x10)
+            } else {
+                egui::Color32::from_rgb(0x3a, 0x0a, 0x0a)
+            };
+            ui.painter().rect(
+                button,
+                CornerRadius::same(4),
+                fill,
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(0x5a, 0x1a, 0x1a)),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter()
+                .galley(button.center() - label.size() / 2.0, label, TEXT);
+            if response.clicked() {
+                app.actions.push(Action::JoinVoice(channel));
+            }
+            let close = Rect::from_center_size(pos2(rect.right() - 20.0, y), Vec2::splat(24.0));
+            let close = ui.interact(close, ui.id().with("close"), Sense::click());
+            paint_icon(
+                ui,
+                Icon::Close,
+                close.rect.center(),
+                18.0,
+                if close.hovered() { egui::Color32::WHITE } else { TEXT },
+            );
+            if close.on_hover_text("Fechar").clicked() {
+                app.actions.push(Action::DismissVoiceTaken);
+            }
+        });
+}

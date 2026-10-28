@@ -141,6 +141,8 @@ pub enum Action {
     /// Restarts into the downloaded update.
     InstallUpdate,
     JoinVoice(Id),
+    /// Closes the bar saying another device took the call.
+    DismissVoiceTaken,
     LeaveVoice,
     /// The call's tiles, or back to the text channel.
     ShowCall(bool),
@@ -206,6 +208,8 @@ pub struct App {
     pub devices: std::sync::Arc<std::sync::Mutex<Option<crate::devices::Devices>>>,
     /// The call's tiles fill the middle instead of a text channel.
     pub call_view: bool,
+    /// The call another device took over, for Discord's "Reconectar" bar.
+    pub voice_taken: Option<Id>,
     sounds: crate::sounds::Sounds,
     /// Where updating Discofast stands.
     pub update: crate::updates::Status,
@@ -277,6 +281,7 @@ impl App {
             mic_test: None,
             devices: Default::default(),
             call_view: false,
+            voice_taken: None,
             sounds: crate::sounds::Sounds::default(),
             update: crate::updates::Status::Idle,
             update_receipt: None,
@@ -962,7 +967,11 @@ impl App {
                 }
                 Action::CheckUpdate => self.backend.send(Command::CheckUpdate),
                 Action::InstallUpdate => self.backend.send(Command::InstallUpdate),
-                Action::JoinVoice(channel) => self.join_voice(channel),
+                Action::JoinVoice(channel) => {
+                    self.voice_taken = None;
+                    self.join_voice(channel);
+                }
+                Action::DismissVoiceTaken => self.voice_taken = None,
                 Action::LeaveVoice => self.leave_voice(),
                 Action::ShowCall(shown) => self.call_view = shown && self.call.is_some(),
                 Action::OpenSettings(page) => {
@@ -1299,6 +1308,51 @@ impl App {
         match kind {
             "READY_SUPPLEMENTAL" => parse::supplemental(&data, &mut self.model),
             "VOICE_STATE_UPDATE" => self.voice_state_event(&data),
+            "GUILD_SCHEDULED_EVENT_CREATE"
+            | "GUILD_SCHEDULED_EVENT_UPDATE"
+            | "GUILD_SCHEDULED_EVENT_DELETE" => {
+                let Some(event) = parse::id(&data["id"]) else {
+                    return;
+                };
+                let Some(guild) = parse::id(&data["guild_id"])
+                    .and_then(|g| self.model.guild_mut(g))
+                else {
+                    return;
+                };
+                let at = guild.events.iter().position(|e| e.id == event);
+                let fresh = (kind != "GUILD_SCHEDULED_EVENT_DELETE")
+                    .then(|| parse::event(&data))
+                    .flatten();
+                match (at, fresh) {
+                    (Some(at), Some(fresh)) => guild.events[at] = fresh,
+                    (Some(at), None) => {
+                        guild.events.remove(at);
+                    }
+                    (None, Some(fresh)) => guild.events.push(fresh),
+                    (None, None) => {}
+                }
+            }
+            "VOICE_CHANNEL_START_TIME_UPDATE" => {
+                if let Some(channel) = parse::id(&data["id"])
+                    .and_then(|id| self.model.channels.get_mut(&id))
+                {
+                    channel.voice_start = parse::voice_start(&data["voice_start_time"]);
+                }
+            }
+            // The answer to asking for a server's voice channel details.
+            "CHANNEL_INFO" => {
+                for info in data["channels"].as_array().into_iter().flatten() {
+                    if let Some(channel) = parse::id(&info["id"])
+                        .and_then(|id| self.model.channels.get_mut(&id))
+                    {
+                        channel.voice_status = info["status"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_owned);
+                        channel.voice_start = parse::voice_start(&info["voice_start_time"]);
+                    }
+                }
+            }
             "VOICE_CHANNEL_STATUS_UPDATE" => {
                 if let Some(channel) = parse::id(&data["id"])
                     .and_then(|id| self.model.channels.get_mut(&id))
@@ -1460,6 +1514,9 @@ impl App {
                     channel.mentions = old.mentions;
                     if channel.voice_status.is_none() {
                         channel.voice_status = old.voice_status;
+                    }
+                    if channel.voice_start.is_none() {
+                        channel.voice_start = old.voice_start;
                     }
                 } else {
                     channel.read = channel.last_message;

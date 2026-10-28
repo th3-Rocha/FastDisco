@@ -201,6 +201,7 @@ fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
     // Where a dragged channel can go: each row, and each category's name.
     let mut rows: Vec<Row> = Vec::new();
     ui.add_space(8.0);
+    events_row(app, ui, guild);
     for id in loose {
         let rect = channel_row(app, ui, id, movable);
         rows.push((rect, None, Some(id), false));
@@ -340,6 +341,65 @@ fn drag_channel(app: &mut App, ui: &mut Ui, rows: &[Row]) {
     }
 }
 
+/// "Eventos" at the top of the channel list, with a line under it, as
+/// Discord; the count when there are some, and a click opens the next.
+fn events_row(app: &mut App, ui: &mut Ui, guild: Id) {
+    let palette = app.palette;
+    let Some(g) = app.model.guild(guild) else {
+        return;
+    };
+    let count = g.events.len();
+    let first = g.events.iter().find(|e| e.live).or(g.events.first());
+    let hint = first.map(|e| e.name.clone());
+    let first = first.map(|e| e.id);
+    let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+    let rect = Rect::from_min_max(
+        pos2(slot.left() + 8.0, slot.top() + 1.0),
+        pos2(slot.right() - 8.0, slot.bottom() - 1.0),
+    );
+    let hovered = response.hovered();
+    if hovered {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), palette.hover);
+    }
+    let tint = if hovered || count > 0 {
+        palette.text
+    } else {
+        palette.muted
+    };
+    paint_icon(ui, Icon::Calendar, pos2(rect.left() + 18.0, rect.center().y), 18.0, tint);
+    let label = match count {
+        0 => "Eventos".to_owned(),
+        1 => "1 Evento".to_owned(),
+        n => format!("{n} Eventos"),
+    };
+    ui.painter().text(
+        pos2(rect.left() + 36.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        font(Weight::Medium, 16.0),
+        tint,
+    );
+    let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
+    ui.painter().hline(
+        (line.left() + 16.0)..=(line.right() - 16.0),
+        line.center().y,
+        Stroke::new(1.0, palette.selected),
+    );
+    let response = match hint {
+        Some(name) => response.on_hover_text(name),
+        None => response,
+    };
+    if response.clicked() {
+        let url = match first {
+            Some(event) => format!("https://discord.com/events/{guild}/{event}"),
+            None => format!("https://discord.com/channels/{guild}"),
+        };
+        app.actions
+            .push(Action::Chat(crate::chat::ChatAction::OpenUrl(url)));
+    }
+}
+
 /// One channel; `movable` lets it be dragged. Returns where it was drawn.
 fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     let palette = app.palette;
@@ -438,7 +498,14 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     if let Some(since) = joined
         && !buttons
     {
-        let seconds = since.elapsed().as_secs();
+        // How long the call has gone on, as Discord counts it; what the
+        // user has been in it for until Discord says.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let seconds = channel
+            .voice_start
+            .map_or_else(|| since.elapsed().as_secs(), |start| now.saturating_sub(start));
         let time = if seconds >= 3600 {
             format!(
                 "{}:{:02}:{:02}",
