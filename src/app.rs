@@ -694,6 +694,7 @@ impl App {
                     }
                 }
                 Event::FilesPicked(paths) => self.apply_chat(ChatAction::AddFiles(paths)),
+                Event::IconPicked(path) => self.icon_picked(&path),
                 Event::Image {
                     url,
                     bytes,
@@ -885,11 +886,20 @@ impl App {
                     self.screen = Screen::Connecting;
                     self.backend.send(Command::Logout);
                 }
-                Action::GoHome => self.go_home(),
-                Action::OpenServer(id) => self.open_server(id),
+                Action::GoHome => {
+                    self.admin.discover = None;
+                    self.go_home();
+                }
+                Action::OpenServer(id) => {
+                    self.admin.discover = None;
+                    self.open_server(id);
+                }
                 Action::Back => self.step(true),
                 Action::Forward => self.step(false),
-                Action::OpenChannel(id) => self.open_channel(id),
+                Action::OpenChannel(id) => {
+                    self.admin.discover = None;
+                    self.open_channel(id);
+                }
                 Action::ToggleCategory(id) => {
                     if !self.collapsed.remove(&id) {
                         self.collapsed.insert(id);
@@ -1548,11 +1558,16 @@ impl App {
                 let Some(guild) = parse::guild(&data, &mut self.model) else {
                     return;
                 };
+                let id = guild.id;
                 match self.model.guilds.iter_mut().find(|g| g.id == guild.id) {
                     Some(old) => *old = guild,
                     None => self.model.guilds.push(guild),
                 }
                 self.model.settle_folders();
+                if self.admin.open_when_ready == Some(id) {
+                    self.admin.open_when_ready = None;
+                    self.open_server(id);
+                }
             }
             "USER_SETTINGS_UPDATE" if data["guild_folders"].is_array() => {
                 self.model.folders = parse::folders(&data["guild_folders"]);

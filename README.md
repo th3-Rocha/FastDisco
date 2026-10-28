@@ -162,6 +162,9 @@ everything Discord's desktop app does.
 - [x] Your own profile card: "No que você está pensando?" (custom status), the call you are in, Editar perfil, status (Disponível, Ausente, Não perturbar, Invisível), Mudar de conta
 - [x] Discord's invite dialog: search friends, send the invite to each, copy the link
 - [x] Groups show their own picture
+- [x] "Criar seu servidor": make your own or start from Discord's templates, the audience question, the name and icon
+- [x] "Entrar em um servidor" with an invite (the browser takes over when Discord asks for a captcha)
+- [x] "Descubra": the featured servers in Discord's cards, joining them; the rail's grey add and discover tiles
 - [ ] Video calls and screen sharing
 - [ ] Direct message calls
 - [ ] Scheduled events

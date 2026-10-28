@@ -176,9 +176,10 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
     let Some(modal) = app.admin.modal.clone() else {
         return;
     };
-    if let Modal::Invite { link } = modal {
-        invite(app, ui, link);
-        return;
+    match modal {
+        Modal::Invite { link } => return invite(app, ui, link),
+        Modal::CreateGuild { .. } | Modal::JoinGuild { .. } => return create_guild(app, ui, modal),
+        _ => {}
     }
     let palette = app.palette;
     let busy = app.admin.busy;
@@ -187,7 +188,9 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
     let mut close = false;
     let mut edited: Option<Modal> = None;
     let (title, button, danger) = match &modal {
-        Modal::Invite { .. } => ("Convidar amigos", "Copiar", false),
+        Modal::Invite { .. } | Modal::CreateGuild { .. } | Modal::JoinGuild { .. } => {
+            ("Convidar amigos", "Copiar", false)
+        }
         Modal::Nick { .. } => ("Alterar apelido", "Salvar", false),
         Modal::VoiceStatus { .. } => ("Definir status do canal", "Salvar", false),
         Modal::CustomStatus { .. } => ("Definir um status personalizado", "Salvar", false),
@@ -226,6 +229,7 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
                     inner.inner.changed()
                 };
                 match modal.clone() {
+                    Modal::CreateGuild { .. } | Modal::JoinGuild { .. } => {}
                     Modal::Invite { link } => {
                         ui.label(RichText::new("Envie este link para seus amigos. Ele expira em 7 dias.").color(palette.muted));
                         let text = link.clone().unwrap_or_else(|| "Criando convite…".into());
@@ -1104,4 +1108,279 @@ fn invite(app: &mut App, ui: &mut Ui, link: Option<String>) {
         ui.data_mut(|d| d.insert_temp(state, (search, sent)));
     }
     app.actions.extend(out);
+}
+
+/// "Criar seu servidor" and "Entrar em um servidor", as Discord's dialog:
+/// a centred title, the steps, and Voltar with the main button at the foot.
+fn create_guild(app: &mut App, ui: &mut Ui, modal: Modal) {
+    use crate::admin::{CreateStep, TEMPLATES};
+    let palette = app.palette;
+    let busy = app.admin.busy;
+    let error = app.admin.error.clone();
+    let mut next: Option<Modal> = None;
+    let mut submit = false;
+    let mut close = false;
+    let mut pick = false;
+    let me_name = app
+        .model
+        .user(app.model.me)
+        .map(|u| u.name.clone())
+        .unwrap_or_default();
+    let tile = palette.sidebar;
+    // A row with an emoji, a label and a chevron, as Discord's choices.
+    let choice = |ui: &mut Ui, emoji: &str, label: &str| -> bool {
+        let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::click());
+        let fill = if response.hovered() { palette.hover } else { tile };
+        ui.painter().rect(rect, CornerRadius::same(8), fill, egui::Stroke::new(1.0, palette.selected), egui::StrokeKind::Inside);
+        ui.painter().text(pos2(rect.left() + 26.0, rect.center().y), Align2::CENTER_CENTER, emoji, font(Weight::Regular, 22.0), palette.strong);
+        ui.painter().text(pos2(rect.left() + 56.0, rect.center().y), Align2::LEFT_CENTER, label, font(Weight::Medium, 16.0), palette.strong);
+        paint_icon(ui, Icon::ChevronRight, pos2(rect.right() - 24.0, rect.center().y), 20.0, palette.icon);
+        response.clicked()
+    };
+    let centered = |ui: &mut Ui, text: &str, size: f32, weight: Weight, color: Color32| {
+        ui.vertical_centered(|ui| {
+            ui.add(egui::Label::new(RichText::new(text).font(font(weight, size)).color(color)).wrap());
+        });
+    };
+    let response = egui::Modal::new(egui::Id::new("create-guild-modal"))
+        .backdrop_color(Color32::from_black_alpha(180))
+        .frame(
+            Frame::new()
+                .fill(palette.chat)
+                .corner_radius(CornerRadius::same(12))
+                .stroke(egui::Stroke::new(1.0, palette.selected)),
+        )
+        .show(ui.ctx(), |ui| {
+            ui.set_width(460.0);
+            ui.spacing_mut().item_spacing = vec2(0.0, 8.0);
+            // The close button at the top right.
+            let corner = Rect::from_center_size(ui.max_rect().right_top() + vec2(-24.0, 24.0), Vec2::splat(28.0));
+            let x = ui.interact(corner, ui.id().with("close"), Sense::click());
+            Frame::new().inner_margin(Margin { left: 16, right: 16, top: 24, bottom: 16 }).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                match modal.clone() {
+                    Modal::CreateGuild { step: CreateStep::Start, .. } => {
+                        centered(ui, "Criar seu servidor", 24.0, Weight::Bold, palette.strong);
+                        centered(ui, "Seu servidor é onde você e seus amigos se reúnem. Crie o seu e comece a interagir.", 15.0, Weight::Regular, palette.text);
+                        ui.add_space(12.0);
+                        egui::ScrollArea::vertical().max_height(330.0).auto_shrink([false, true]).show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 8.0;
+                            for (i, template) in TEMPLATES.iter().enumerate() {
+                                if i == 1 {
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new("Começar de um molde").font(font(Weight::SemiBold, 12.0)).color(palette.text));
+                                }
+                                if choice(ui, template.emoji, template.label) {
+                                    next = Some(Modal::CreateGuild {
+                                        step: CreateStep::Audience,
+                                        template: i,
+                                        name: format!("Servidor de {me_name}"),
+                                        icon: None,
+                                    });
+                                }
+                            }
+                        });
+                        ui.add_space(8.0);
+                        centered(ui, "Já tem um convite?", 20.0, Weight::SemiBold, palette.strong);
+                        let join = egui::Button::new(RichText::new("Entrar em um servidor").font(font(Weight::Medium, 14.0)).color(palette.strong))
+                            .fill(palette.hover)
+                            .corner_radius(CornerRadius::same(8))
+                            .min_size(vec2(ui.available_width(), 40.0));
+                        if ui.add(join).clicked() {
+                            next = Some(Modal::JoinGuild { code: String::new() });
+                        }
+                    }
+                    Modal::CreateGuild { step: CreateStep::Audience, template, name, icon } => {
+                        centered(ui, "Conte-nos mais sobre seu servidor", 24.0, Weight::Bold, palette.strong);
+                        centered(ui, "Para ajudar com a configuração, diga se o seu novo servidor é apenas para alguns amigos ou para uma comunidade maior.", 15.0, Weight::Regular, palette.text);
+                        ui.add_space(12.0);
+                        let customize = Modal::CreateGuild { step: CreateStep::Customize, template, name, icon };
+                        if choice(ui, "🏛️", "Para um clube ou comunidade") || choice(ui, "🧑‍🤝‍🧑", "Para mim e meus amigos") {
+                            next = Some(customize.clone());
+                        }
+                        ui.add_space(4.0);
+                        ui.vertical_centered(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.label(RichText::new("Não tem certeza? Você pode").font(font(Weight::Regular, 14.0)).color(palette.text));
+                                let skip = ui.add(egui::Label::new(RichText::new("pular esta pergunta").font(font(Weight::Medium, 14.0)).color(Color32::from_rgb(0x00, 0xa8, 0xfc))).sense(Sense::click()));
+                                ui.label(RichText::new("por enquanto.").font(font(Weight::Regular, 14.0)).color(palette.text));
+                                if skip.clicked() {
+                                    next = Some(customize.clone());
+                                }
+                            });
+                        });
+                    }
+                    Modal::CreateGuild { step: CreateStep::Customize, template, mut name, icon } => {
+                        centered(ui, "Personalize seu servidor", 24.0, Weight::Bold, palette.strong);
+                        centered(ui, "Deixe seu novo servidor com a sua cara dando um nome e um ícone a ele. Você pode alterá-los a qualquer momento.", 15.0, Weight::Regular, palette.text);
+                        ui.add_space(12.0);
+                        ui.vertical_centered(|ui| {
+                            let (spot, response) = ui.allocate_exact_size(Vec2::splat(80.0), Sense::click());
+                            let picture = icon.as_ref().map(|uri| format!("bytes://new-guild-icon-{}", uri.len()));
+                            match (&icon, &picture) {
+                                (Some(uri), Some(key)) => {
+                                    use base64::Engine;
+                                    let data = uri.split_once(',').map(|(_, d)| d).unwrap_or_default();
+                                    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
+                                        ui.ctx().include_bytes(key.clone(), bytes);
+                                    }
+                                    egui::Image::new(key.clone()).corner_radius(CornerRadius::same(40)).paint_at(ui, spot);
+                                }
+                                _ => {
+                                    // Discord's dashed circle with a camera and "ENVIAR".
+                                    let steps = 28;
+                                    for i in 0..steps {
+                                        if i % 2 == 0 {
+                                            let a0 = std::f32::consts::TAU * i as f32 / steps as f32;
+                                            let a1 = std::f32::consts::TAU * (i + 1) as f32 / steps as f32;
+                                            let c = spot.center();
+                                            ui.painter().line_segment(
+                                                [c + 38.0 * vec2(a0.cos(), a0.sin()), c + 38.0 * vec2(a1.cos(), a1.sin())],
+                                                egui::Stroke::new(2.0, if response.hovered() { palette.strong } else { palette.icon }),
+                                            );
+                                        }
+                                    }
+                                    paint_icon(ui, Icon::Image, spot.center() - vec2(0.0, 8.0), 22.0, palette.icon);
+                                    ui.painter().text(spot.center() + vec2(0.0, 14.0), Align2::CENTER_CENTER, "ENVIAR", font(Weight::Bold, 11.0), palette.icon);
+                                    ui.painter().circle_filled(spot.right_top() + vec2(-8.0, 10.0), 11.0, palette.accent);
+                                    paint_icon(ui, Icon::Plus, spot.right_top() + vec2(-8.0, 10.0), 14.0, Color32::WHITE);
+                                }
+                            }
+                            if response.on_hover_text("Enviar um ícone").clicked() {
+                                pick = true;
+                            }
+                        });
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Nome do servidor").font(font(Weight::SemiBold, 14.0)).color(palette.strong));
+                        let edit = Frame::new()
+                            .fill(palette.rail)
+                            .corner_radius(CornerRadius::same(8))
+                            .stroke(egui::Stroke::new(1.0, palette.selected))
+                            .inner_margin(Margin::same(10))
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut name)
+                                        .frame(Frame::NONE)
+                                        .font(font(Weight::Regular, 16.0))
+                                        .text_color(palette.text)
+                                        .desired_width(f32::INFINITY),
+                                )
+                            });
+                        if edit.inner.changed() {
+                            next = Some(Modal::CreateGuild { step: CreateStep::Customize, template, name: name.clone(), icon: icon.clone() });
+                        }
+                        ui.label(RichText::new("Ao criar um servidor, você concorda com as Diretrizes da Comunidade do Discord.").font(font(Weight::Regular, 12.0)).color(palette.muted));
+                    }
+                    Modal::JoinGuild { mut code } => {
+                        centered(ui, "Entrar em um servidor", 24.0, Weight::Bold, palette.strong);
+                        centered(ui, "Insira um convite abaixo para entrar em um servidor existente", 15.0, Weight::Regular, palette.text);
+                        ui.add_space(12.0);
+                        ui.label(RichText::new("Link de convite *").font(font(Weight::SemiBold, 14.0)).color(palette.strong));
+                        let edit = Frame::new()
+                            .fill(palette.rail)
+                            .corner_radius(CornerRadius::same(8))
+                            .stroke(egui::Stroke::new(1.0, palette.selected))
+                            .inner_margin(Margin::same(10))
+                            .show(ui, |ui| {
+                                let r = ui.add(
+                                    egui::TextEdit::singleline(&mut code)
+                                        .frame(Frame::NONE)
+                                        .hint_text(RichText::new("https://discord.gg/hTKzmak").color(palette.muted))
+                                        .font(font(Weight::Regular, 16.0))
+                                        .text_color(palette.text)
+                                        .desired_width(f32::INFINITY),
+                                );
+                                if ui.memory(|m| m.focused().is_none()) {
+                                    r.request_focus();
+                                }
+                                r
+                            });
+                        if edit.inner.changed() {
+                            next = Some(Modal::JoinGuild { code: code.clone() });
+                        }
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("Os convites são parecidos com estes:").font(font(Weight::SemiBold, 14.0)).color(palette.strong));
+                        for example in ["hTKzmak", "https://discord.gg/hTKzmak", "https://discord.gg/cool-people"] {
+                            ui.label(RichText::new(example).font(font(Weight::Regular, 14.0)).color(palette.text));
+                        }
+                    }
+                    _ => {}
+                }
+                if let Some(error) = &error {
+                    ui.label(RichText::new(error).color(palette.danger));
+                }
+            });
+            paint_icon(ui, Icon::Close, corner.center(), 22.0, if x.hovered() { palette.strong } else { palette.icon });
+            if x.clicked() {
+                close = true;
+            }
+            // The foot: Voltar and the main button, except on the first step.
+            let main = match &modal {
+                Modal::CreateGuild { step: CreateStep::Customize, .. } => Some("Criar"),
+                Modal::JoinGuild { .. } => Some("Entrar no servidor"),
+                _ => None,
+            };
+            let back = match &modal {
+                Modal::CreateGuild { step: CreateStep::Audience, .. } | Modal::JoinGuild { .. } => Some(Modal::CreateGuild {
+                    step: CreateStep::Start,
+                    template: 0,
+                    name: String::new(),
+                    icon: None,
+                }),
+                Modal::CreateGuild { step: CreateStep::Customize, template, name, icon } => Some(Modal::CreateGuild {
+                    step: CreateStep::Audience,
+                    template: *template,
+                    name: name.clone(),
+                    icon: icon.clone(),
+                }),
+                _ => None,
+            };
+            if back.is_some() || main.is_some() {
+                Frame::new()
+                    .fill(palette.sidebar)
+                    .corner_radius(CornerRadius { nw: 0, ne: 0, sw: 12, se: 12 })
+                    .inner_margin(Margin::same(16))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            if let Some(back) = back {
+                                let voltar = egui::Button::new(RichText::new("Voltar").font(font(Weight::Medium, 14.0)).color(palette.strong)).frame(false).min_size(vec2(60.0, 38.0));
+                                if ui.add(voltar).clicked() {
+                                    next = Some(back);
+                                }
+                            }
+                            if let Some(main) = main {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let label = if busy { "Aguarde…" } else { main };
+                                    let button = egui::Button::new(RichText::new(label).font(font(Weight::Medium, 14.0)).color(Color32::WHITE))
+                                        .fill(palette.accent)
+                                        .corner_radius(CornerRadius::same(8))
+                                        .min_size(vec2(96.0, 38.0));
+                                    if ui.add_enabled(!busy, button).clicked() {
+                                        submit = true;
+                                    }
+                                });
+                            }
+                        });
+                    });
+            }
+        });
+    if response.should_close() {
+        close = true;
+    }
+    if pick {
+        act(app, AdminAction::PickIcon);
+    }
+    if close {
+        act(app, AdminAction::CloseModal);
+        return;
+    }
+    if let Some(next) = next {
+        app.admin.error = None;
+        app.admin.modal = Some(next);
+    }
+    if submit && !busy {
+        act(app, AdminAction::Submit);
+    }
 }

@@ -120,6 +120,8 @@ pub enum Command {
     },
     /// The system's file picker, for files to send.
     PickFiles,
+    /// A picture for a new server's icon.
+    PickIcon,
     Ack {
         channel: u64,
         message: u64,
@@ -224,6 +226,7 @@ pub enum Event {
         list: Vec<rest::Gif>,
     },
     FilesPicked(Vec<std::path::PathBuf>),
+    IconPicked(std::path::PathBuf),
     /// A downloaded picture, `ext` from its content type.
     Image {
         url: String,
@@ -638,6 +641,20 @@ impl Worker {
                             let _ = events.send(Event::Gifs { query, list });
                         }
                         Err(error) => log::warn!("gifs: {error}"),
+                    }
+                });
+            }
+            Command::PickIcon => {
+                let (events, ctx) = (self.events.clone(), self.ctx.clone());
+                tokio::spawn(async move {
+                    let picked = rfd::AsyncFileDialog::new()
+                        .set_title("Escolher ícone")
+                        .add_filter("Imagens", &["png", "jpg", "jpeg", "gif", "webp"])
+                        .pick_file()
+                        .await;
+                    if let Some(file) = picked {
+                        let _ = events.send(Event::IconPicked(file.path().to_owned()));
+                        ctx.wake();
                     }
                 });
             }

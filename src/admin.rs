@@ -25,6 +25,18 @@ pub enum Tag {
     },
     /// The user's status or custom status saved; nothing more to do.
     Presence,
+    /// A new server, opened once the gateway brings it.
+    GuildCreated,
+    /// The featured servers for "Descubra".
+    Discover,
+    /// Joined a server from "Descubra".
+    JoinedDiscoverable {
+        guild: Id,
+    },
+    /// Joined a server from an invite.
+    Joined {
+        code: String,
+    },
     Created,
     Left {
         guild: Id,
@@ -82,6 +94,19 @@ pub enum Modal {
         channel: Id,
         text: String,
     },
+    /// "Criar seu servidor", step by step as Discord's.
+    CreateGuild {
+        step: CreateStep,
+        /// Index into `TEMPLATES`.
+        template: usize,
+        name: String,
+        /// The icon as a data URI, once picked.
+        icon: Option<String>,
+    },
+    /// "Entrar em um servidor" with an invite.
+    JoinGuild {
+        code: String,
+    },
     /// "No que você está pensando?": the user's custom status.
     CustomStatus {
         text: String,
@@ -127,6 +152,117 @@ pub struct GuildSettings {
     pub message: Option<String>,
 }
 
+/// Where "Criar seu servidor" is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CreateStep {
+    /// Make your own, or start from a template.
+    Start,
+    /// For friends or for a community.
+    Audience,
+    /// The name and the icon.
+    Customize,
+}
+
+/// Discord's server templates: the label, its emoji, and the categories
+/// with their text and voice channels.
+pub struct Template {
+    pub label: &'static str,
+    pub emoji: &'static str,
+    pub categories: &'static [(&'static str, &'static [&'static str], &'static [&'static str])],
+}
+
+pub const TEMPLATES: &[Template] = &[
+    Template {
+        label: "Criar o meu",
+        emoji: "🧑‍💻",
+        categories: &[("Canais de texto", &["geral"], &[]), ("Canais de voz", &[], &["Geral"])],
+    },
+    Template {
+        label: "Jogos",
+        emoji: "🎮",
+        categories: &[
+            ("Canais de texto", &["geral", "clipes-e-destaques"], &[]),
+            ("Canais de voz", &[], &["Saguão", "Jogando"]),
+        ],
+    },
+    Template {
+        label: "Amigos",
+        emoji: "💗",
+        categories: &[
+            ("Canais de texto", &["geral", "jogos", "música"], &[]),
+            ("Canais de voz", &[], &["Saguão", "Sala de transmissão"]),
+        ],
+    },
+    Template {
+        label: "Grupo de estudos",
+        emoji: "🍎",
+        categories: &[
+            ("Informações", &["boas-vindas-e-regras", "notas-e-recursos"], &[]),
+            (
+                "Canais de texto",
+                &["geral", "ajuda-com-tarefas", "planejamento-de-sessões", "fora-do-tópico"],
+                &[],
+            ),
+            ("Canais de voz", &[], &["Saguão", "Sala de estudos 1", "Sala de estudos 2"]),
+        ],
+    },
+    Template {
+        label: "Clube escolar",
+        emoji: "📘",
+        categories: &[
+            ("Informações", &["boas-vindas-e-regras", "anúncios", "recursos"], &[]),
+            ("Canais de texto", &["geral", "planejamento-de-reuniões", "fora-do-tópico"], &[]),
+            ("Canais de voz", &[], &["Saguão", "Sala de reuniões"]),
+        ],
+    },
+    Template {
+        label: "Comunidade local",
+        emoji: "🌳",
+        categories: &[
+            ("Informações", &["boas-vindas-e-regras", "anúncios", "recursos"], &[]),
+            ("Canais de texto", &["geral", "planejamento-de-encontros", "fora-do-tópico"], &[]),
+            ("Canais de voz", &[], &["Saguão", "Sala de reuniões"]),
+        ],
+    },
+    Template {
+        label: "Artistas e criadores",
+        emoji: "🎨",
+        categories: &[
+            ("Informações", &["boas-vindas-e-regras", "anúncios"], &[]),
+            ("Canais de texto", &["geral", "eventos", "ideias-e-feedback"], &[]),
+            ("Canais de voz", &[], &["Saguão", "Comunidade", "Sala de transmissão"]),
+        ],
+    },
+];
+
+/// The channels of a new server from a template, with placeholder ids
+/// tying channels to their categories, as Discord's create call takes.
+fn template_channels(template: &Template) -> Value {
+    let mut list = Vec::new();
+    let mut next = 1u64;
+    for (category, text, voice) in template.categories {
+        let parent = next;
+        next += 1;
+        list.push(json!({ "id": parent.to_string(), "name": category, "type": 4 }));
+        for name in *text {
+            list.push(json!({ "id": next.to_string(), "name": name, "type": 0, "parent_id": parent.to_string() }));
+            next += 1;
+        }
+        for name in *voice {
+            list.push(json!({ "id": next.to_string(), "name": name, "type": 2, "parent_id": parent.to_string() }));
+            next += 1;
+        }
+    }
+    Value::Array(list)
+}
+
+/// The code in an invite link: "https://discord.gg/abc" and "abc" are
+/// both "abc".
+pub fn invite_code(text: &str) -> String {
+    let text = text.trim().trim_end_matches('/');
+    text.rsplit('/').next().unwrap_or(text).to_owned()
+}
+
 #[derive(Default)]
 pub struct Admin {
     pub menu: bool,
@@ -136,6 +272,56 @@ pub struct Admin {
     pub settings: Option<GuildSettings>,
     /// The channel the open invite leads to.
     pub invite_channel: Option<Id>,
+    /// A server just created or joined, to open when it arrives.
+    pub open_when_ready: Option<Id>,
+    /// Discord's "Descubra" page, while open.
+    pub discover: Option<Discover>,
+}
+
+/// The servers Discord features on its "Descubra" page.
+#[derive(Default)]
+pub struct Discover {
+    pub guilds: Vec<DiscoverGuild>,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DiscoverGuild {
+    pub id: Id,
+    pub name: String,
+    pub description: String,
+    pub icon: Option<String>,
+    pub splash: Option<String>,
+    pub online: u64,
+    pub members: u64,
+    pub verified: bool,
+}
+
+fn discover_guild(value: &Value) -> Option<DiscoverGuild> {
+    use crate::discord::CDN;
+    let id = crate::discord::parse::id(&value["id"])?;
+    let features = value["features"].as_array();
+    let has = |f: &str| features.is_some_and(|l| l.iter().any(|x| x == f));
+    Some(DiscoverGuild {
+        id,
+        name: value["name"].as_str().unwrap_or_default().to_owned(),
+        description: value["description"].as_str().unwrap_or_default().to_owned(),
+        icon: value["icon"]
+            .as_str()
+            .map(|h| format!("{CDN}/icons/{id}/{h}.png?size=96")),
+        splash: value["discovery_splash"]
+            .as_str()
+            .map(|h| format!("{CDN}/discovery-splashes/{id}/{h}.jpg?size=600"))
+            .or_else(|| {
+                value["splash"]
+                    .as_str()
+                    .map(|h| format!("{CDN}/splashes/{id}/{h}.jpg?size=600"))
+            }),
+        online: value["approximate_presence_count"].as_u64().unwrap_or(0),
+        members: value["approximate_member_count"].as_u64().unwrap_or(0),
+        verified: has("VERIFIED") || has("PARTNERED"),
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -145,6 +331,12 @@ pub enum AdminAction {
     Open(Modal),
     /// An invite to a voice channel, from its row.
     InviteTo(Id),
+    /// Choosing the new server's icon.
+    PickIcon,
+    /// Discord's "Descubra" page.
+    OpenDiscover,
+    /// Joining a server from "Descubra".
+    JoinDiscoverable(Id),
     /// Online, idle, do not disturb or invisible, from the profile card.
     SetStatus(crate::model::Status),
     /// The open dialog's main button.
@@ -199,6 +391,33 @@ impl App {
                     self.create_invite(self.channel);
                 }
                 self.admin.modal = Some(modal);
+            }
+            AdminAction::PickIcon => self.backend().send(Command::PickIcon),
+            AdminAction::OpenDiscover => {
+                let fresh = self.admin.discover.is_none();
+                let discover = self.admin.discover.get_or_insert_with(Discover::default);
+                if fresh && discover.guilds.is_empty() {
+                    discover.loading = true;
+                    self.api(
+                        Tag::Discover,
+                        Method::GET,
+                        "/discoverable-guilds?offset=0&limit=48".into(),
+                        None,
+                    );
+                }
+            }
+            AdminAction::JoinDiscoverable(guild) => {
+                if self.model.guild(guild).is_some() {
+                    self.admin.discover = None;
+                    self.actions.push(crate::app::Action::OpenServer(guild));
+                    return;
+                }
+                self.api(
+                    Tag::JoinedDiscoverable { guild },
+                    Method::PUT,
+                    format!("/guilds/{guild}/members/@me?lurker=false"),
+                    Some(json!({})),
+                );
             }
             AdminAction::SetStatus(status) => {
                 let me = self.model.me;
@@ -338,6 +557,41 @@ impl App {
         }
     }
 
+    /// The new server's icon, as the data URI Discord takes.
+    pub fn icon_picked(&mut self, path: &std::path::Path) {
+        use base64::Engine;
+        let Ok(bytes) = std::fs::read(path) else {
+            return;
+        };
+        let kind = match path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("jpg" | "jpeg") => "jpeg",
+            Some("gif") => "gif",
+            Some("webp") => "webp",
+            _ => "png",
+        };
+        let uri = format!(
+            "data:image/{kind};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        );
+        if let Some(Modal::CreateGuild { icon, .. }) = &mut self.admin.modal {
+            *icon = Some(uri);
+        }
+    }
+
+    /// Opens a server now if it is here, else once GUILD_CREATE brings it.
+    fn open_guild_when_ready(&mut self, id: Id) {
+        if self.model.guild(id).is_some() {
+            self.actions.push(crate::app::Action::OpenServer(id));
+        } else {
+            self.admin.open_when_ready = Some(id);
+        }
+    }
+
     /// The user's status and custom status, to the gateway.
     fn send_presence(&self) {
         let me = self.model.me;
@@ -392,6 +646,37 @@ impl App {
                     Method::PATCH,
                     format!("/guilds/{guild}/members/@me"),
                     Some(json!({ "nick": nick })),
+                );
+            }
+            Modal::CreateGuild {
+                template,
+                name,
+                icon,
+                ..
+            } => {
+                let template = &TEMPLATES[template.min(TEMPLATES.len() - 1)];
+                let mut body = json!({
+                    "name": name.trim(),
+                    "channels": template_channels(template),
+                    "system_channel_id": "2",
+                });
+                if let Some(icon) = icon {
+                    body["icon"] = json!(icon);
+                }
+                self.api(Tag::GuildCreated, Method::POST, "/guilds".into(), Some(body));
+            }
+            Modal::JoinGuild { code } => {
+                let code = invite_code(&code);
+                if code.is_empty() {
+                    self.admin.busy = false;
+                    self.admin.error = Some("Insira um link de convite ou código válido.".into());
+                    return;
+                }
+                self.api(
+                    Tag::Joined { code: code.clone() },
+                    Method::POST,
+                    format!("/invites/{code}"),
+                    Some(json!({})),
                 );
             }
             Modal::CustomStatus { text } => {
@@ -515,6 +800,30 @@ impl App {
         let value = match result {
             Ok(value) => value,
             Err(error) => {
+                // Discord asks for a captcha to join from outside its own
+                // apps: the invite opens in the browser instead.
+                if let Tag::Discover = tag {
+                    if let Some(discover) = &mut self.admin.discover {
+                        discover.loading = false;
+                        discover.error = Some(error);
+                    }
+                    return;
+                }
+                if let Tag::JoinedDiscoverable { guild } = tag {
+                    self.apply_chat(crate::chat::ChatAction::OpenUrl(format!(
+                        "https://discord.com/channels/{guild}"
+                    )));
+                    return;
+                }
+                if let Tag::Joined { code } = &tag
+                    && error.to_lowercase().contains("captcha")
+                {
+                    self.admin.modal = None;
+                    self.apply_chat(crate::chat::ChatAction::OpenUrl(format!(
+                        "https://discord.gg/{code}"
+                    )));
+                    return;
+                }
                 if let Tag::VoiceMember = tag {
                     self.chat.dialog = Some(crate::chat::Dialog::Failed(error));
                 } else if self.admin.modal.is_some() {
@@ -533,6 +842,35 @@ impl App {
                 }
             }
             Tag::Presence => self.admin.modal = None,
+            Tag::Discover => {
+                if let Some(discover) = &mut self.admin.discover {
+                    discover.loading = false;
+                    let list = value["guilds"].as_array().or(value.as_array());
+                    discover.guilds = list
+                        .into_iter()
+                        .flatten()
+                        .filter_map(discover_guild)
+                        .collect();
+                }
+            }
+            Tag::JoinedDiscoverable { guild } => {
+                self.admin.discover = None;
+                self.open_guild_when_ready(guild);
+            }
+            Tag::GuildCreated => {
+                self.admin.modal = None;
+                if let Some(id) = crate::discord::parse::id(&value["id"]) {
+                    self.open_guild_when_ready(id);
+                }
+            }
+            Tag::Joined { .. } => {
+                self.admin.modal = None;
+                if let Some(id) = crate::discord::parse::id(&value["guild"]["id"])
+                    .or_else(|| crate::discord::parse::id(&value["guild_id"]))
+                {
+                    self.open_guild_when_ready(id);
+                }
+            }
             Tag::VoiceStatus { channel, status } => {
                 if let Some(c) = self.model.channels.get_mut(&channel) {
                     c.voice_status = (!status.is_empty()).then_some(status);

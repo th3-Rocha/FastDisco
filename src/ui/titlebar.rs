@@ -110,7 +110,10 @@ fn place(app: &App, ui: &mut Ui, rect: Rect) {
         Place::Server(id) => app.model.guild(id),
         Place::Home => None,
     };
+    let discovering = app.admin.discover.is_some();
+    let guild = guild.filter(|_| !discovering);
     let title = match (&guild, super::nav::is_friends(app)) {
+        _ if discovering => "Descubra".to_owned(),
         (Some(guild), _) => guild.name.clone(),
         (None, true) => "Amigos".to_owned(),
         (None, false) => "Mensagens diretas".to_owned(),
@@ -131,7 +134,8 @@ fn place(app: &App, ui: &mut Ui, rect: Rect) {
         None => {
             ui.painter()
                 .rect_filled(icon_rect, CornerRadius::same(5), palette.accent);
-            paint_icon(ui, Icon::Discord, icon_rect.center(), 13.0, egui::Color32::WHITE);
+            let mark = if discovering { Icon::Compass } else { Icon::Discord };
+            paint_icon(ui, mark, icon_rect.center(), 13.0, egui::Color32::WHITE);
         }
     }
     Elide::new(ui, left + icon + 8.0 + width).text(

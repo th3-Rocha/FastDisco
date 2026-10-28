@@ -6,6 +6,7 @@ mod bots;
 mod call;
 mod chat;
 mod composer;
+mod discover;
 mod friends;
 mod login;
 mod message;
@@ -69,9 +70,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             titlebar::show(app, ui);
             titlebar::voice_taken(app, ui);
             rail::show(app, ui);
-            let sidebar = sidebar::show(app, ui);
-            sidebar::card(app, ui, window);
-            chat::show(app, ui);
+            let sidebar = if app.admin.discover.is_some() {
+                let rect = discover::sidebar(app, ui);
+                sidebar::card(app, ui, window);
+                discover::page(app, ui);
+                rect
+            } else {
+                let rect = sidebar::show(app, ui);
+                sidebar::card(app, ui, window);
+                chat::show(app, ui);
+                rect
+            };
             sidebar::frame_line(app, ui, sidebar, window);
             profile::popout(app, ui);
             sidebar::logout_dialog(app, ui);
