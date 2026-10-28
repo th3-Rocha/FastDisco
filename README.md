@@ -104,7 +104,7 @@ everything Discord's desktop app does.
 - [x] Resizable channel list, remembered between runs
 - [x] Soft, low, melodic notification and call sounds
 - [x] Unread dots, mention badges, collapsible categories
-- [x] Rail tooltips, the pill beside the open server
+- [x] Rail tooltips, the pill beside the open server, who is in a call on each server
 - [x] Alt+Up and Alt+Down between channels
 - [x] Server folders in the rail
 - [x] Dragging servers and channels to reorder them

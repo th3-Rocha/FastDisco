@@ -53,6 +53,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         false,
                         unread_dms,
                         "Mensagens diretas",
+                        &[],
                         |ui, rect, lit| {
                             let fill = if lit { palette.accent } else { palette.chat };
                             ui.painter().rect_filled(rect, radius(lit), fill);
@@ -93,7 +94,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             "https://discord.com/download",
                         ),
                     ] {
-                        let response = item(ui, app, false, false, 0, hint, |ui, rect, lit| {
+                        let response = item(ui, app, false, false, 0, hint, &[], |ui, rect, lit| {
                             ui.painter().rect_filled(
                                 rect,
                                 radius(lit),
@@ -162,6 +163,11 @@ fn servers(app: &mut App, ui: &mut Ui) {
                 .collect::<Vec<_>>()
                 .join(", ")
         });
+        let folder_voice: Vec<Id> = folder
+            .guilds
+            .iter()
+            .flat_map(|g| in_voice(app, *g))
+            .collect();
         let color = folder_color(folder.color);
         let head = item(
             ui,
@@ -170,6 +176,7 @@ fn servers(app: &mut App, ui: &mut Ui) {
             unread && !open,
             if open { 0 } else { mentions },
             &hint,
+            &if open { Vec::new() } else { folder_voice },
             |ui, rect, _| {
                 if open {
                     paint_icon(ui, Icon::Folder, rect.center(), 24.0, color);
@@ -225,6 +232,7 @@ fn guild_item(app: &App, ui: &mut Ui, id: Id, out: &mut Vec<Action>) -> egui::Re
     };
     let (unread, mentions) = app.model.guild_unread(guild);
     let selected = app.place == Place::Server(id);
+    let voice = in_voice(app, id);
     let response = item(
         ui,
         app,
@@ -232,6 +240,7 @@ fn guild_item(app: &App, ui: &mut Ui, id: Id, out: &mut Vec<Action>) -> egui::Re
         unread,
         mentions,
         &guild.name,
+        &voice,
         |ui, rect, lit| {
             paint_guild(ui, app, guild, rect, lit);
         },
@@ -440,6 +449,7 @@ fn radius(lit: bool) -> CornerRadius {
 
 /// One rail slot with the pill on its left: a dot for unread, taller under
 /// the pointer, tallest for the open server.
+#[allow(clippy::too_many_arguments)]
 fn item(
     ui: &mut Ui,
     app: &App,
@@ -447,6 +457,7 @@ fn item(
     unread: bool,
     mentions: u32,
     hint: &str,
+    voice: &[Id],
     paint: impl FnOnce(&Ui, Rect, bool),
 ) -> egui::Response {
     let palette = app.palette;
@@ -472,6 +483,14 @@ fn item(
         ui.painter()
             .rect_filled(bar, CornerRadius::same(4), palette.strong);
     }
+    // Someone is in a call here: Discord's speaker at the corner, unless
+    // a mention count takes it.
+    if !voice.is_empty() && mentions == 0 {
+        let center = pos2(rect.right() - 4.0, rect.bottom() - 4.0);
+        ui.painter().circle_filled(center, 10.0, palette.rail);
+        ui.painter().circle_filled(center, 8.0, palette.online);
+        paint_icon(ui, Icon::Speaker, center, 11.0, Color32::WHITE);
+    }
     if mentions > 0 {
         badge(
             ui,
@@ -482,9 +501,29 @@ fn item(
         );
     }
     if hovered && !ui.data(|d| d.get_temp::<Id>(egui::Id::new(DRAG)).is_some()) {
-        rail_tooltip(ui, rect, hint);
+        rail_tooltip(ui, app, rect, hint, voice);
     }
     response
+}
+
+/// Who is in a call on a server, by channel then name.
+fn in_voice(app: &App, guild: Id) -> Vec<Id> {
+    let mut list: Vec<(Id, String, Id)> = app
+        .model
+        .voice
+        .iter()
+        .filter(|((g, _), _)| *g == Some(guild))
+        .map(|((_, user), v)| {
+            let name = app
+                .model
+                .user(*user)
+                .map(|u| u.name.to_lowercase())
+                .unwrap_or_default();
+            (v.channel, name, *user)
+        })
+        .collect();
+    list.sort();
+    list.into_iter().map(|(_, _, user)| user).collect()
 }
 
 /// "Rust Brasil" is "RB", as the rail shows a server without an icon.
@@ -497,7 +536,7 @@ fn acronym(name: &str) -> String {
 
 /// Discord's tooltip beside the rail: the name in a dark bubble to the
 /// right, pointing at the icon.
-fn rail_tooltip(ui: &Ui, icon: Rect, text: &str) {
+fn rail_tooltip(ui: &Ui, app: &App, icon: Rect, text: &str, voice: &[Id]) {
     let floating = Color32::from_rgb(0x11, 0x12, 0x14);
     let at = egui::pos2(icon.right() + 14.0, icon.center().y);
     egui::Area::new(egui::Id::new("rail-tooltip"))
@@ -522,6 +561,9 @@ fn rail_tooltip(ui: &Ui, icon: Rect, text: &str) {
                     );
                     let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
                     ui.painter().galley(rect.min, galley, Color32::WHITE);
+                    if !voice.is_empty() {
+                        voice_row(ui, app, voice, floating);
+                    }
                 });
             let r = frame.response.rect;
             let tip = [
@@ -535,4 +577,45 @@ fn rail_tooltip(ui: &Ui, icon: Rect, text: &str) {
                 egui::Stroke::NONE,
             ));
         });
+}
+
+/// The tooltip's call line: a speaker and the faces in the call,
+/// overlapping, as Discord's.
+fn voice_row(ui: &mut Ui, app: &App, voice: &[Id], behind: Color32) {
+    const SHOWN: usize = 6;
+    const RADIUS: f32 = 12.0;
+    const STEP: f32 = 20.0;
+    ui.add_space(6.0);
+    let faces = voice.len().min(SHOWN);
+    let more = voice.len() - faces;
+    let width = 24.0 + faces as f32 * STEP + 4.0 + if more > 0 { 32.0 } else { 0.0 };
+    let (row, _) = ui.allocate_exact_size(vec2(width, RADIUS * 2.0 + 4.0), Sense::hover());
+    let y = row.center().y;
+    paint_icon(ui, Icon::Speaker, pos2(row.left() + 9.0, y), 18.0, app.palette.icon);
+    let mut x = row.left() + 26.0 + RADIUS;
+    for user in voice.iter().take(SHOWN) {
+        let center = pos2(x, y);
+        ui.painter().circle_filled(center, RADIUS + 2.0, behind);
+        match app.model.user(*user) {
+            Some(user) => super::widgets::avatar(ui, app, user, center, RADIUS, None),
+            None => {
+                ui.painter()
+                    .circle_filled(center, RADIUS, app.palette.selected);
+            }
+        }
+        x += STEP;
+    }
+    if more > 0 {
+        let center = pos2(x + 4.0, y);
+        ui.painter().circle_filled(center, RADIUS + 2.0, behind);
+        ui.painter()
+            .circle_filled(center, RADIUS, app.palette.selected);
+        ui.painter().text(
+            center,
+            Align2::CENTER_CENTER,
+            format!("+{more}"),
+            font(Weight::SemiBold, 11.0),
+            app.palette.strong,
+        );
+    }
 }
