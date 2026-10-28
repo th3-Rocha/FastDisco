@@ -217,8 +217,9 @@ fn decode(
         Some(data) => {
             let rtp = data.rtp();
             let payload = rtp.payload();
-            let end = payload.len().checked_sub(data.payload_end_pad)?;
-            let body = payload.get(data.payload_offset..end)?;
+            // Despite its name, songbird's payload_end_pad is where the body
+            // ends, not how long the padding after it is.
+            let body = payload.get(data.payload_offset..data.payload_end_pad)?;
             // A header extension sits before the Opus: its 4-byte header,
             // then as many 4-byte words as it says.
             let start = if rtp.get_extension() != 0 {
