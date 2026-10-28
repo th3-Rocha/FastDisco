@@ -177,6 +177,9 @@ pub fn channel(value: &Value, guild: Option<Id>) -> Option<Channel> {
         age_gated: false,
         voice_status: label(&value["status"]).filter(|s| !s.is_empty()),
         voice_start: voice_start(&value["voice_start_time"]),
+        icon: value["icon"]
+            .as_str()
+            .map(|hash| format!("{CDN}/channel-icons/{id}/{hash}.png?size=96")),
     })
 }
 

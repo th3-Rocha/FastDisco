@@ -117,7 +117,7 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                     app.model.direct_name(channel)
                 }
                 ChannelKind::Group => {
-                    paint_icon(ui, Icon::Users, pos2(x + 12.0, y), 22.0, palette.muted);
+                    super::widgets::group_icon(ui, app, channel, pos2(x + 12.0, y), 12.0);
                     x += 32.0;
                     app.model.direct_name(channel)
                 }

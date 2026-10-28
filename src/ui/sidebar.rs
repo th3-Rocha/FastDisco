@@ -754,8 +754,7 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
                 )
             }
             _ => {
-                ui.painter().circle_filled(center, 16.0, palette.accent);
-                paint_icon(ui, Icon::Users, center, 18.0, Color32::WHITE);
+                super::widgets::group_icon(ui, app, channel, center, 16.0);
                 let members = channel.recipients.len() + 1;
                 (
                     app.model.direct_name(channel),

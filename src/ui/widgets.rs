@@ -233,3 +233,28 @@ pub fn long_date(date: jiff::civil::Date) -> String {
         date.year()
     )
 }
+
+/// A group's picture, or Discord's coloured circle with two people when it
+/// has none, the colour following the group.
+pub fn group_icon(ui: &Ui, app: &App, channel: &crate::model::Channel, center: Pos2, radius: f32) {
+    let rect = Rect::from_center_size(center, Vec2::splat(radius * 2.0));
+    if let Some(uri) = app.picture(channel.icon.as_deref()) {
+        egui::Image::new(uri)
+            .corner_radius(CornerRadius::same(radius as u8))
+            .paint_at(ui, rect);
+        return;
+    }
+    const COLORS: [Color32; 8] = [
+        Color32::from_rgb(0x58, 0x65, 0xf2),
+        Color32::from_rgb(0x3b, 0xa5, 0x5c),
+        Color32::from_rgb(0xfa, 0xa6, 0x1a),
+        Color32::from_rgb(0xed, 0x42, 0x45),
+        Color32::from_rgb(0xeb, 0x45, 0x9e),
+        Color32::from_rgb(0x1a, 0xbc, 0x9c),
+        Color32::from_rgb(0x9b, 0x59, 0xb6),
+        Color32::from_rgb(0x74, 0x7f, 0x8d),
+    ];
+    let color = COLORS[((channel.id >> 22) % COLORS.len() as u64) as usize];
+    ui.painter().circle_filled(center, radius, color);
+    paint_icon(ui, Icon::Users, center, radius * 1.1, Color32::WHITE);
+}

@@ -232,6 +232,8 @@ pub struct Channel {
     pub voice_status: Option<String>,
     /// When the call in a voice channel started, in Unix seconds.
     pub voice_start: Option<u64>,
+    /// A group's own picture.
+    pub icon: Option<String>,
 }
 
 impl Channel {
