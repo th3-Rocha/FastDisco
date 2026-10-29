@@ -83,6 +83,12 @@ jobs:
           sudo bash llvm.sh 21
           echo "CC=clang-21" >> "$GITHUB_ENV"
           echo "CXX=clang++-21" >> "$GITHUB_ENV"
+      # LiveKit's libwebrtc is built against the static C runtime on
+      # Windows, so the rest has to match it.
+      - name: Static C runtime
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
       # Camera and screen through the friends' own LiveKit server.
       - run: cargo build --locked --release --features selfhosted --target ${{ matrix.target }}
       - name: Package
