@@ -8,6 +8,7 @@ use egui::{
 use fastframe_fonts::Weight;
 
 use super::widgets::{font, hyphens, paint_icon};
+use crate::admin::AdminAction;
 use crate::app::{Action, App, Flag, SettingsPage};
 use crate::icons::Icon;
 use crate::settings::Theme;
@@ -68,6 +69,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     ui.spacing_mut().item_spacing = vec2(0.0, 8.0);
                     match page {
                         SettingsPage::Account => account(app, ui),
+                        SettingsPage::Privacy => privacy(app, ui),
+                        SettingsPage::Messages => messages(app, ui),
                         SettingsPage::Profiles => profiles(app, ui),
                         SettingsPage::Voice => voice(app, ui),
                         SettingsPage::Appearance => appearance(app, ui),
@@ -209,6 +212,8 @@ fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
             "",
             &[
                 (SettingsPage::Account, Icon::User, "Conta"),
+                (SettingsPage::Privacy, Icon::Shield, "Dados e privacidade"),
+                (SettingsPage::Messages, Icon::MessageCircle, "Permissões de mensagens"),
                 (SettingsPage::Notifications, Icon::Bell, "Notificações"),
             ],
         ),
@@ -251,8 +256,8 @@ fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
         for (target, icon, text) in pages {
             item(app, ui, *target, *icon, text);
             // Under "Conta", its parts, as Discord's side menu.
-            if *target == SettingsPage::Account && page == SettingsPage::Account {
-                for (i, part) in ACCOUNT_PARTS.iter().enumerate() {
+            if *target == page {
+                for (i, part) in parts(page).iter().enumerate() {
                     let (rect, response) = ui.allocate_exact_size(vec2(NAV_WIDTH, 30.0), Sense::click());
                     let x = rect.left() + 22.0;
                     ui.painter().vline(x, rect.y_range(), Stroke::new(1.0, palette.selected));
@@ -415,7 +420,7 @@ fn switch_row(app: &mut App, ui: &mut Ui, flag: Flag, label: &str, note: &str, o
 
 fn account(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
-    account_anchor(ui, 0);
+    part_anchor(ui, 0);
     big_heading(ui, &palette, "Informações da conta");
     let Some(me) = app.model.user(app.model.me).cloned() else {
         return;
@@ -520,7 +525,7 @@ fn account(app: &mut App, ui: &mut Ui) {
 
     // Senha e segurança.
     divider(ui, &palette);
-    account_anchor(ui, 1);
+    part_anchor(ui, 1);
     big_heading(ui, &palette, "Senha e segurança");
     let web = |app: &mut App| {
         app.actions
@@ -554,7 +559,7 @@ fn account(app: &mut App, ui: &mut Ui) {
 
     // Status da conta.
     divider(ui, &palette);
-    account_anchor(ui, 2);
+    part_anchor(ui, 2);
     big_heading(ui, &palette, "Status da conta");
     let adult = app.model.account.adult;
     let notice_id = ui.id().with("age-notice-closed");
@@ -621,7 +626,7 @@ fn account(app: &mut App, ui: &mut Ui) {
 
     // Central da Família.
     divider(ui, &palette);
-    account_anchor(ui, 3);
+    part_anchor(ui, 3);
     big_heading(ui, &palette, "Central da Família");
     let (card, response) = ui.allocate_exact_size(vec2(ui.available_width(), 76.0), Sense::click());
     ui.painter().rect_filled(
@@ -669,21 +674,38 @@ fn account(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// The account page's parts, which "Conta"'s sub-items in the side menu
-/// scroll to.
-pub const ACCOUNT_PARTS: [&str; 4] = [
-    "Informações da conta",
-    "Senha e segurança",
-    "Status da conta",
-    "Central da Família",
-];
+/// A page's parts, listed under it in the side menu while it is open and
+/// scrolled to on a click, as Discord's.
+fn parts(page: SettingsPage) -> &'static [&'static str] {
+    match page {
+        SettingsPage::Account => &[
+            "Informações da conta",
+            "Senha e segurança",
+            "Status da conta",
+            "Central da Família",
+        ],
+        SettingsPage::Privacy => &[
+            "Como o Discord usa meus dados",
+            "Privacidade do perfil",
+            "Criptografia de voz de ponta a ponta",
+        ],
+        SettingsPage::Messages => &[
+            "Filtros de conteúdo",
+            "Mensagens diretas",
+            "Pedidos de amizade",
+            "Ignorar e bloquear",
+        ],
+        SettingsPage::Notifications => &["Visão geral", "Sons", "E-mail", "Avançado"],
+        _ => &[],
+    }
+}
 
 fn account_jump() -> egui::Id {
     egui::Id::new("account-jump")
 }
 
 /// Scrolls here when the side menu asked for part `index`.
-fn account_anchor(ui: &mut Ui, index: usize) {
+fn part_anchor(ui: &mut Ui, index: usize) {
     if ui.data(|d| d.get_temp::<usize>(account_jump())) == Some(index) {
         ui.data_mut(|d| d.remove::<usize>(account_jump()));
         ui.scroll_to_cursor(Some(egui::Align::TOP));
@@ -1105,8 +1127,14 @@ fn accessibility(app: &mut App, ui: &mut Ui) {
 
 fn notifications(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
-    title(ui, &palette, "Notificações");
-    let (on, sound) = (app.settings.notifications, app.settings.notification_sound);
+    ask_privacy(app);
+    let (on, sound, sounds) = (
+        app.settings.notifications,
+        app.settings.notification_sound,
+        app.settings.sounds,
+    );
+    part_anchor(ui, 0);
+    big_heading(ui, &palette, "Visão geral");
     switch_row(
         app,
         ui,
@@ -1115,14 +1143,359 @@ fn notifications(app: &mut App, ui: &mut Ui) {
         "Para mensagens diretas e menções, quando a janela não está em foco.",
         on,
     );
-    switch_row(
+    part_anchor(ui, 1);
+    big_heading(ui, &palette, "Sons");
+    switch_row(app, ui, Flag::NotificationSound, "Nova mensagem", "Um som curto com cada notificação.", sound);
+    switch_row(app, ui, Flag::Sounds, "Sons de chamada", SOUNDS_NOTE, sounds);
+
+    part_anchor(ui, 2);
+    big_heading(ui, &palette, "E-mail");
+    match app.admin.emails.clone() {
+        None => {
+            ui.spinner();
+        }
+        Some(emails) => {
+            for (key, title, note) in [
+                ("communication", "E-mails de comunicação", "Receba e-mails para ligações perdidas, mensagens e resumos de mensagens."),
+                ("social", "E-mails sociais", "Receba e-mails de pedidos de amizade, sugestões de novos amigos e eventos em seu servidor."),
+                ("updates_and_announcements", "E-mails de atualização e anúncios", "Receba e-mails sobre atualizações de produtos, nossos mais novos recursos, melhorias e correções de bugs."),
+                ("tips", "E-mails com dicas", "Receba e-mails com conselhos úteis sobre como usar o Discord e informações sobre recursos menos conhecidos."),
+                ("recommendations_and_events", "E-mails de recomendações", "Receba e-mails com servidores recomendados e eventos sugeridos."),
+            ] {
+                let current = emails.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
+                if toggle_row(ui, &palette, title, note, current) {
+                    app.actions.push(admin(AdminAction::SetEmail(key.into(), !current)));
+                }
+            }
+            if account_row(
+                ui,
+                &palette,
+                None,
+                "Cancelar inscrição para e-mails de marketing",
+                Some("Isso inclui todos os e-mails sobre atualizações de produtos, novos recursos, dicas sobre como usar o Discord e recomendações sobre novos servidores, eventos ou canais."),
+                RowEnd::Danger("Cancelar inscrição", palette.sidebar, palette.danger),
+            )
+            .clicked()
+            {
+                for key in ["updates_and_announcements", "tips", "recommendations_and_events"] {
+                    app.actions.push(admin(AdminAction::SetEmail(key.into(), false)));
+                }
+            }
+        }
+    }
+
+    divider(ui, &palette);
+    part_anchor(ui, 3);
+    big_heading(ui, &palette, "Avançado");
+    let delay = remote_u64(app, "afk_timeout").unwrap_or(600);
+    let shown = match delay {
+        60 => "1 minuto".to_owned(),
+        n => format!("{} minutos", n / 60),
+    };
+    ui.horizontal_top(|ui| {
+        let width = ui.available_width();
+        ui.vertical(|ui| {
+            ui.set_width(width - 240.0);
+            ui.label(RichText::new("Atraso de notificação em dispositivo móvel").font(font(Weight::Medium, 16.0)).color(palette.strong));
+            ui.label(RichText::new("O Discord não enviará notificações push para o seu dispositivo móvel enquanto você estiver ativo no seu computador. Escolha quanto tempo você precisa estar inativo no computador antes de as notificações do dispositivo móvel começarem de novo.").font(font(Weight::Regular, 14.0)).color(palette.muted));
+        });
+        let (rect, response) = ui.allocate_exact_size(vec2(220.0, 40.0), Sense::click());
+        picker_box(ui, &palette, rect, &response, None, &shown);
+        egui::Popup::menu(&response).width(220.0).show(|ui| {
+            for minutes in [1u64, 2, 5, 10] {
+                let label = if minutes == 1 { "1 minuto".to_owned() } else { format!("{minutes} minutos") };
+                if super::call::menu_item(ui, &palette, &label, palette.text).clicked() {
+                    app.actions.push(admin(AdminAction::SetUserSettings(serde_json::json!({ "afk_timeout": minutes * 60 }))));
+                    ui.close();
+                }
+            }
+        });
+    });
+    divider(ui, &palette);
+    remote_toggle(
         app,
         ui,
-        Flag::NotificationSound,
-        "Tocar som",
-        "Um som curto com cada notificação.",
-        sound,
+        "enable_tts_command",
+        false,
+        "Permitir a reprodução e o uso do comando /tts.",
+        "Usar o comando /tts faz sua mensagem ser falada em voz alta. Desative-o se você preferir ver as mensagens de /tts apenas como texto.",
     );
+}
+
+fn admin(action: AdminAction) -> Action {
+    Action::Admin(action)
+}
+
+/// Asks once for the data consents and the e-mail settings.
+fn ask_privacy(app: &mut App) {
+    if !app.admin.privacy_asked {
+        app.actions.push(admin(AdminAction::LoadPrivacy));
+    }
+}
+
+fn remote_bool(app: &App, key: &str) -> Option<bool> {
+    app.model.account.settings[key].as_bool()
+}
+
+fn remote_u64(app: &App, key: &str) -> Option<u64> {
+    app.model.account.settings[key].as_u64()
+}
+
+/// A switch for one of Discord's account settings; `inverted` when the
+/// setting says the opposite of the switch ("restricted" for "allow").
+fn remote_toggle(app: &mut App, ui: &mut Ui, key: &str, inverted: bool, title: &str, note: &str) {
+    let palette = app.palette;
+    let stored = remote_bool(app, key).unwrap_or(inverted);
+    let on = stored != inverted;
+    if toggle_row(ui, &palette, title, note, on) {
+        let mut patch = serde_json::Map::new();
+        patch.insert(key.to_owned(), serde_json::json!(!stored));
+        app.actions
+            .push(admin(AdminAction::SetUserSettings(serde_json::Value::Object(patch))));
+    }
+}
+
+/// A title, its note and Discord's switch at the right; true when clicked.
+fn toggle_row(ui: &mut Ui, palette: &Palette, title: &str, note: &str, on: bool) -> bool {
+    let width = ui.available_width();
+    let clicked = ui
+        .horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(width - 60.0);
+                ui.label(RichText::new(title).font(font(Weight::Medium, 16.0)).color(palette.strong));
+                if !note.is_empty() {
+                    ui.label(RichText::new(note).font(font(Weight::Regular, 14.0)).color(palette.muted));
+                }
+            });
+            let (rect, response) = ui.allocate_exact_size(vec2(40.0, 24.0), Sense::click());
+            let t = ui.ctx().animate_bool(response.id, on);
+            let fill = crate::theme::mix(palette.offline, palette.accent, t);
+            ui.painter().rect_filled(rect, CornerRadius::same(12), fill);
+            let knob = pos2(rect.left() + 12.0 + t * 16.0, rect.center().y);
+            ui.painter().circle_filled(knob, 9.0, Color32::WHITE);
+            response.clicked()
+        })
+        .inner;
+    ui.add_space(14.0);
+    clicked
+}
+
+/// A related setting that only Discord's own app or site changes: a row
+/// that opens it in the browser.
+fn web_row(app: &mut App, ui: &mut Ui, icon: Icon, title: &str, note: &str) {
+    let palette = app.palette;
+    if account_row(
+        ui,
+        &palette,
+        Some((icon, palette.icon, palette.sidebar)),
+        title,
+        Some(note),
+        RowEnd::Value(""),
+    )
+    .on_hover_text("Abre no navegador: o Discord só muda isto no app ou no site dele.")
+    .clicked()
+    {
+        app.actions
+            .push(Action::Chat(crate::chat::ChatAction::OpenUrl(
+                "https://discord.com/channels/@me".into(),
+            )));
+    }
+}
+
+/// "Dados e privacidade", as Discord's.
+fn privacy(app: &mut App, ui: &mut Ui) {
+    let palette = app.palette;
+    ask_privacy(app);
+    part_anchor(ui, 0);
+    big_heading(ui, &palette, "Como o Discord usa meus dados");
+    ui.label(RichText::new("Utilizar dados para fazer o Discord funcionar").font(font(Weight::Medium, 16.0)).color(palette.strong));
+    ui.label(RichText::new("O Discord precisa armazenar e processar alguns dados para te fornecer os serviços básicos do Discord, tais como suas mensagens, servidores em que você está e mensagens diretas. Ao usar o Discord, você permite que o Discord forneça estes serviços básicos. Você pode interromper isso ao desativar ou excluir sua conta.").font(font(Weight::Regular, 14.0)).color(palette.muted));
+    ui.add_space(14.0);
+    match app.admin.consents.clone() {
+        None => {
+            ui.spinner();
+        }
+        Some(consents) => {
+            for (key, title, note) in [
+                ("usage_statistics", "Utilizar dados para melhorar o Discord", "Permite que o Discord use e processe minhas informações para entender e aprimorar seus serviços."),
+                ("personalization", "Utilizar dados para personalizar minha experiência no Discord", "Permite que o Discord utilize informações, como com quem você conversa ou os jogos que joga, para personalizar o Discord para você."),
+            ] {
+                let on = consents.get(key).and_then(|c| c["consented"].as_bool()).unwrap_or(false);
+                if toggle_row(ui, &palette, title, note, on) {
+                    app.actions.push(admin(AdminAction::SetConsent(key.into(), !on)));
+                }
+            }
+        }
+    }
+    if account_row(
+        ui,
+        &palette,
+        None,
+        "Solicitar meus dados",
+        Some("Se você precisar de uma cópia dos seus dados pessoais de todo o histórico da sua conta, poderá obtê-la aqui."),
+        RowEnd::Button("Solicitar dados"),
+    )
+    .clicked()
+        && app.admin.data_request.is_none()
+    {
+        app.actions.push(admin(AdminAction::RequestData));
+    }
+    if let Some(note) = app.admin.data_request.clone() {
+        ui.label(RichText::new(note).font(font(Weight::Regular, 13.0)).color(palette.online));
+    }
+    related(ui, &palette);
+    web_row(app, ui, Icon::Activities, "Jogos registrados", "Restrinja o compartilhamento de atividade para cada jogo individualmente.");
+
+    divider(ui, &palette);
+    part_anchor(ui, 1);
+    big_heading(ui, &palette, "Privacidade do perfil");
+    ui.label(RichText::new("Controle quem pode ver suas informações de perfil — como sua bio e contas conectadas.").font(font(Weight::Regular, 14.0)).color(palette.muted));
+    ui.add_space(10.0);
+    remote_toggle(
+        app,
+        ui,
+        "show_current_game",
+        false,
+        "Compartilhar minha atividade",
+        "Mostra o jogo ou app que você está usando como seu status para quem pode ver o seu perfil.",
+    );
+    related(ui, &palette);
+    web_row(app, ui, Icon::User, "Compartilhe meu perfil completo com", "Amigos e todos os servidores, servidores pequenos ou apenas amigos.");
+
+    divider(ui, &palette);
+    part_anchor(ui, 2);
+    big_heading(ui, &palette, "Criptografia de voz de ponta a ponta");
+    ui.label(RichText::new("As chamadas do Discofast já usam a criptografia de ponta a ponta do Discord (DAVE).").font(font(Weight::Regular, 14.0)).color(palette.muted));
+    ui.add_space(8.0);
+    web_row(app, ui, Icon::Shield, "Habilitar códigos de verificação persistentes", "Seus amigos só precisam verificar seu dispositivo uma vez.");
+}
+
+fn related(ui: &mut Ui, palette: &Palette) {
+    ui.add_space(6.0);
+    ui.label(RichText::new("Configurações relacionadas").font(font(Weight::Medium, 15.0)).color(palette.muted));
+    ui.add_space(4.0);
+}
+
+/// "Permissões de mensagens", as Discord's.
+fn messages(app: &mut App, ui: &mut Ui) {
+    let palette = app.palette;
+    part_anchor(ui, 0);
+    big_heading(ui, &palette, "Filtros de conteúdo");
+    web_row(app, ui, Icon::Eye, "Filtros de conteúdo sensível", "Como ver imagens que os filtros do Discord detectam: borrar, bloquear ou mostrar.");
+    remote_toggle(
+        app,
+        ui,
+        "view_nsfw_commands",
+        false,
+        "Permite acesso a comandos com restrição de idade de apps em mensagens diretas",
+        "Permite que pessoas com 18 anos ou mais acessem comandos marcados como restritos por idade nas mensagens diretas. Aplica-se a todos os apps.",
+    );
+    remote_toggle(
+        app,
+        ui,
+        "view_nsfw_guilds",
+        false,
+        "Permitir acesso a servidores com restrição de idade no iOS",
+        "Acesse servidores com restrição de idade (18+) em dispositivos iOS, depois de acessá-los no desktop.",
+    );
+
+    divider(ui, &palette);
+    part_anchor(ui, 1);
+    big_heading(ui, &palette, "Mensagens diretas");
+    remote_toggle(
+        app,
+        ui,
+        "default_guilds_restricted",
+        true,
+        "Mensagens Diretas",
+        "Permitir DMs de outros membros dos meus servidores.",
+    );
+
+    divider(ui, &palette);
+    part_anchor(ui, 2);
+    big_heading(ui, &palette, "Pedidos de amizade");
+    ui.label(RichText::new("Quem pode te enviar um pedido de amizade").font(font(Weight::Medium, 15.0)).color(palette.muted));
+    ui.add_space(6.0);
+    let flags = app.model.account.settings["friend_source_flags"].clone();
+    let all = flags["all"].as_bool().unwrap_or(true);
+    let friends = all || flags["mutual_friends"].as_bool().unwrap_or(false);
+    let members = all || flags["mutual_guilds"].as_bool().unwrap_or(false);
+    let mut changed: Option<(bool, bool, bool)> = None;
+    if toggle_row(ui, &palette, "Todos", "", all) {
+        changed = Some(if all { (false, friends, members) } else { (true, true, true) });
+    }
+    if toggle_row(ui, &palette, "Amigos de amigos", "", friends) {
+        changed = Some((false, !friends, members));
+    }
+    if toggle_row(ui, &palette, "Membros do servidor", "Membros do servidor só podem enviar pedidos de amizade de servidores onde você também aceita mensagens diretas.", members) {
+        changed = Some((false, friends, !members));
+    }
+    if let Some((all, friends, members)) = changed {
+        let all = all || (friends && members);
+        app.actions.push(admin(AdminAction::SetUserSettings(serde_json::json!({
+            "friend_source_flags": { "all": all, "mutual_friends": friends, "mutual_guilds": members }
+        }))));
+    }
+
+    divider(ui, &palette);
+    part_anchor(ui, 3);
+    big_heading(ui, &palette, "Ignorar e bloquear");
+    let mut blocked: Vec<_> = app
+        .model
+        .relationships
+        .iter()
+        .filter(|(_, kind)| **kind == crate::nav::relationship::BLOCKED)
+        .filter_map(|(id, _)| app.model.user(*id).cloned())
+        .collect();
+    blocked.sort_by_key(|u| u.name.to_lowercase());
+    let open_id = ui.id().with("blocked-open");
+    let all_id = ui.id().with("blocked-all");
+    let open = ui.data(|d| d.get_temp::<bool>(open_id).unwrap_or(false));
+    let (head, response) = ui.allocate_exact_size(vec2(ui.available_width(), 60.0), Sense::click());
+    let rounding = if open { CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 } } else { CornerRadius::same(8) };
+    ui.painter().rect_filled(head, rounding, if response.hovered() { palette.hover } else { palette.sidebar });
+    ui.painter().circle_filled(pos2(head.left() + 30.0, head.center().y), 18.0, palette.selected);
+    paint_icon(ui, Icon::EyeOff, pos2(head.left() + 30.0, head.center().y), 18.0, palette.icon);
+    ui.painter().text(pos2(head.left() + 58.0, head.center().y - 9.0), Align2::LEFT_CENTER, "Contas bloqueadas", font(Weight::SemiBold, 16.0), palette.strong);
+    let count = match blocked.len() {
+        1 => "1 conta".to_owned(),
+        n => format!("{n} contas"),
+    };
+    ui.painter().text(pos2(head.left() + 58.0, head.center().y + 10.0), Align2::LEFT_CENTER, count, font(Weight::Regular, 14.0), palette.muted);
+    if response.clicked() {
+        ui.data_mut(|d| d.insert_temp(open_id, !open));
+    }
+    if open {
+        let show_all = ui.data(|d| d.get_temp::<bool>(all_id).unwrap_or(false));
+        let shown = if show_all { blocked.len() } else { blocked.len().min(5) };
+        for user in blocked.iter().take(shown) {
+            let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 64.0), Sense::hover());
+            super::widgets::avatar(ui, app, user, pos2(row.left() + 36.0, row.center().y), 18.0, None);
+            ui.painter().text(pos2(row.left() + 64.0, row.center().y - 8.0), Align2::LEFT_CENTER, &user.name, font(Weight::SemiBold, 16.0), palette.strong);
+            ui.painter().text(pos2(row.left() + 64.0, row.center().y + 11.0), Align2::LEFT_CENTER, &user.username, font(Weight::Regular, 13.0), palette.text);
+            let button = Rect::from_min_size(pos2(row.right() - 140.0, row.center().y - 20.0), vec2(130.0, 40.0));
+            let unblock = ui.interact(button, ui.id().with(("unblock", user.id)), Sense::click());
+            let fill = if unblock.hovered() { palette.hover } else { palette.sidebar };
+            ui.painter().rect(button, CornerRadius::same(8), fill, Stroke::new(1.0, palette.selected), egui::StrokeKind::Inside);
+            ui.painter().text(button.center(), Align2::CENTER_CENTER, "Desbloquear", font(Weight::Medium, 15.0), palette.strong);
+            if unblock.clicked() {
+                app.actions
+                    .push(Action::Nav(crate::nav::NavAction::RemoveRelationship(user.id)));
+            }
+            ui.painter().hline((row.left() + 16.0)..=(row.right() - 16.0), row.bottom(), Stroke::new(1.0, palette.divider));
+        }
+        if blocked.len() > shown {
+            ui.add_space(6.0);
+            ui.vertical_centered(|ui| {
+                let more = egui::Button::new(RichText::new(format!("Ver {} mais", blocked.len() - shown)).font(font(Weight::SemiBold, 14.0)).color(palette.strong))
+                    .fill(palette.sidebar)
+                    .min_size(vec2(236.0, 32.0));
+                if ui.add(more).clicked() {
+                    ui.data_mut(|d| d.insert_temp(all_id, true));
+                }
+            });
+        }
+    }
 }
 
 fn keybinds(app: &mut App, ui: &mut Ui) {

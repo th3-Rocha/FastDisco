@@ -29,6 +29,14 @@ pub enum Tag {
     GuildCreated,
     /// The devices signed in to the account.
     Sessions,
+    /// An account setting saved; nothing more to do.
+    Saved,
+    /// What Discord may do with the account's data.
+    Consents,
+    /// Which e-mails Discord sends.
+    EmailSettings,
+    /// The copy of the account's data, asked for.
+    DataRequested,
     /// A device signed out.
     SessionOut {
         hash: String,
@@ -287,6 +295,13 @@ pub struct Admin {
     /// The devices signed in, once asked for.
     pub sessions: Option<Vec<Session>>,
     pub sessions_asked: bool,
+    /// "usage_statistics" and "personalization", once asked for.
+    pub consents: Option<serde_json::Map<String, Value>>,
+    /// The e-mail categories and whether each is on, once asked for.
+    pub emails: Option<serde_json::Map<String, Value>>,
+    pub privacy_asked: bool,
+    /// What came of asking for a copy of the data.
+    pub data_request: Option<String>,
 }
 
 /// A device signed in to the account.
@@ -312,6 +327,17 @@ pub enum AdminAction {
     PickIcon,
     /// The signed-in devices, for the account page.
     LoadSessions,
+    /// Changes account settings, as `{"key": value}`.
+    SetUserSettings(Value),
+    /// The data consents and e-mail settings, for the privacy and
+    /// notification pages.
+    LoadPrivacy,
+    /// Grants or revokes a data consent.
+    SetConsent(String, bool),
+    /// Turns an e-mail category on or off.
+    SetEmail(String, bool),
+    /// Asks Discord for a copy of the account's data.
+    RequestData,
     /// Signs one device out.
     SignOutSession(String),
     /// Online, idle, do not disturb or invisible, from the profile card.
@@ -370,6 +396,44 @@ impl App {
                 self.admin.modal = Some(modal);
             }
             AdminAction::PickIcon => self.backend().send(Command::PickIcon),
+            AdminAction::SetUserSettings(patch) => {
+                if let (Some(store), Some(changes)) =
+                    (self.model.account.settings.as_object_mut(), patch.as_object())
+                {
+                    for (key, value) in changes {
+                        store.insert(key.clone(), value.clone());
+                    }
+                }
+                self.api(Tag::Saved, Method::PATCH, "/users/@me/settings".into(), Some(patch));
+            }
+            AdminAction::LoadPrivacy => {
+                self.admin.privacy_asked = true;
+                self.api(Tag::Consents, Method::GET, "/users/@me/consent".into(), None);
+                self.api(Tag::EmailSettings, Method::GET, "/users/@me/email-settings".into(), None);
+            }
+            AdminAction::SetConsent(kind, on) => {
+                if let Some(consents) = &mut self.admin.consents {
+                    consents.insert(kind.clone(), json!({ "consented": on }));
+                }
+                let body = if on {
+                    json!({ "grant": [kind], "revoke": [] })
+                } else {
+                    json!({ "grant": [], "revoke": [kind] })
+                };
+                self.api(Tag::Saved, Method::POST, "/users/@me/consent".into(), Some(body));
+            }
+            AdminAction::SetEmail(category, on) => {
+                let Some(emails) = &mut self.admin.emails else {
+                    return;
+                };
+                emails.insert(category, json!(on));
+                let body = json!({ "settings": { "categories": emails.clone() } });
+                self.api(Tag::Saved, Method::PUT, "/users/@me/email-settings".into(), Some(body));
+            }
+            AdminAction::RequestData => {
+                self.admin.data_request = Some("Pedindo…".into());
+                self.api(Tag::DataRequested, Method::POST, "/users/@me/harvest".into(), Some(json!({})));
+            }
             AdminAction::LoadSessions => {
                 self.admin.sessions_asked = true;
                 self.api(Tag::Sessions, Method::GET, "/auth/sessions".into(), None);
@@ -776,6 +840,14 @@ impl App {
         let value = match result {
             Ok(value) => value,
             Err(error) => {
+                if let Tag::DataRequested = tag {
+                    self.admin.data_request = Some(format!("Não foi possível pedir: {error}"));
+                    return;
+                }
+                if let Tag::Saved | Tag::Consents | Tag::EmailSettings = tag {
+                    log::warn!("account settings: {error}");
+                    return;
+                }
                 // Discord asks for a captcha to join from outside its own
                 // apps: the invite opens in the browser instead.
                 if let Tag::Joined { code } = &tag
@@ -805,6 +877,18 @@ impl App {
                 }
             }
             Tag::Presence => self.admin.modal = None,
+            Tag::Saved => {}
+            Tag::Consents => {
+                self.admin.consents = value.as_object().cloned();
+            }
+            Tag::EmailSettings => {
+                self.admin.emails = value["categories"].as_object().cloned();
+            }
+            Tag::DataRequested => {
+                self.admin.data_request = Some(
+                    "Pedido feito. O Discord envia o link para o seu e-mail quando a cópia estiver pronta (pode levar até 30 dias).".into(),
+                );
+            }
             Tag::Sessions => {
                 let list = value["user_sessions"].as_array().cloned().unwrap_or_default();
                 self.admin.sessions = Some(

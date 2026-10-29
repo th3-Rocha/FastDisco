@@ -27,6 +27,10 @@ pub enum Screen {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsPage {
     Account,
+    /// "Dados e privacidade".
+    Privacy,
+    /// "Permissões de mensagens".
+    Messages,
     Profiles,
     Voice,
     Appearance,
@@ -784,6 +788,8 @@ impl App {
         if let Ok(page) = std::env::var("DISCOFAST_SETTINGS") {
             self.settings_page = Some(match page.as_str() {
                 "profiles" => SettingsPage::Profiles,
+                "privacy" => SettingsPage::Privacy,
+                "messages" => SettingsPage::Messages,
                 "voice" => SettingsPage::Voice,
                 "appearance" => SettingsPage::Appearance,
                 "accessibility" => SettingsPage::Accessibility,
@@ -1560,9 +1566,18 @@ impl App {
                     self.open_server(id);
                 }
             }
-            "USER_SETTINGS_UPDATE" if data["guild_folders"].is_array() => {
-                self.model.folders = parse::folders(&data["guild_folders"]);
-                self.model.settle_folders();
+            "USER_SETTINGS_UPDATE" => {
+                if let (Some(store), Some(changes)) =
+                    (self.model.account.settings.as_object_mut(), data.as_object())
+                {
+                    for (key, value) in changes {
+                        store.insert(key.clone(), value.clone());
+                    }
+                }
+                if data["guild_folders"].is_array() {
+                    self.model.folders = parse::folders(&data["guild_folders"]);
+                    self.model.settle_folders();
+                }
             }
             "GUILD_DELETE" => {
                 let Some(id) = parse::id(&data["id"]) else {

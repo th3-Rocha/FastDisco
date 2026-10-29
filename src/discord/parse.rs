@@ -631,6 +631,11 @@ pub fn ready(value: &Value) -> Model {
             mfa: account["mfa_enabled"].as_bool().unwrap_or(false),
             verified: account["verified"].as_bool().unwrap_or(false),
             adult: account["nsfw_allowed"].as_bool(),
+            settings: if value["user_settings"].is_object() {
+                value["user_settings"].clone()
+            } else {
+                serde_json::json!({})
+            },
         };
         model.users.insert(me.id, me);
     }

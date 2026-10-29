@@ -730,6 +730,10 @@ pub struct Account {
     /// means anything: Discord answers "no" to clients it does not know,
     /// adult accounts included.
     pub adult: Option<bool>,
+    /// Discord's account settings as it sends them (who may send DMs and
+    /// friend requests, the mobile notification delay, /tts...), changed
+    /// with PATCH /users/@me/settings.
+    pub settings: serde_json::Value,
 }
 
 const VIEW_CHANNEL: u64 = 1 << 10;
