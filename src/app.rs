@@ -847,6 +847,10 @@ impl App {
         let first = self.screen != Screen::Main || switched;
         self.model = model;
         self.remember_account();
+        // The status the user chose, and whether games are shared, to the
+        // gateway: Rich Presence builds on them.
+        self.send_presence();
+        self.sync_activity_sharing();
         self.screen = Screen::Main;
         // After a reconnect, stay where the user was if it still exists.
         let still_there = self
@@ -861,6 +865,15 @@ impl App {
         } else if let Some(channel) = self.channel {
             self.open_channel(channel);
         }
+    }
+
+    /// "Compartilhar minha atividade", Discord's own setting, decides
+    /// whether Rich Presence shows games and apps.
+    pub fn sync_activity_sharing(&self) {
+        let on = self.model.account.settings["show_current_game"]
+            .as_bool()
+            .unwrap_or(true);
+        self.backend.send(Command::ShareActivity(on));
     }
 
     /// Keeps the signed-in account in the list for "Mudar de conta", and
@@ -1814,6 +1827,9 @@ impl App {
                     for (key, value) in changes {
                         store.insert(key.clone(), value.clone());
                     }
+                }
+                if data["show_current_game"].is_boolean() {
+                    self.sync_activity_sharing();
                 }
                 if data["guild_folders"].is_array() {
                     self.model.folders = parse::folders(&data["guild_folders"]);

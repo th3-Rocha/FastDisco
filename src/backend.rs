@@ -51,6 +51,8 @@ pub enum Command {
     Logout,
     /// Keeps the current token as this account's, for switching back.
     RememberAccount(u64),
+    /// Shares what the user is playing, or stops.
+    ShareActivity(bool),
     /// Signs in with another saved account.
     SwitchAccount(u64),
     /// Leaves this account signed in and shows the login, to add another.
@@ -341,6 +343,23 @@ struct Worker {
     stream: Option<JoinHandle<()>>,
     /// The room on the user's own video server, and what to ask of it.
     room: Option<(JoinHandle<()>, mpsc::UnboundedSender<crate::room::Control>)>,
+    presence: Presence,
+}
+
+/// What the gateway presence is made of: the status and custom status the
+/// user chose, and what Rich Presence found.
+#[derive(Default)]
+struct Presence {
+    status: Option<String>,
+    custom: Option<String>,
+    share: bool,
+    /// Each RPC connection's app and activity.
+    rpc: std::collections::HashMap<u64, (String, Value)>,
+    game: Option<discord::presence::Game>,
+    /// Applications' names and asset ids by name, once looked up.
+    apps: std::collections::HashMap<String, (String, std::collections::HashMap<String, String>)>,
+    updates: Option<mpsc::UnboundedSender<discord::presence::Update>>,
+    scanner: Option<JoinHandle<()>>,
 }
 
 impl Worker {
@@ -361,6 +380,10 @@ impl Worker {
             room: None,
             update: Default::default(),
             gateway_events,
+            presence: Presence {
+                share: true,
+                ..Presence::default()
+            },
         }
     }
 
@@ -375,8 +398,12 @@ impl Worker {
         mut gateway_events: mpsc::UnboundedReceiver<Incoming>,
     ) {
         let (qr_sender, mut qr_events) = mpsc::unbounded_channel();
+        let (presence_sender, mut presence_updates) = mpsc::unbounded_channel();
+        tokio::spawn(discord::presence::serve(presence_sender.clone()));
+        self.presence.updates = Some(presence_sender);
         loop {
             tokio::select! {
+                Some(update) = presence_updates.recv() => self.presence_update(update).await,
                 Some(incoming) = gateway_events.recv() => self.gateway_event(incoming).await,
                 command = commands.recv() => {
                     let Some(command) = command else { return };
@@ -780,9 +807,19 @@ impl Worker {
                 self.ctx.wake();
             }
             Command::Presence { status, custom } => {
-                if let Some((_, outgoing)) = &self.gateway {
-                    let _ = outgoing.send(Outgoing::Presence { status, custom });
+                self.presence.status = Some(status);
+                self.presence.custom = custom;
+                self.send_presence();
+            }
+            Command::ShareActivity(on) => {
+                self.presence.share = on;
+                if on {
+                    self.start_scanner();
+                } else if let Some(task) = self.presence.scanner.take() {
+                    task.abort();
+                    self.presence.game = None;
                 }
+                self.send_presence();
             }
             Command::VoiceState {
                 guild,
@@ -1044,7 +1081,110 @@ impl Worker {
         ));
         self.gateway = Some((task, outgoing));
         self.token = Some(token);
+        self.presence.status = None;
+        self.presence.custom = None;
+        self.start_scanner();
         self.emit(Event::SignedIn);
+    }
+
+    /// Looks for running games, once signed in and while sharing.
+    fn start_scanner(&mut self) {
+        if let Some(task) = self.presence.scanner.take() {
+            task.abort();
+        }
+        let (Some(token), Some(updates)) = (self.token.clone(), self.presence.updates.clone()) else {
+            return;
+        };
+        if !self.presence.share {
+            return;
+        }
+        let client = self.client.clone();
+        self.presence.scanner = Some(tokio::spawn(discord::presence::scan(client, token, updates)));
+    }
+
+    async fn presence_update(&mut self, update: discord::presence::Update) {
+        use discord::presence::Update;
+        match update {
+            Update::Rpc {
+                connection,
+                client_id,
+                activity,
+            } => match activity {
+                Some(activity) => {
+                    self.learn_app(&client_id).await;
+                    self.presence.rpc.insert(connection, (client_id, activity));
+                }
+                None => {
+                    self.presence.rpc.remove(&connection);
+                }
+            },
+            Update::Closed { connection } => {
+                self.presence.rpc.remove(&connection);
+            }
+            Update::Game(game) => self.presence.game = game,
+        }
+        self.send_presence();
+    }
+
+    /// An application's name and its assets' ids, asked for once.
+    async fn learn_app(&mut self, id: &str) {
+        if self.presence.apps.contains_key(id) || id.is_empty() {
+            return;
+        }
+        let Some(token) = self.token.clone() else { return };
+        let (info_path, assets_path) = (
+            format!("/applications/{id}/rpc"),
+            format!("/oauth2/applications/{id}/assets"),
+        );
+        let (info, assets) = tokio::join!(
+            rest::call(&self.client, &token, reqwest::Method::GET, &info_path, None),
+            rest::call(&self.client, &token, reqwest::Method::GET, &assets_path, None),
+        );
+        let name = info
+            .ok()
+            .and_then(|v| v["name"].as_str().map(str::to_owned))
+            .unwrap_or_else(|| "Jogo".into());
+        let assets = assets
+            .ok()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|a| Some((a["name"].as_str()?.to_lowercase(), a["id"].as_str()?.to_owned())))
+            .collect();
+        self.presence.apps.insert(id.to_owned(), (name, assets));
+    }
+
+    /// The presence to the gateway: once the app has said the user's
+    /// status, so a game never clears what the user chose.
+    fn send_presence(&self) {
+        let Some(status) = self.presence.status.clone() else {
+            return;
+        };
+        let Some((_, outgoing)) = &self.gateway else { return };
+        let mut activities = Vec::new();
+        if self.presence.share {
+            if let Some((client_id, activity)) = self.presence.rpc.values().last() {
+                let (name, assets) = self
+                    .presence
+                    .apps
+                    .get(client_id)
+                    .cloned()
+                    .unwrap_or_else(|| ("Jogo".into(), Default::default()));
+                activities.push(discord::presence::gateway_activity(client_id, &name, activity, &assets));
+            } else if let Some(game) = &self.presence.game {
+                activities.push(serde_json::json!({
+                    "type": 0,
+                    "name": game.name,
+                    "application_id": game.id,
+                    "timestamps": { "start": game.since },
+                }));
+            }
+        }
+        let _ = outgoing.send(Outgoing::Presence {
+            status,
+            custom: self.presence.custom.clone(),
+            activities,
+        });
     }
 
     async fn gateway_event(&mut self, incoming: Incoming) {

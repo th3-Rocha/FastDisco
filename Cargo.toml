@@ -1,6 +1,6 @@
 [package]
 name = "discofast"
-version = "0.39.0"
+version = "0.40.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -54,7 +54,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 # Network work runs here, never on the interface thread.
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 # rustls everywhere, so the client builds without OpenSSL on every platform.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json", "gzip", "http2", "multipart", "stream", "blocking"] }

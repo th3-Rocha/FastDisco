@@ -541,6 +541,7 @@ impl App {
                     }
                 }
                 self.api(Tag::Saved, Method::PATCH, "/users/@me/settings".into(), Some(patch));
+                self.sync_activity_sharing();
             }
             AdminAction::LoadPrivacy => {
                 self.admin.privacy_asked = true;
@@ -748,7 +749,7 @@ impl App {
     }
 
     /// The user's status and custom status, to the gateway.
-    fn send_presence(&self) {
+    pub(crate) fn send_presence(&self) {
         let me = self.model.me;
         let Some(user) = self.model.users.get(&me) else {
             return;

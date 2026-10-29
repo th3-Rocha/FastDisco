@@ -228,7 +228,7 @@ everything Discord's desktop app does.
 - [x] AUR package (`discofast-bin`)
 - [ ] Flatpak
 - [ ] Windows installer and macOS app bundle
-- [ ] Rich presence (what game or music you are playing)
+- [x] Rich presence: Discord's local RPC socket for games and apps (music players, editors), and running games recognised from Discord's list (Linux); follows "Compartilhar minha atividade"
 
 ## License
 

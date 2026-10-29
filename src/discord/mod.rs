@@ -5,6 +5,7 @@ pub mod call;
 pub mod frecency;
 pub mod gateway;
 pub mod parse;
+pub mod presence;
 pub mod remote_auth;
 pub mod rest;
 pub mod stream;
