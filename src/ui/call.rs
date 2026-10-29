@@ -969,7 +969,7 @@ fn noise_popup(app: &mut App, button: &egui::Response, suppressing: bool) {
             );
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new("RNNoise")
+                    egui::RichText::new("DeepFilterNet")
                         .font(font(Weight::Bold, 17.0))
                         .color(palette.strong),
                 );
@@ -984,7 +984,7 @@ fn noise_popup(app: &mut App, button: &egui::Response, suppressing: bool) {
                     );
                     if more.clicked() {
                         chosen = Some(Action::Chat(crate::chat::ChatAction::OpenUrl(
-                            "https://jmvalin.ca/demo/rnnoise/".into(),
+                            "https://github.com/Rikorose/DeepFilterNet".into(),
                         )));
                     }
                 });

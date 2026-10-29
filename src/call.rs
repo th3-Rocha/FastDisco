@@ -93,7 +93,7 @@ impl Ring {
 
 /// The voice filter's settings, which can change during a call.
 pub struct Filter {
-    /// 0 off, 1 standard (WebRTC's), 2 and up RNNoise's neural network.
+    /// 0 off, 1 standard (WebRTC's), 2 and up DeepFilterNet's neural network.
     pub noise: AtomicU8,
     pub echo: AtomicBool,
     pub gain: AtomicBool,
@@ -206,7 +206,8 @@ impl std::fmt::Debug for Shared {
     }
 }
 
-/// Whether the filter asks for RNNoise rather than WebRTC's suppression.
+/// Whether the filter asks for DeepFilterNet rather than WebRTC's
+/// suppression.
 fn neural(filter: &Filter) -> bool {
     filter.noise.load(Ordering::Relaxed) >= 2
 }
@@ -277,7 +278,7 @@ impl VoiceDetector {
 
     /// One 10 ms chunk; whether the user is talking. With a threshold,
     /// as Discord's manual sensitivity, louder than it is talking; with
-    /// RNNoise's voice probability, by that rather than by loudness.
+    /// the denoiser's voice probability, by that rather than by loudness.
     fn feed(&mut self, chunk: &[f32], threshold: Option<f32>, voice: Option<f32>) -> bool {
         let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt();
         let db = 20.0 * rms.max(1e-6).log10();
@@ -325,8 +326,8 @@ pub struct MicSource {
 
 struct Filtering {
     processor: Option<sonora::AudioProcessing>,
-    /// RNNoise, when the filter asks for it.
-    denoiser: Option<Box<nnnoiseless::DenoiseState<'static>>>,
+    /// DeepFilterNet, when the filter asks for it.
+    denoiser: Option<Denoiser>,
     version: u32,
     voice: VoiceDetector,
     /// The gate's gain now, moving smoothly so it never clicks.
@@ -338,7 +339,7 @@ impl MicSource {
         Self {
             filter: Mutex::new(Filtering {
                 processor: processor(&shared.filter),
-                denoiser: neural(&shared.filter).then(nnnoiseless::DenoiseState::new),
+                denoiser: neural(&shared.filter).then(Denoiser::start),
                 version: shared.filter.version.load(Ordering::Relaxed),
                 voice: VoiceDetector::new(),
                 open: 0.0,
@@ -366,7 +367,7 @@ impl MicSource {
         if version != f.version {
             f.version = version;
             f.processor = processor(&shared.filter);
-            f.denoiser = neural(&shared.filter).then(nnnoiseless::DenoiseState::new);
+            f.denoiser = neural(&shared.filter).then(Denoiser::start);
         }
         let auto = shared.filter.gate.load(Ordering::Relaxed);
         let threshold =
@@ -386,7 +387,7 @@ impl MicSource {
                 }
             }
             // After the echo canceller, so the network never hears the call.
-            let voice = f.denoiser.as_mut().map(|denoiser| denoise(denoiser, chunk));
+            let voice = f.denoiser.as_mut().and_then(|denoiser| denoiser.clean(chunk));
             talking = f.voice.feed(chunk, threshold, voice);
             let target = if talking { 1.0 } else { 0.0 };
             for sample in chunk.iter_mut() {
@@ -399,16 +400,83 @@ impl MicSource {
     }
 }
 
-/// Cleans one 10 ms chunk in place with RNNoise; the chance it is a voice.
-fn denoise(denoiser: &mut nnnoiseless::DenoiseState, chunk: &mut [f32]) -> f32 {
-    // RNNoise works on 16-bit sample values.
-    let input: Vec<f32> = chunk.iter().map(|s| s * 32_768.0).collect();
-    let mut output = [0f32; nnnoiseless::FRAME_SIZE];
-    let voice = denoiser.process_frame(&mut output, &input);
-    for (sample, clean) in chunk.iter_mut().zip(output) {
-        *sample = (clean / 32_768.0).clamp(-1.0, 1.0);
+/// DeepFilterNet on a thread of its own: its model cannot move between
+/// threads, and the microphone source must. Each 10 ms chunk goes there
+/// and comes back clean, a fraction of a millisecond later.
+struct Denoiser {
+    chunks: std::sync::mpsc::SyncSender<Vec<f32>>,
+    cleaned: std::sync::mpsc::Receiver<(Vec<f32>, f32)>,
+    /// The model has loaded; until then the sound passes as it is.
+    ready: Arc<std::sync::atomic::AtomicBool>,
+    /// The thread stopped answering: the sound passes as it is.
+    broken: bool,
+}
+
+impl Denoiser {
+    fn start() -> Self {
+        let (chunks, inbox) = std::sync::mpsc::sync_channel::<Vec<f32>>(4);
+        let (outbox, cleaned) = std::sync::mpsc::sync_channel(4);
+        let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Arc::clone(&ready);
+        let spawned = std::thread::Builder::new()
+            .name("deepfilternet".into())
+            .spawn(move || {
+                use df::tract::{DfParams, DfTract, RuntimeParams};
+                let mut model =
+                    match DfTract::new(DfParams::default(), &RuntimeParams::default_with_ch(1)) {
+                        Ok(model) => model,
+                        Err(error) => {
+                            log::warn!("DeepFilterNet: {error}");
+                            return;
+                        }
+                    };
+                let mut noisy = ndarray::Array2::<f32>::zeros((1, CHUNK));
+                let mut clean = ndarray::Array2::<f32>::zeros((1, CHUNK));
+                flag.store(true, Ordering::Release);
+                // Until the microphone source drops its end.
+                while let Ok(chunk) = inbox.recv() {
+                    noisy.row_mut(0).assign(&ndarray::ArrayView1::from(&chunk[..]));
+                    let snr = model
+                        .process(noisy.view(), clean.view_mut())
+                        .unwrap_or(-15.0);
+                    if outbox.send((clean.row(0).to_vec(), snr)).is_err() {
+                        break;
+                    }
+                }
+            });
+        Self {
+            chunks,
+            cleaned,
+            ready,
+            broken: spawned.is_err(),
+        }
     }
-    voice
+
+    /// Cleans one 10 ms chunk in place; the chance it is a voice, from the
+    /// model's signal-to-noise estimate (-15 dB for noise alone, speech
+    /// well above zero). None while the model loads.
+    fn clean(&mut self, chunk: &mut [f32]) -> Option<f32> {
+        if self.broken || !self.ready.load(Ordering::Acquire) || chunk.len() != CHUNK {
+            return None;
+        }
+        if self.chunks.send(chunk.to_vec()).is_err() {
+            self.broken = true;
+            return None;
+        }
+        match self.cleaned.recv_timeout(Duration::from_millis(30)) {
+            Ok((clean, snr)) => {
+                for (sample, clean) in chunk.iter_mut().zip(clean) {
+                    *sample = clean.clamp(-1.0, 1.0);
+                }
+                Some((snr / 10.0).clamp(0.0, 1.0))
+            }
+            Err(_) => {
+                // Late answers would land on the wrong chunk from now on.
+                self.broken = true;
+                None
+            }
+        }
+    }
 }
 
 impl Read for MicSource {
@@ -786,8 +854,12 @@ mod tests {
     }
 
     #[test]
-    fn rnnoise_quiets_a_hiss_and_does_not_call_it_a_voice() {
-        let mut denoiser = nnnoiseless::DenoiseState::new();
+    fn deepfilternet_quiets_a_hiss_and_does_not_call_it_a_voice() {
+        let mut denoiser = Denoiser::start();
+        let start = Instant::now();
+        while !denoiser.ready.load(Ordering::Acquire) && start.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         // Deterministic white noise around -30 dBFS.
         let mut seed = 1u32;
         let mut hiss = || {
@@ -798,7 +870,7 @@ mod tests {
         for frame in 0..200 {
             let mut chunk: Vec<f32> = (0..CHUNK).map(|_| hiss()).collect();
             let energy = chunk.iter().map(|s| s * s).sum::<f32>();
-            let probability = denoise(&mut denoiser, &mut chunk);
+            let probability = denoiser.clean(&mut chunk).expect("the model answers");
             // The network needs a moment to learn the room.
             if frame >= 100 {
                 before += energy;

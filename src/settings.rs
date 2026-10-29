@@ -48,7 +48,7 @@ pub struct Settings {
     /// Words the user added to the dictionary, lowercased.
     pub dictionary: Vec<String>,
     /// The call's voice filter: noise suppression 0 off, 1 standard
-    /// (WebRTC's), 2 and up "Inteligente" (RNNoise's neural network).
+    /// (WebRTC's), 2 and up "Inteligente" (DeepFilterNet's neural network).
     pub noise_suppression: u8,
     pub echo_cancellation: bool,
     pub auto_gain: bool,

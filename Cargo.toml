@@ -1,6 +1,6 @@
 [package]
 name = "discofast"
-version = "0.24.0"
+version = "0.25.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -93,9 +93,13 @@ async-trait = "0.1"
 # Echo cancelling, noise suppression and level control for the call's
 # microphone: WebRTC's audio processing ported to Rust.
 sonora = "0.2"
-# The "Inteligente" noise suppression: RNNoise's neural network, which
-# also tells the voice gate when someone is talking. 48 kHz, 10 ms frames.
-nnnoiseless = { version = "0.5.2", default-features = false }
+# The "Inteligente" noise suppression: DeepFilterNet3, a neural network
+# that also takes out sudden noise (keys, claps) RNNoise lets through, and
+# whose signal-to-noise estimate tells the voice gate when someone talks.
+# 48 kHz, 10 ms frames; the model is built in. Only the repository has the
+# real-time engine (crates.io stops at 0.2).
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", tag = "v0.5.6", default-features = false, features = ["tract", "default-model"] }
+ndarray = "0.15"
 # The microphone reaches songbird as a symphonia media source.
 symphonia-core = "0.5"
 emojis = "0.9.1"
