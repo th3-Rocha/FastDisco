@@ -78,6 +78,11 @@ jobs:
           sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev libdbus-1-dev clang cmake perl
           # LiveKit's libwebrtc, for the selfhosted feature.
           sudo apt-get install -y libglib2.0-dev libva-dev libdrm-dev libgbm-dev libx11-dev libxext-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev libxtst-dev libpipewire-0.3-dev libpulse-dev
+          # Its libc++ wants clang 21 or newer; Ubuntu 24.04 ships 18.
+          wget -qO llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh 21
+          echo "CC=clang-21" >> "$GITHUB_ENV"
+          echo "CXX=clang++-21" >> "$GITHUB_ENV"
       # Camera and screen through the friends' own LiveKit server.
       - run: cargo build --locked --release --features selfhosted --target ${{ matrix.target }}
       - name: Package
