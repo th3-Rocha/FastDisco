@@ -40,4 +40,7 @@ pub struct VoiceData {
     /// [`DecodeConfig::decode_channels`]: crate::driver::DecodeConfig::channels
     /// [`DecodeConfig::sample_rate`]: crate::driver::DecodeConfig::sample_rate
     pub decoded_voice: Option<Vec<i16>>,
+    /// Discofast: when [`Self::packet`] was lost, the packet after it, whose
+    /// in-band FEC can rebuild it.
+    pub fec: Option<RtpData>,
 }

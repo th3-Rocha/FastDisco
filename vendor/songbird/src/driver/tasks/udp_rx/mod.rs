@@ -212,13 +212,16 @@ impl UdpRx {
                         // one reason or another; otherwise there'd be error logs for trying to decode
                         // Opus
                         let Some(user_id) = self.ssrc_signalling.ssrc_user_map.get(&ssrc) else {
+                            crate::rx_stats::count(&crate::rx_stats::RX.dave_waiting);
                             return;
                         };
                         let Some(ref mut dave_session) = *self.dave_session.write().unwrap() else {
+                            crate::rx_stats::count(&crate::rx_stats::RX.dave_waiting);
                             return;
                         };
 
                         if !dave_session.is_ready() {
+                            crate::rx_stats::count(&crate::rx_stats::RX.dave_waiting);
                             return;
                         }
 
@@ -240,10 +243,12 @@ impl UdpRx {
                                 },
                             )) => {
                                 // Silently drop encrypted packets for users whose ratchets are not configured yet.
+                                crate::rx_stats::count(&crate::rx_stats::RX.dave_failed);
                                 return;
                             },
                             Err(e) => {
                                 error!(error = ?e, "DAVE decryption failed");
+                                crate::rx_stats::count(&crate::rx_stats::RX.dave_failed);
                                 return;
                             },
                         }

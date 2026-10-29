@@ -1482,6 +1482,12 @@ mod tests {
     /// filter takes, how often the ring ran dry and where the sound broke.
     /// `cargo test --release realtime -- --ignored --nocapture`
     fn send_in_real_time(noise: u8, seconds: u64) -> (Vec<f32>, Vec<Duration>, u32, u32) {
+        send_with_callbacks(noise, seconds, 0)
+    }
+
+    /// As above, the microphone handing `callback` frames at a time at its
+    /// own steady pace (PipeWire's quantum), or 5 to 15 ms with 0.
+    fn send_with_callbacks(noise: u8, seconds: u64, callback: usize) -> (Vec<f32>, Vec<Duration>, u32, u32) {
         let shared = Arc::new(Shared::default());
         shared.filter.noise.store(noise, Ordering::Relaxed);
         // The gate always open, so only real breaks are silence.
@@ -1504,11 +1510,26 @@ mod tests {
                 let mut sent = 0usize;
                 let mut seed = 7u32;
                 while !stop.load(Ordering::Relaxed) {
-                    // A sound server hands 5 to 15 ms at a time.
-                    seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
-                    let wait = 5 + (seed >> 16) % 11;
-                    std::thread::sleep(Duration::from_millis(u64::from(wait)));
-                    let due = (start.elapsed().as_secs_f64() * f64::from(RATE)) as usize;
+                    let due = if callback == 0 {
+                        // A sound server hands 5 to 15 ms at a time.
+                        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                        let wait = 5 + (seed >> 16) % 11;
+                        std::thread::sleep(Duration::from_millis(u64::from(wait)));
+                        (start.elapsed().as_secs_f64() * f64::from(RATE)) as usize
+                    } else {
+                        let next = sent + callback;
+                        // A little lateness, now and then more, as a busy
+                        // desktop hands the microphone over.
+                        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                        let late = f64::from((seed >> 16) % 3)
+                            + if (seed >> 8) % 50 == 0 { 12.0 } else { 0.0 };
+                        let at = start
+                            + Duration::from_secs_f64(next as f64 / f64::from(RATE) + late / 1000.0);
+                        if let Some(wait) = at.checked_duration_since(Instant::now()) {
+                            std::thread::sleep(wait);
+                        }
+                        next
+                    };
                     let block: Vec<f32> = (sent..due)
                         .map(|i| {
                             let t = i as f32 / RATE as f32;
@@ -1562,6 +1583,18 @@ mod tests {
             }
         }
         count
+    }
+
+    #[test]
+    #[ignore = "real time, ten seconds each"]
+    fn realtime_send_quantum() {
+        for callback in [256usize, 480, 1024, 2048] {
+            let (out, _, under, over) = send_with_callbacks(0, 10, callback);
+            println!(
+                "microphone in blocks of {callback} frames: mic ring underruns {under} overruns {over}; {} breaks",
+                breaks(&out)
+            );
+        }
     }
 
     #[test]
@@ -1652,10 +1685,130 @@ mod tests {
             ("events up to 30 ms late", 30, 0, 1024, 1.0),
             ("events up to 50 ms late", 50, 0, 1024, 1.0),
             ("a 100 ms stall every 5 s", 10, 100, 1024, 1.0),
+            ("card in blocks of 2048", 0, 0, 2048, 1.0),
+            ("card 2048, events up to 10 ms late", 10, 0, 2048, 1.0),
+            ("card 2048, events up to 20 ms late", 20, 0, 2048, 1.0),
+            ("card 2048, events up to 30 ms late", 30, 0, 2048, 1.0),
         ] {
             let (b, under, over) = receive_in_real_time(jitter, stall, frames, skew, 10);
             println!("{name}: {b} breaks, underruns {under}, overruns {over}");
         }
+    }
+
+    /// A 32-bit float WAV's samples, first channel.
+    fn read_wav(path: &str) -> Vec<f32> {
+        let bytes = std::fs::read(path).unwrap();
+        let mut pos = 12;
+        let mut channels = 1usize;
+        while pos + 8 <= bytes.len() {
+            let id = &bytes[pos..pos + 4];
+            let size = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap()) as usize;
+            let body = &bytes[pos + 8..(pos + 8 + size).min(bytes.len())];
+            if id == b"fmt " {
+                channels = usize::from(u16::from_le_bytes([body[2], body[3]]));
+            }
+            if id == b"data" {
+                return body
+                    .chunks_exact(4 * channels)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+            }
+            pos += 8 + size + (size & 1);
+        }
+        panic!("no data in {path}");
+    }
+
+    fn write_wav(path: &str, samples: &[f32]) {
+        let mut out = Vec::new();
+        let data = (samples.len() * 4) as u32;
+        out.extend(b"RIFF");
+        out.extend((36 + data).to_le_bytes());
+        out.extend(b"WAVEfmt ");
+        out.extend(16u32.to_le_bytes());
+        out.extend(3u16.to_le_bytes());
+        out.extend(1u16.to_le_bytes());
+        out.extend(RATE.to_le_bytes());
+        out.extend((RATE * 4).to_le_bytes());
+        out.extend(4u16.to_le_bytes());
+        out.extend(32u16.to_le_bytes());
+        out.extend(b"data");
+        out.extend(data.to_le_bytes());
+        for s in samples {
+            out.extend(s.to_le_bytes());
+        }
+        std::fs::write(path, out).unwrap();
+    }
+
+    /// Runs a recording through the send filter as a call would, for each
+    /// noise suppression, and writes what would be sent beside it:
+    /// `DISCOFAST_FILTER_IN=voice.wav cargo test --release filter_a_recording -- --ignored`
+    #[test]
+    #[ignore = "needs a recording"]
+    fn filter_a_recording() {
+        let Ok(input) = std::env::var("DISCOFAST_FILTER_IN") else {
+            return;
+        };
+        let samples = read_wav(&input);
+        for noise in [0u8, 1, 2] {
+            let shared = Arc::new(Shared::default());
+            shared.filter.noise.store(noise, Ordering::Relaxed);
+            shared.filter.version.fetch_add(1, Ordering::Relaxed);
+            let mut source = MicSource::new(Arc::clone(&shared));
+            if noise >= 2 {
+                let _ = source.next_block();
+                std::thread::sleep(Duration::from_secs(3));
+            }
+            let mut out = Vec::with_capacity(samples.len());
+            for block in samples.chunks(BLOCK) {
+                shared.mic.push(block);
+                out.extend(source.next_block());
+            }
+            write_wav(&format!("{input}.sent-{noise}.wav"), &out);
+        }
+    }
+
+    /// The real microphone for five seconds, opened as a call opens it:
+    /// how many frames each callback brings and how far apart they come.
+    /// `cargo test --release microphone_callbacks -- --ignored --nocapture`
+    #[test]
+    #[ignore = "uses the microphone"]
+    fn microphone_callbacks() {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        let host = cpal::default_host();
+        let device = host.default_input_device().expect("a microphone");
+        let config = mic_config(&device).unwrap();
+        println!("{} {:?} {:?}", device.name().unwrap_or_default(), config, config.buffer_size());
+        let seen = Arc::new(Mutex::new(Vec::<(Instant, usize)>::new()));
+        let log = Arc::clone(&seen);
+        let channels = usize::from(config.channels());
+        let stream = device
+            .build_input_stream(
+                &config.config(),
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    log.lock().unwrap().push((Instant::now(), data.len() / channels));
+                },
+                |e| println!("error {e}"),
+                None,
+            )
+            .unwrap();
+        stream.play().unwrap();
+        std::thread::sleep(Duration::from_secs(5));
+        drop(stream);
+        let seen = seen.lock().unwrap();
+        let sizes: HashSet<usize> = seen.iter().map(|s| s.1).collect();
+        let gaps: Vec<f64> = seen.windows(2).map(|w| (w[1].0 - w[0].0).as_secs_f64() * 1000.0).collect();
+        let total: usize = seen.iter().map(|s| s.1).sum();
+        let mut sorted = gaps.clone();
+        sorted.sort_by(f64::total_cmp);
+        println!(
+            "{} callbacks, frames {:?}, {} frames in 5 s; spacing median {:.1} ms, p99 {:.1} ms, max {:.1} ms",
+            seen.len(),
+            sizes,
+            total,
+            sorted[sorted.len() / 2],
+            sorted[sorted.len() * 99 / 100],
+            sorted.last().unwrap()
+        );
     }
 
     #[test]

@@ -70,11 +70,24 @@ impl SsrcState {
             PacketLookup::MissedPacket => None,
             PacketLookup::Filling => return Ok(None),
         };
-
         let mut out = VoiceData {
             packet: None,
             decoded_voice: None,
+            fec: None,
         };
+        // Discofast: a missing packet's successor, for its in-band FEC.
+        if pkt.is_none() {
+            if let Some(next) = self.playout_buffer.peek_next().filter(|n| n.decrypted) {
+                crate::rx_stats::count(&crate::rx_stats::RX.fec_available);
+                let payload_offset = self.crypto_mode.payload_prefix_len();
+                let len = RtpPacket::new(&next.packet).map_or(0, |r| r.payload().len());
+                out.fec = Some(RtpData {
+                    packet: next.packet.clone(),
+                    payload_offset,
+                    payload_end_pad: len.saturating_sub(self.crypto_mode.payload_suffix_len()),
+                });
+            }
+        }
 
         let should_decode = config.decode_mode.should_decode();
         if let Some((packet, decrypted)) = pkt {

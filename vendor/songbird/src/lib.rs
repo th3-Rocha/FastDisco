@@ -81,6 +81,8 @@
 
 mod config;
 pub mod constants;
+/// Discofast: counters of lost received packets.
+pub mod rx_stats;
 #[cfg(feature = "driver")]
 pub mod driver;
 pub mod error;

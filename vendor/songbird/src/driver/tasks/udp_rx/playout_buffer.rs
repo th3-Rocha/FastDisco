@@ -86,6 +86,7 @@ impl PlayoutBuffer {
             && desired_index >= err_threshold;
 
         if desired_index < 0 {
+            crate::rx_stats::count(&crate::rx_stats::RX.late);
             trace!("Missed packet arrived late, discarding from playout.");
         } else if !handling_desync && desired_index >= 64 {
             trace!(
@@ -97,8 +98,12 @@ impl PlayoutBuffer {
                 self.next_seq,
             );
             self.consecutive_store_fails += 1;
+            crate::rx_stats::count(&crate::rx_stats::RX.too_far);
         } else {
             let index = if handling_desync {
+                if !self.buffer.is_empty() {
+                    crate::rx_stats::count(&crate::rx_stats::RX.desync);
+                }
                 self.buffer.clear();
                 self.next_seq = pkt_seq;
 
@@ -167,6 +172,7 @@ impl PlayoutBuffer {
                     *curr_ts = pkt_ts;
                     PacketLookup::Packet(pkt)
                 } else {
+                    crate::rx_stats::count(&crate::rx_stats::RX.withheld);
                     trace!("Witholding packet: ts_diff is {ts_diff}");
                     self.buffer.push_front(Some(pkt));
                     self.playout_mode = PlayoutMode::Fill;
@@ -181,6 +187,13 @@ impl PlayoutBuffer {
         };
 
         if self.buffer.is_empty() {
+            // Ran dry on a packet that was not the explicit silence ending
+            // a stream: someone was cut off mid-word.
+            if let PacketLookup::Packet(pkt) = &out {
+                if !ends_in_silence(&pkt.packet) {
+                    crate::rx_stats::count(&crate::rx_stats::RX.underrun);
+                }
+            }
             self.playout_mode = PlayoutMode::Fill;
             self.current_timestamp = None;
         }
@@ -195,10 +208,22 @@ impl PlayoutBuffer {
     pub fn next_seq(&self) -> RtpSequence {
         self.next_seq
     }
+
+    /// The packet that plays after the next one is fetched, if it is here:
+    /// its in-band FEC carries a copy of a missing packet.
+    pub fn peek_next(&self) -> Option<&StoredPacket> {
+        self.buffer.front().and_then(Option::as_ref)
+    }
 }
 
 #[inline]
 fn reset_timeout(packet: &RtpPacket<'_>, config: &Config) -> RtpTimestamp {
     let t_shift = MONO_FRAME_SIZE * usize::from(config.playout_buffer_length.get());
     (packet.get_timestamp() + (t_shift as u32)).0
+}
+
+/// Whether a packet is small enough to be the silence frame (0xF8 0xFF
+/// 0xFE, sealed) that ends a stream; a guess from its size.
+fn ends_in_silence(packet: &[u8]) -> bool {
+    packet.len() < 12 + 3 + 40
 }
