@@ -1027,7 +1027,21 @@ fn invite(app: &mut App, ui: &mut Ui, link: Option<String>) {
                 || username.to_lowercase().contains(&query)
         })
         .collect();
-    friends.sort_by_key(|(_, name, _)| name.to_lowercase());
+    // As Discord: the most recent conversations first, then who is online,
+    // then the rest by name.
+    let last_talk = |id: crate::model::Id| {
+        app.model
+            .direct
+            .iter()
+            .filter_map(|c| app.model.channel(*c))
+            .filter(|c| c.recipients == [id])
+            .filter_map(|c| c.last_message)
+            .max()
+    };
+    friends.sort_by_cached_key(|(id, name, _)| {
+        let online = app.model.user(*id).is_some_and(|u| u.status != crate::model::Status::Offline);
+        (std::cmp::Reverse(last_talk(*id)), !online, name.to_lowercase())
+    });
     let mut out: Vec<Action> = Vec::new();
     let mut close = false;
     let response = egui::Modal::new(egui::Id::new("invite-modal"))
@@ -1132,7 +1146,7 @@ fn invite(app: &mut App, ui: &mut Ui, link: Option<String>) {
                         .stroke(egui::Stroke::new(1.0, palette.selected))
                         .inner_margin(Margin::symmetric(10, 4))
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
+                            ui.allocate_ui_with_layout(vec2(ui.available_width(), 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                 let text = link.clone().unwrap_or_else(|| "Criando convite…".into());
                                 ui.label(RichText::new(text).font(font(Weight::Regular, 16.0)).color(palette.text));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
