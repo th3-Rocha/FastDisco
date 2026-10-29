@@ -18,8 +18,10 @@ pub const TALKING: Color32 = Color32::from_rgb(0x23, 0xa5, 0x5a);
 pub fn members(app: &mut App, ui: &mut Ui, channel: Id) {
     let palette = app.palette;
     let guild = app.model.channel(channel).and_then(|c| c.guild);
+    let in_call = app.call.as_ref().is_some_and(|c| c.channel == channel);
     for (user, state) in app.model.in_voice(channel) {
-        let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), 35.0), Sense::click());
+        let (slot, response) =
+            ui.allocate_exact_size(vec2(ui.available_width(), 35.0), Sense::click());
         let rect = Rect::from_min_max(
             pos2(slot.left() + 38.0, slot.top() + 1.0),
             pos2(slot.right() - 8.0, slot.bottom() - 1.0),
@@ -57,10 +59,27 @@ pub fn members(app: &mut App, ui: &mut Ui, channel: Id) {
                 Color32::WHITE,
             );
             right = pill.left() - 4.0;
+            // From inside the call, the badge opens the share.
+            if in_call {
+                let badge = ui.interact(pill, ui.id().with(("live", user)), Sense::click());
+                let badge = badge.on_hover_cursor(egui::CursorIcon::PointingHand);
+                let badge = if crate::call::CAN_WATCH {
+                    badge.on_hover_text("Assistir transmissão")
+                } else {
+                    badge.on_hover_text("Assistir transmissão (ainda não disponível no Discofast)")
+                };
+                if badge.clicked() {
+                    app.actions.push(Action::WatchStream(user));
+                }
+            }
         }
         // Grey when the person chose it, red when the server did, as
         // Discord's list.
         let y = rect.center().y;
+        if state.video {
+            paint_icon(ui, Icon::Video, pos2(right - 8.0, y), 16.0, palette.icon);
+            right -= 22.0;
+        }
         if state.self_deaf || state.deaf {
             let tint = if state.deaf { red } else { palette.icon };
             paint_icon(ui, Icon::HeadphonesOff, pos2(right - 8.0, y), 16.0, tint);
@@ -104,7 +123,11 @@ pub fn members(app: &mut App, ui: &mut Ui, channel: Id) {
         member_menu(app, &response, guild, channel, user, &state, rect);
     }
     // Offered for a while after joining, a ring counting it down.
-    if let Some(since) = app.call.as_ref().filter(|c| c.channel == channel).map(|c| c.since)
+    if let Some(since) = app
+        .call
+        .as_ref()
+        .filter(|c| c.channel == channel)
+        .map(|c| c.since)
         && guild.is_some()
     {
         let left = 1.0 - since.elapsed().as_secs_f32() / INVITE_FOR;
@@ -583,7 +606,8 @@ pub fn section(app: &mut App, ui: &mut Ui, rect: Rect) {
     if hang.on_hover_text("Desconectar").clicked() {
         app.actions.push(Action::LeaveVoice);
     }
-    // Camera, screen, activities and soundboard, as Discord's row; not in
+    // Camera, screen, activities and soundboard, as Discord's row. Camera
+    // and screen work on the user's own video server; the rest are not in
     // Discofast yet, so drawn dim.
     let row = Rect::from_min_max(
         pos2(rect.left() + 10.0, badge.bottom() + 8.0),
@@ -591,37 +615,93 @@ pub fn section(app: &mut App, ui: &mut Ui, rect: Rect) {
     );
     let gap = 8.0;
     let width = (row.width() - gap * 3.0) / 4.0;
+    let room = app.call.as_ref().and_then(|c| c.room.as_ref());
+    let ready = room.is_some_and(|r| r.state == State::Connected);
+    let room_error = room.and_then(|r| match &r.state {
+        State::Failed(e) => Some(e.clone()),
+        _ => None,
+    });
+    let (camera, screen) = room.map_or((false, false), |r| (r.camera, r.screen));
     let buttons = [
-        (Icon::Video, "Ativar câmera"),
-        (Icon::ScreenShare, "Compartilhar sua tela"),
-        (Icon::Activities, "Iniciar uma atividade"),
-        (Icon::Soundboard, "Abrir painel de efeitos sonoros"),
+        (
+            Icon::Video,
+            camera,
+            if camera {
+                "Desativar câmera"
+            } else {
+                "Ativar câmera"
+            },
+        ),
+        (
+            Icon::ScreenShare,
+            screen,
+            if screen {
+                "Parar de compartilhar"
+            } else {
+                "Compartilhar sua tela"
+            },
+        ),
+        (Icon::Activities, false, "Iniciar uma atividade"),
+        (Icon::Soundboard, false, "Abrir painel de efeitos sonoros"),
     ];
-    for (i, (icon, hint)) in buttons.into_iter().enumerate() {
+    for (i, (icon, on, hint)) in buttons.into_iter().enumerate() {
         let at = Rect::from_min_size(
             pos2(row.left() + i as f32 * (width + gap), row.top()),
             vec2(width, row.height()),
         );
-        let response = ui.interact(at, ui.id().with(("call-row", i)), Sense::hover());
-        ui.painter().rect_filled(
-            at,
-            CornerRadius::same(6),
-            crate::theme::mix(palette.user_panel, palette.hover, 0.6),
-        );
-        paint_icon(
-            ui,
-            icon,
-            at.center(),
-            20.0,
-            palette.icon.gamma_multiply(0.5),
-        );
-        response.on_hover_text(format!("{hint} (ainda não disponível no Discofast)"));
+        let kind = match icon {
+            Icon::Video => Some(crate::room::Kind::Camera),
+            Icon::ScreenShare => Some(crate::room::Kind::Screen),
+            _ => None,
+        };
+        let usable = kind.is_some() && ready;
+        let sense = if usable {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let response = ui.interact(at, ui.id().with(("call-row", i)), sense);
+        let fill = if on {
+            TALKING
+        } else if usable && response.hovered() {
+            palette.hover
+        } else {
+            crate::theme::mix(palette.user_panel, palette.hover, 0.6)
+        };
+        ui.painter().rect_filled(at, CornerRadius::same(6), fill);
+        let tint = match (on, usable) {
+            (true, _) => Color32::WHITE,
+            (false, true) => palette.icon,
+            (false, false) => palette.icon.gamma_multiply(0.5),
+        };
+        paint_icon(ui, icon, at.center(), 20.0, tint);
+        let response = match (&kind, usable, &room_error) {
+            (Some(_), true, _) => response.on_hover_text(hint),
+            (Some(_), false, Some(error)) => {
+                response.on_hover_text(format!("{hint}: o servidor de vídeo falhou ({error})"))
+            }
+            (Some(_), false, None) if room.is_some() => {
+                response.on_hover_text(format!("{hint} (conectando ao servidor de vídeo)"))
+            }
+            (Some(_), false, None) if crate::room::AVAILABLE => response.on_hover_text(format!(
+                "{hint}: configure seu servidor de vídeo em Voz e vídeo"
+            )),
+            _ => response.on_hover_text(format!("{hint} (ainda não disponível no Discofast)")),
+        };
+        if let Some(kind) = kind
+            && response.clicked()
+        {
+            app.actions.push(Action::ToggleVideo(kind));
+        }
     }
 }
 
 /// The call in the middle: a tile per person, the talking ones outlined in
 /// green, and the buttons at the bottom.
 pub fn view(app: &mut App, ui: &mut Ui) {
+    if let Some(room) = app.call.as_mut().and_then(|c| c.room.as_mut()) {
+        room.refresh(ui.ctx());
+    }
     let Some(call) = &app.call else {
         return;
     };
@@ -658,42 +738,51 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         font(Weight::SemiBold, 16.0),
         Color32::WHITE,
     );
-    // Tiles in a grid that fits the space, 16:9 each.
-    let area = Rect::from_min_max(
+    let watched = call.watching.as_ref().map(|w| w.user);
+    let focus = call.room.as_ref().and_then(|r| r.focus);
+    let mut area = Rect::from_min_max(
         pos2(rect.left() + 16.0, rect.top() + 56.0),
         pos2(rect.right() - 16.0, rect.bottom() - 96.0),
     );
-    let count = people.len().max(1);
-    let mut columns = 1;
-    while columns < count {
-        let rows = count.div_ceil(columns);
-        let w = (area.width() - 8.0 * (columns as f32 - 1.0)) / columns as f32;
-        if (w * 9.0 / 16.0) * rows as f32 + 8.0 * (rows as f32 - 1.0) <= area.height() {
-            break;
+    // A watched share takes the stage, with everyone in a strip under it,
+    // as Discord's focus view.
+    let stage = Rect::from_min_max(area.min, pos2(area.right(), area.bottom() - 124.0));
+    if let Some(streamer) = watched {
+        stream_stage(app, ui, stage, guild, streamer);
+        area = Rect::from_min_max(pos2(area.left(), stage.bottom() + 12.0), area.max);
+    } else if let Some(user) = focus {
+        own_stage(app, ui, stage, guild, user);
+        area = Rect::from_min_max(pos2(area.left(), stage.bottom() + 12.0), area.max);
+    }
+    // Each person's tile, and beside it a tile for each share they have
+    // that is not on the stage: Discord's, and one on the own server.
+    let room = app.call.as_ref().and_then(|c| c.room.as_ref());
+    let mut entries: Vec<(Id, Entry)> = Vec::new();
+    for (user, state) in &people {
+        entries.push((*user, Entry::Person(state)));
+        if state.stream && watched != Some(*user) {
+            entries.push((*user, Entry::Stream));
         }
-        columns += 1;
+        if room.is_some_and(|r| r.sends(*user, crate::room::Kind::Screen))
+            && (watched.is_some() || focus != Some(*user))
+        {
+            entries.push((*user, Entry::OwnScreen));
+        }
     }
-    let rows = count.div_ceil(columns);
-    let mut w = (area.width() - 8.0 * (columns as f32 - 1.0)) / columns as f32;
-    let mut h = w * 9.0 / 16.0;
-    let total_h = h * rows as f32 + 8.0 * (rows as f32 - 1.0);
-    if total_h > area.height() {
-        h = (area.height() - 8.0 * (rows as f32 - 1.0)) / rows as f32;
-        w = h * 16.0 / 9.0;
-    }
-    let grid_w = w * columns as f32 + 8.0 * (columns as f32 - 1.0);
-    let grid_h = h * rows as f32 + 8.0 * (rows as f32 - 1.0);
-    let origin = pos2(
-        area.center().x - grid_w / 2.0,
-        area.center().y - grid_h / 2.0,
-    );
-    for (i, (user, state)) in people.iter().enumerate() {
-        let (col, row) = (i % columns, i / columns);
-        let tile = Rect::from_min_size(
-            origin + vec2(col as f32 * (w + 8.0), row as f32 * (h + 8.0)),
-            vec2(w, h),
-        );
-        let person = app.model.user(*user);
+    let tiles = grid(area, entries.len().max(1));
+    for ((user, entry), tile) in entries.into_iter().zip(tiles) {
+        let state = match entry {
+            Entry::Person(state) => state,
+            Entry::Stream => {
+                stream_tile(app, ui, tile, guild, user);
+                continue;
+            }
+            Entry::OwnScreen => {
+                own_screen_tile(app, ui, tile, guild, user);
+                continue;
+            }
+        };
+        let person = app.model.user(user);
         // The avatar's own colour, as Discord's tiles; until it is known,
         // the colour behind the initial.
         let fill = person.map_or(palette.sidebar, |p| {
@@ -701,11 +790,18 @@ pub fn view(app: &mut App, ui: &mut Ui) {
                 .unwrap_or_else(|| p.color().gamma_multiply(0.55))
         });
         ui.painter().rect_filled(tile, CornerRadius::same(8), fill);
-        let radius = (h * 0.22).clamp(20.0, 60.0);
-        if let Some(person) = person {
-            avatar(ui, app, person, tile.center(), radius, None);
+        let radius = (tile.height() * 0.22).clamp(20.0, 60.0);
+        let camera = app
+            .call
+            .as_ref()
+            .and_then(|c| c.room.as_ref())
+            .and_then(|r| r.video(user, crate::room::Kind::Camera));
+        match (camera, person) {
+            (Some(texture), _) => paint_video(ui, texture, tile, true),
+            (None, Some(person)) => avatar(ui, app, person, tile.center(), radius, None),
+            (None, None) => {}
         }
-        if app.talking(*user) {
+        if app.talking(user) {
             ui.painter().rect_stroke(
                 tile,
                 CornerRadius::same(8),
@@ -714,7 +810,7 @@ pub fn view(app: &mut App, ui: &mut Ui) {
             );
         }
         // The name, and how they hear and speak, at the bottom left.
-        let label = app.model.name_in(guild, *user);
+        let label = app.model.name_in(guild, user);
         let galley =
             ui.painter()
                 .layout_no_wrap(label, font(Weight::SemiBold, 14.0), Color32::WHITE);
@@ -781,38 +877,58 @@ fn controls(app: &mut App, ui: &mut Ui, center: egui::Pos2) {
             tile,
         );
     };
-    let button = |ui: &mut Ui, at: Rect, key: &str, icon: Icon, tint: Color32, fill: Option<Color32>| {
-        let response = ui.interact(at, ui.id().with(("call-control", key)), Sense::click());
-        let fill = fill.or(response.hovered().then_some(hover));
-        if let Some(fill) = fill {
-            ui.painter().rect_filled(at, CornerRadius::same(8), fill);
-        }
-        paint_icon(ui, icon, at.center(), 20.0, tint);
-        response
-    };
+    let button =
+        |ui: &mut Ui, at: Rect, key: &str, icon: Icon, tint: Color32, fill: Option<Color32>| {
+            let response = ui.interact(at, ui.id().with(("call-control", key)), Sense::click());
+            let fill = fill.or(response.hovered().then_some(hover));
+            if let Some(fill) = fill {
+                ui.painter().rect_filled(at, CornerRadius::same(8), fill);
+            }
+            paint_icon(ui, icon, at.center(), 20.0, tint);
+            response
+        };
     let unavailable = Color32::from_gray(110);
 
     group(ui, x, first);
     let muted = app.settings.muted;
     let mic = Rect::from_min_size(pos2(x + PAD, top + PAD), Vec2::splat(BUTTON));
     let (icon, tint, fill) = if muted {
-        (Icon::MicOff, palette.danger, Some(Color32::from_rgb(0x3a, 0x1c, 0x1f)))
+        (
+            Icon::MicOff,
+            palette.danger,
+            Some(Color32::from_rgb(0x3a, 0x1c, 0x1f)),
+        )
     } else {
         (Icon::Mic, Color32::WHITE, None)
     };
     let response = button(ui, mic, "mic", icon, tint, fill);
-    let hint = if muted { "Ativar microfone" } else { "Silenciar" };
+    let hint = if muted {
+        "Ativar microfone"
+    } else {
+        "Silenciar"
+    };
     if response.on_hover_text(hint).clicked() {
         app.actions.push(Action::ToggleMute);
     }
     let chevron = Rect::from_min_size(pos2(mic.right(), top + PAD), vec2(20.0, BUTTON));
-    let more_mic = button(ui, chevron, "mic-more", Icon::ChevronDown, palette.icon, None);
+    let more_mic = button(
+        ui,
+        chevron,
+        "mic-more",
+        Icon::ChevronDown,
+        palette.icon,
+        None,
+    );
     let mut chosen = None;
     let deaf = app.settings.deafened;
     egui::Popup::menu(&more_mic).show(|ui| {
         ui.set_min_width(200.0);
         if ui
-            .button(if deaf { "Desativar ensurdecer" } else { "Ensurdecer" })
+            .button(if deaf {
+                "Desativar ensurdecer"
+            } else {
+                "Ensurdecer"
+            })
             .clicked()
         {
             chosen = Some(Action::ToggleDeafen);
@@ -827,8 +943,29 @@ fn controls(app: &mut App, ui: &mut Ui, center: egui::Pos2) {
         app.actions.push(action);
     }
     let camera = Rect::from_min_size(pos2(chevron.right(), top + PAD), Vec2::splat(BUTTON));
-    button(ui, camera, "camera", Icon::Video, unavailable, None)
-        .on_hover_text("Ativar câmera (ainda não disponível no Discofast)");
+    // The camera works on the user's own video server, once connected.
+    let room = app.call.as_ref().and_then(|c| c.room.as_ref());
+    let ready = room.is_some_and(|r| r.state == State::Connected);
+    let on = room.is_some_and(|r| r.camera);
+    let (tint, fill) = match (on, ready) {
+        (true, _) => (Color32::WHITE, Some(TALKING)),
+        (false, true) => (Color32::WHITE, None),
+        (false, false) => (unavailable, None),
+    };
+    let hint = match (on, ready, room.is_some()) {
+        (true, _, _) => "Desativar câmera",
+        (false, true, _) => "Ativar câmera",
+        (false, false, true) => "Ativar câmera (conectando ao servidor de vídeo)",
+        (false, false, false) if crate::room::AVAILABLE => {
+            "Ativar câmera: configure seu servidor de vídeo em Voz e vídeo"
+        }
+        _ => "Ativar câmera (ainda não disponível no Discofast)",
+    };
+    let response = button(ui, camera, "camera", Icon::Video, tint, fill).on_hover_text(hint);
+    if ready && response.clicked() {
+        app.actions
+            .push(Action::ToggleVideo(crate::room::Kind::Camera));
+    }
     x += first + GAP;
 
     group(ui, x, second);
@@ -992,5 +1129,313 @@ fn noise_popup(app: &mut App, button: &egui::Response, suppressing: bool) {
         });
     if let Some(action) = chosen {
         app.actions.push(action);
+    }
+}
+
+/// Tiles in a grid that fits the space, 16:9 each, centred.
+fn grid(area: Rect, count: usize) -> Vec<Rect> {
+    let mut columns = 1;
+    while columns < count {
+        let rows = count.div_ceil(columns);
+        let w = (area.width() - 8.0 * (columns as f32 - 1.0)) / columns as f32;
+        if (w * 9.0 / 16.0) * rows as f32 + 8.0 * (rows as f32 - 1.0) <= area.height() {
+            break;
+        }
+        columns += 1;
+    }
+    let rows = count.div_ceil(columns);
+    let mut w = (area.width() - 8.0 * (columns as f32 - 1.0)) / columns as f32;
+    let mut h = w * 9.0 / 16.0;
+    let total_h = h * rows as f32 + 8.0 * (rows as f32 - 1.0);
+    if total_h > area.height() {
+        h = (area.height() - 8.0 * (rows as f32 - 1.0)) / rows as f32;
+        w = h * 16.0 / 9.0;
+    }
+    let grid_w = w * columns as f32 + 8.0 * (columns as f32 - 1.0);
+    let grid_h = h * rows as f32 + 8.0 * (rows as f32 - 1.0);
+    let origin = pos2(
+        area.center().x - grid_w / 2.0,
+        area.center().y - grid_h / 2.0,
+    );
+    (0..count)
+        .map(|i| {
+            let (col, row) = (i % columns, i / columns);
+            Rect::from_min_size(
+                origin + vec2(col as f32 * (w + 8.0), row as f32 * (h + 8.0)),
+                vec2(w, h),
+            )
+        })
+        .collect()
+}
+
+/// Discord's red "AO VIVO" badge, its left edge at `at`. Returns its rect.
+fn live_badge(ui: &Ui, palette: &crate::theme::Palette, at: egui::Pos2) -> Rect {
+    let live =
+        ui.painter()
+            .layout_no_wrap("AO VIVO".into(), font(Weight::Bold, 12.0), Color32::WHITE);
+    let pill = Rect::from_min_size(at, vec2(live.size().x + 12.0, 20.0));
+    ui.painter()
+        .rect_filled(pill, CornerRadius::same(4), palette.danger);
+    ui.painter().galley(
+        pill.min + vec2(6.0, 10.0 - live.size().y / 2.0),
+        live,
+        Color32::WHITE,
+    );
+    pill
+}
+
+/// A share not being watched: who it is and Discord's "Assistir
+/// transmissão" button.
+fn stream_tile(app: &mut App, ui: &mut Ui, tile: Rect, guild: Option<Id>, user: Id) {
+    let palette = app.palette;
+    ui.painter()
+        .rect_filled(tile, CornerRadius::same(8), Color32::from_gray(24));
+    live_badge(ui, &palette, tile.min + vec2(8.0, 8.0));
+    let name = app.model.name_in(guild, user);
+    Elide::new(ui, tile.right() - 8.0).text(
+        pos2(tile.left() + 10.0, tile.bottom() - 18.0),
+        Align2::LEFT_CENTER,
+        name,
+        font(Weight::SemiBold, 14.0),
+        Color32::WHITE,
+    );
+    let label = ui.painter().layout_no_wrap(
+        "Assistir transmissão".into(),
+        font(Weight::SemiBold, 14.0),
+        Color32::WHITE,
+    );
+    let button = Rect::from_center_size(tile.center(), label.size() + vec2(24.0, 14.0));
+    let response = ui.interact(button, ui.id().with(("watch", user)), Sense::click());
+    let fill = match (crate::call::CAN_WATCH, response.hovered()) {
+        (false, _) => Color32::from_gray(60),
+        (true, false) => Color32::from_gray(80),
+        (true, true) => Color32::from_gray(100),
+    };
+    ui.painter()
+        .rect_filled(button, CornerRadius::same(6), fill);
+    let tint = if crate::call::CAN_WATCH {
+        Color32::WHITE
+    } else {
+        Color32::from_gray(150)
+    };
+    ui.painter()
+        .galley(button.center() - label.size() / 2.0, label, tint);
+    if !crate::call::CAN_WATCH {
+        response.on_hover_text("Ainda não disponível no Discofast");
+        return;
+    }
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        app.actions.push(Action::WatchStream(user));
+    }
+}
+
+/// The watched share, large: its newest picture, or how far the
+/// connection has got, and a button to stop watching.
+fn stream_stage(app: &mut App, ui: &mut Ui, stage: Rect, guild: Option<Id>, user: Id) {
+    let palette = app.palette;
+    let Some(watch) = app.call.as_mut().and_then(|c| c.watching.as_mut()) else {
+        return;
+    };
+    if let Some(frame) = watch.screen.take() {
+        let image =
+            egui::ColorImage::from_rgba_unmultiplied([frame.width, frame.height], &frame.rgba);
+        match &mut watch.texture {
+            Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
+            None => {
+                watch.texture = Some(ui.ctx().load_texture(
+                    "screen-share",
+                    image,
+                    egui::TextureOptions::LINEAR,
+                ));
+            }
+        }
+    }
+    ui.painter()
+        .rect_filled(stage, CornerRadius::same(8), Color32::from_gray(16));
+    match (&watch.texture, &watch.state) {
+        (Some(texture), _) => {
+            let size = texture.size_vec2();
+            let scale = (stage.width() / size.x).min(stage.height() / size.y);
+            let shown = Rect::from_center_size(stage.center(), size * scale);
+            ui.painter().image(
+                texture.id(),
+                shown,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        (None, State::Failed(error)) => {
+            ui.painter().text(
+                stage.center(),
+                Align2::CENTER_CENTER,
+                format!("Não foi possível assistir: {error}"),
+                font(Weight::Medium, 14.0),
+                palette.danger,
+            );
+        }
+        (None, _) => {
+            ui.painter().text(
+                stage.center(),
+                Align2::CENTER_CENTER,
+                "Conectando à transmissão...",
+                font(Weight::Medium, 14.0),
+                Color32::from_gray(200),
+            );
+        }
+    }
+    live_badge(ui, &palette, stage.min + vec2(10.0, 10.0));
+    let name = app.model.name_in(guild, user);
+    let label = ui
+        .painter()
+        .layout_no_wrap(name, font(Weight::SemiBold, 14.0), Color32::WHITE);
+    let pill = Rect::from_min_size(
+        pos2(stage.left() + 10.0, stage.bottom() - 34.0),
+        label.size() + vec2(16.0, 8.0),
+    );
+    ui.painter()
+        .rect_filled(pill, CornerRadius::same(4), Color32::from_black_alpha(150));
+    ui.painter()
+        .galley(pill.min + vec2(8.0, 4.0), label, Color32::WHITE);
+    let close = Rect::from_center_size(
+        pos2(stage.right() - 24.0, stage.top() + 24.0),
+        Vec2::splat(32.0),
+    );
+    let response = ui.interact(close, ui.id().with("stop-watching"), Sense::click());
+    let fill = if response.hovered() {
+        Color32::from_black_alpha(220)
+    } else {
+        Color32::from_black_alpha(150)
+    };
+    ui.painter().circle_filled(close.center(), 16.0, fill);
+    paint_icon(ui, Icon::Close, close.center(), 18.0, Color32::WHITE);
+    if response.on_hover_text("Parar de assistir").clicked() {
+        app.actions.push(Action::StopWatching);
+    }
+}
+
+/// What a tile in the call shows.
+enum Entry<'a> {
+    Person(&'a VoiceMember),
+    /// Someone's Discord screen share, not watched.
+    Stream,
+    /// Someone's screen on the own video server, not on the stage.
+    OwnScreen,
+}
+
+/// A video in `rect`, kept to its shape: filling it and cut at the edges
+/// for a camera, as Discord's tiles, or whole inside it for a screen.
+fn paint_video(ui: &Ui, texture: &egui::TextureHandle, rect: Rect, fill: bool) {
+    let size = texture.size_vec2();
+    if size.x <= 0.0 || size.y <= 0.0 {
+        return;
+    }
+    let (sx, sy) = (rect.width() / size.x, rect.height() / size.y);
+    let scale = if fill { sx.max(sy) } else { sx.min(sy) };
+    let shown = Rect::from_center_size(rect.center(), size * scale);
+    let visible = shown.intersect(rect);
+    // The part of the picture that shows, as texture coordinates.
+    let uv = Rect::from_min_max(
+        pos2(
+            (visible.left() - shown.left()) / shown.width(),
+            (visible.top() - shown.top()) / shown.height(),
+        ),
+        pos2(
+            (visible.right() - shown.left()) / shown.width(),
+            (visible.bottom() - shown.top()) / shown.height(),
+        ),
+    );
+    ui.painter()
+        .image(texture.id(), visible, uv, Color32::WHITE);
+}
+
+/// Someone's screen on the own video server, small; a click puts it on
+/// the stage.
+fn own_screen_tile(app: &mut App, ui: &mut Ui, tile: Rect, guild: Option<Id>, user: Id) {
+    let palette = app.palette;
+    ui.painter()
+        .rect_filled(tile, CornerRadius::same(8), Color32::from_gray(24));
+    if let Some(texture) = app
+        .call
+        .as_ref()
+        .and_then(|c| c.room.as_ref())
+        .and_then(|r| r.video(user, crate::room::Kind::Screen))
+    {
+        paint_video(ui, texture, tile, false);
+    }
+    live_badge(ui, &palette, tile.min + vec2(8.0, 8.0));
+    let name = app.model.name_in(guild, user);
+    let label = ui
+        .painter()
+        .layout_no_wrap(name, font(Weight::SemiBold, 14.0), Color32::WHITE);
+    let pill = Rect::from_min_size(
+        pos2(tile.left() + 8.0, tile.bottom() - 32.0),
+        label.size() + vec2(16.0, 8.0),
+    );
+    ui.painter()
+        .rect_filled(pill, CornerRadius::same(4), Color32::from_black_alpha(150));
+    ui.painter()
+        .galley(pill.min + vec2(8.0, 4.0), label, Color32::WHITE);
+    let response = ui.interact(tile, ui.id().with(("own-screen", user)), Sense::click());
+    if response.hovered() {
+        ui.painter().rect_stroke(
+            tile,
+            CornerRadius::same(8),
+            Stroke::new(2.0, Color32::from_gray(120)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Ver em destaque")
+        .clicked()
+    {
+        app.actions.push(Action::FocusScreen(Some(user)));
+    }
+}
+
+/// Someone's screen on the own video server, large, with a button to put
+/// it back among the tiles.
+fn own_stage(app: &mut App, ui: &mut Ui, stage: Rect, guild: Option<Id>, user: Id) {
+    let palette = app.palette;
+    ui.painter()
+        .rect_filled(stage, CornerRadius::same(8), Color32::from_gray(16));
+    if let Some(texture) = app
+        .call
+        .as_ref()
+        .and_then(|c| c.room.as_ref())
+        .and_then(|r| r.video(user, crate::room::Kind::Screen))
+    {
+        paint_video(ui, texture, stage, false);
+    }
+    live_badge(ui, &palette, stage.min + vec2(10.0, 10.0));
+    let name = app.model.name_in(guild, user);
+    let label = ui
+        .painter()
+        .layout_no_wrap(name, font(Weight::SemiBold, 14.0), Color32::WHITE);
+    let pill = Rect::from_min_size(
+        pos2(stage.left() + 10.0, stage.bottom() - 34.0),
+        label.size() + vec2(16.0, 8.0),
+    );
+    ui.painter()
+        .rect_filled(pill, CornerRadius::same(4), Color32::from_black_alpha(150));
+    ui.painter()
+        .galley(pill.min + vec2(8.0, 4.0), label, Color32::WHITE);
+    let close = Rect::from_center_size(
+        pos2(stage.right() - 24.0, stage.top() + 24.0),
+        Vec2::splat(32.0),
+    );
+    let response = ui.interact(close, ui.id().with("own-unfocus"), Sense::click());
+    let fill = if response.hovered() {
+        Color32::from_black_alpha(220)
+    } else {
+        Color32::from_black_alpha(150)
+    };
+    ui.painter().circle_filled(close.center(), 16.0, fill);
+    paint_icon(ui, Icon::Close, close.center(), 18.0, Color32::WHITE);
+    if response.on_hover_text("Sair do destaque").clicked() {
+        app.actions.push(Action::FocusScreen(None));
     }
 }

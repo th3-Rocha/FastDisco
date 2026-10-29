@@ -42,6 +42,20 @@ pub enum Outgoing {
         mute: bool,
         deaf: bool,
     },
+    /// Start watching someone's screen share; Discord answers with
+    /// STREAM_CREATE and STREAM_SERVER_UPDATE.
+    StreamWatch { key: String },
+    /// Stop watching it.
+    StreamDelete { key: String },
+}
+
+/// The payloads for watching and leaving a screen share.
+pub fn stream_payload(request: &Outgoing) -> Option<Value> {
+    match request {
+        Outgoing::StreamWatch { key } => Some(json!({ "op": 20, "d": { "stream_key": key } })),
+        Outgoing::StreamDelete { key } => Some(json!({ "op": 19, "d": { "stream_key": key } })),
+        _ => None,
+    }
 }
 
 struct Session {
@@ -171,6 +185,11 @@ async fn connect(
                         });
                         send(&mut sink, payload).await?;
                     }
+                    Some(request) => {
+                        if let Some(payload) = stream_payload(&request) {
+                            send(&mut sink, payload).await?;
+                        }
+                    }
                     None => return Ok(End::Stopped),
                 }
             }
@@ -264,4 +283,21 @@ where
     sink.send(Message::Text(value.to_string().into()))
         .await
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watching_a_stream_is_op_20_and_leaving_it_op_19() {
+        let key = "guild:1:2:3".to_owned();
+        let watch = stream_payload(&Outgoing::StreamWatch { key: key.clone() }).unwrap();
+        assert_eq!(
+            watch,
+            json!({ "op": 20, "d": { "stream_key": "guild:1:2:3" } })
+        );
+        let leave = stream_payload(&Outgoing::StreamDelete { key }).unwrap();
+        assert_eq!(leave["op"], 19);
+    }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "discofast"
-version = "0.25.0"
+version = "0.26.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -106,6 +106,26 @@ emojis = "0.9.1"
 # Spell checking in the message field, with Hunspell dictionaries.
 spellbook = "0.4.2"
 rfd = "0.17.2"
+# Watching screen shares (the `video` feature): DAVE and the transport
+# ciphers at the versions songbird already brings, so nothing new is
+# built.
+davey = { version = "0.1.5", optional = true }
+aes-gcm = { version = "0.10.3", optional = true }
+chacha20poly1305 = { version = "0.10.1", optional = true }
+# Camera and screen on the user's own LiveKit server (the `selfhosted`
+# feature). libwebrtc comes prebuilt at build time; the access token is
+# made here from the server's key, so no service of ours is involved.
+# "glib-main-loop" runs the GLib loop the Wayland screen portal answers on.
+livekit = { version = "0.10", default-features = false, features = ["native", "rustls-tls-native-roots", "glib-main-loop"], optional = true }
+livekit-api = { version = "0.10", default-features = false, features = ["access-token"], optional = true }
+
+[features]
+# Watching someone's screen share in a call. Written without a chance to
+# try it against Discord, so off until it is.
+video = ["dep:davey", "dep:aes-gcm", "dep:chacha20poly1305", "tokio/net"]
+# Camera and screen sharing between friends on their own LiveKit server,
+# set in the voice settings.
+selfhosted = ["dep:livekit", "dep:livekit-api"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }

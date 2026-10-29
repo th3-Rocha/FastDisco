@@ -202,7 +202,12 @@ fn page_body(app: &mut App, ui: &mut Ui, page: SettingsPage) {
         SettingsPage::Privacy => privacy(app, ui),
         SettingsPage::Messages => messages(app, ui),
         SettingsPage::Profiles => profiles(app, ui),
-        SettingsPage::Voice => voice(app, ui),
+        SettingsPage::Voice => {
+            voice(app, ui);
+            if crate::room::AVAILABLE {
+                video_server(app, ui);
+            }
+        }
         SettingsPage::Appearance => appearance(app, ui),
         SettingsPage::Accessibility => accessibility(app, ui),
         SettingsPage::Notifications => notifications(app, ui),
@@ -1844,6 +1849,94 @@ fn voice(app: &mut App, ui: &mut Ui) {
         gain,
     );
     switch_row(app, ui, Flag::Sounds, "Sons do app", SOUNDS_NOTE, sounds);
+}
+
+/// The user's own LiveKit server for camera and screen between friends.
+fn video_server(app: &mut App, ui: &mut Ui) {
+    let palette = app.palette;
+    divider(ui, &palette);
+    section(ui, &palette, "Servidor de vídeo próprio");
+    ui.label(
+        RichText::new(
+            "Câmera e tela entre amigos num servidor LiveKit seu. Quem estiver no \
+             mesmo canal de voz com a mesma chave se vê; o áudio continua pelo Discord. \
+             Dê a chave só a quem você confia: ela controla o servidor.",
+        )
+        .font(font(Weight::Regular, 14.0))
+        .color(palette.muted),
+    );
+    ui.add_space(12.0);
+    let settings = &app.settings;
+    let form = app.video_form.get_or_insert_with(|| crate::app::VideoForm {
+        url: settings.video_server.clone(),
+        key: settings.video_key.clone(),
+        secret: String::new(),
+        saved: false,
+    });
+    let configured = !settings.video_key.is_empty();
+    let field = |ui: &mut Ui, label: &str, text: &mut String, hint: &str, password: bool| {
+        ui.label(
+            RichText::new(label)
+                .font(font(Weight::Bold, 12.0))
+                .color(palette.muted),
+        );
+        Frame::new()
+            .fill(palette.rail)
+            .corner_radius(CornerRadius::same(4))
+            .inner_margin(Margin::same(10))
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(text)
+                        .password(password)
+                        .frame(Frame::NONE)
+                        .hint_text(RichText::new(hint).color(palette.muted))
+                        .font(font(Weight::Regular, 15.0))
+                        .text_color(palette.text)
+                        .desired_width(f32::INFINITY),
+                )
+            });
+        ui.add_space(12.0);
+    };
+    field(
+        ui,
+        "ENDEREÇO",
+        &mut form.url,
+        "wss://video.seudominio.com",
+        false,
+    );
+    field(ui, "API KEY", &mut form.key, "A chave do LiveKit", false);
+    let hint = if configured {
+        "Guardado no chaveiro do sistema; digite para trocar"
+    } else {
+        "O secret do LiveKit"
+    };
+    field(ui, "API SECRET", &mut form.secret, hint, true);
+    let button = egui::Button::new(
+        RichText::new("Salvar")
+            .font(font(Weight::Medium, 14.0))
+            .color(Color32::WHITE),
+    )
+    .fill(palette.online)
+    .corner_radius(CornerRadius::same(4))
+    .min_size(vec2(140.0, 36.0));
+    ui.horizontal(|ui| {
+        if ui.add(button).clicked() {
+            let secret = std::mem::take(&mut form.secret);
+            form.saved = true;
+            app.actions.push(Action::SaveVideoServer {
+                url: form.url.trim().to_owned(),
+                key: form.key.trim().to_owned(),
+                secret: (!secret.is_empty()).then_some(secret),
+            });
+        }
+        if form.saved {
+            ui.label(
+                RichText::new("Salvo.")
+                    .font(font(Weight::Regular, 14.0))
+                    .color(palette.muted),
+            );
+        }
+    });
 }
 
 const SOUNDS_NOTE: &str =

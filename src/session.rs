@@ -8,9 +8,11 @@ use keyring_core::api::CredentialStoreApi;
 
 const SERVICE: &str = "discofast";
 const ACCOUNT: &str = "token";
+/// The secret of the user's own video server, beside the token.
+const VIDEO_SECRET: &str = "video-secret";
 
 pub fn load() -> Result<Option<String>> {
-    match entry()?.get_password() {
+    match entry(ACCOUNT)?.get_password() {
         Ok(token) => Ok(Some(token)),
         Err(keyring_core::Error::NoEntry) => load_legacy(),
         Err(error) => Err(error).context("Could not read the token from the OS keyring"),
@@ -34,21 +36,36 @@ fn load_legacy() -> Result<Option<String>> {
 }
 
 pub fn save(token: &str) -> Result<()> {
-    entry()?
+    entry(ACCOUNT)?
         .set_password(token)
         .context("Could not save the token in the OS keyring")
 }
 
 pub fn forget() -> Result<()> {
-    match entry()?.delete_credential() {
+    match entry(ACCOUNT)?.delete_credential() {
         Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
         Err(error) => Err(error).context("Could not remove the token from the OS keyring"),
     }
 }
 
-fn entry() -> Result<keyring_core::Entry> {
+/// The video server's secret, if one was saved.
+pub fn load_video_secret() -> Result<Option<String>> {
+    match entry(VIDEO_SECRET)?.get_password() {
+        Ok(secret) => Ok(Some(secret)),
+        Err(keyring_core::Error::NoEntry) => Ok(None),
+        Err(error) => Err(error).context("Could not read the video secret from the OS keyring"),
+    }
+}
+
+pub fn save_video_secret(secret: &str) -> Result<()> {
+    entry(VIDEO_SECRET)?
+        .set_password(secret)
+        .context("Could not save the video secret in the OS keyring")
+}
+
+fn entry(account: &str) -> Result<keyring_core::Entry> {
     store()?
-        .build(SERVICE, ACCOUNT, None)
+        .build(SERVICE, account, None)
         .context("Could not open the OS keyring")
 }
 

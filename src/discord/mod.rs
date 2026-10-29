@@ -7,6 +7,7 @@ pub mod gateway;
 pub mod parse;
 pub mod remote_auth;
 pub mod rest;
+pub mod stream;
 
 pub const API: &str = "https://discord.com/api/v9";
 pub const CDN: &str = "https://cdn.discordapp.com";

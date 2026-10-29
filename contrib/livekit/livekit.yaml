@@ -1,0 +1,13 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50200
+  use_external_ip: true
+# One key for the group of friends. Make your own with
+#   docker run --rm livekit/livekit-server:v1.13.11 generate-keys
+# and give the key and secret only to people you trust.
+keys:
+  CHANGE_THIS_KEY: CHANGE_THIS_SECRET_TO_THE_GENERATED_ONE
+logging:
+  level: info

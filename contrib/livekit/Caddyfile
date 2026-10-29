@@ -1,0 +1,4 @@
+# Your domain, pointing at this machine.
+video.example.com {
+	reverse_proxy localhost:7880
+}

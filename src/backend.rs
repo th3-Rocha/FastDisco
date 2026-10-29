@@ -154,6 +154,34 @@ pub enum Command {
     /// Stops or starts sending the microphone.
     VoiceMute(bool),
     LeaveVoice,
+    /// Asks the gateway to watch a screen share in the call.
+    WatchStream {
+        key: String,
+    },
+    /// Stops watching it, and drops its connection.
+    StopStream {
+        key: String,
+    },
+    /// Connects to the screen share's own voice server, named by
+    /// STREAM_CREATE and STREAM_SERVER_UPDATE.
+    ConnectStream {
+        server: discord::stream::Server,
+        screen: std::sync::Arc<discord::stream::Screen>,
+    },
+    /// Joins the room on the user's own video server, with the secret
+    /// from the keyring.
+    JoinRoom {
+        server: crate::room::Server,
+        room: String,
+        me: u64,
+        name: String,
+        videos: std::sync::Arc<crate::room::Videos>,
+    },
+    /// Starts or stops sending the camera or the screen there.
+    RoomControl(crate::room::Control),
+    LeaveRoom,
+    /// Keeps the video server's secret in the keyring.
+    SaveVideoSecret(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,6 +232,14 @@ pub enum Event {
     UpdateHandedOff,
     /// The call could not connect, or dropped.
     VoiceFailed(String),
+    /// The watched screen share is connected and its picture is coming.
+    StreamConnected,
+    /// The watched screen share could not connect, or dropped.
+    StreamFailed(String),
+    /// The room on the user's own video server is joined.
+    RoomConnected,
+    /// It could not be joined, or dropped.
+    RoomFailed(String),
     Api {
         tag: Tag,
         result: Result<Value, String>,
@@ -280,6 +316,10 @@ struct Worker {
     update: std::sync::Arc<crate::updates::Pending>,
     /// The voice call's driver, once connected.
     call: std::sync::Arc<tokio::sync::Mutex<Option<songbird::Driver>>>,
+    /// The connection of the screen share being watched.
+    stream: Option<JoinHandle<()>>,
+    /// The room on the user's own video server, and what to ask of it.
+    room: Option<(JoinHandle<()>, mpsc::UnboundedSender<crate::room::Control>)>,
 }
 
 impl Worker {
@@ -296,6 +336,8 @@ impl Worker {
             token: None,
             gateway: None,
             call: Default::default(),
+            stream: None,
+            room: None,
             update: Default::default(),
             gateway_events,
         }
@@ -765,12 +807,121 @@ impl Worker {
                 });
             }
             Command::LeaveVoice => {
+                if let Some(task) = self.stream.take() {
+                    task.abort();
+                }
                 let call = std::sync::Arc::clone(&self.call);
                 tokio::spawn(async move {
                     if let Some(mut driver) = call.lock().await.take() {
                         driver.leave();
                     }
                 });
+            }
+            Command::WatchStream { key } => {
+                if let Some((_, outgoing)) = &self.gateway {
+                    let _ = outgoing.send(Outgoing::StreamWatch { key });
+                }
+            }
+            Command::StopStream { key } => {
+                if let Some(task) = self.stream.take() {
+                    task.abort();
+                }
+                if let Some((_, outgoing)) = &self.gateway {
+                    let _ = outgoing.send(Outgoing::StreamDelete { key });
+                }
+            }
+            Command::ConnectStream { server, screen } => {
+                if let Some(task) = self.stream.take() {
+                    task.abort();
+                }
+                let events = self.events.clone();
+                let ctx = self.ctx.clone();
+                self.stream = Some(tokio::spawn(async move {
+                    let (wake_ctx, up_events, up_ctx) = (ctx.clone(), events.clone(), ctx.clone());
+                    let result = discord::stream::watch(
+                        server,
+                        screen,
+                        move || wake_ctx.wake(),
+                        move || {
+                            let _ = up_events.send(Event::StreamConnected);
+                            up_ctx.wake();
+                        },
+                    )
+                    .await;
+                    let reason = match result {
+                        Ok(()) => "A transmissão terminou.".to_owned(),
+                        Err(error) => error,
+                    };
+                    let _ = events.send(Event::StreamFailed(reason));
+                    ctx.wake();
+                }));
+            }
+            Command::JoinRoom {
+                server,
+                room,
+                me,
+                name,
+                videos,
+            } => {
+                if let Some((task, _)) = self.room.take() {
+                    task.abort();
+                }
+                let (controls, receiver) = mpsc::unbounded_channel();
+                let events = self.events.clone();
+                let ctx = self.ctx.clone();
+                let task = tokio::spawn(async move {
+                    let secret = tokio::task::spawn_blocking(session::load_video_secret)
+                        .await
+                        .ok()
+                        .and_then(|r| r.inspect_err(|e| log::warn!("{e:#}")).ok().flatten());
+                    let result = match secret {
+                        Some(secret) => {
+                            let (wake_ctx, up_events, up_ctx) =
+                                (ctx.clone(), events.clone(), ctx.clone());
+                            crate::room::run(
+                                server,
+                                secret,
+                                room,
+                                me,
+                                name,
+                                videos,
+                                receiver,
+                                move || wake_ctx.wake(),
+                                move || {
+                                    let _ = up_events.send(Event::RoomConnected);
+                                    up_ctx.wake();
+                                },
+                            )
+                            .await
+                        }
+                        None => Err("Falta o secret do servidor de vídeo.".to_owned()),
+                    };
+                    let reason = match result {
+                        Ok(()) => "A sala de vídeo fechou.".to_owned(),
+                        Err(error) => error,
+                    };
+                    let _ = events.send(Event::RoomFailed(reason));
+                    ctx.wake();
+                });
+                self.room = Some((task, controls));
+            }
+            Command::RoomControl(control) => {
+                if let Some((_, controls)) = &self.room {
+                    let _ = controls.send(control);
+                }
+            }
+            Command::LeaveRoom => {
+                // Dropping the sender ends the room, which unpublishes and
+                // closes; the task is not aborted so it can.
+                self.room = None;
+            }
+            Command::SaveVideoSecret(secret) => {
+                // Awaited, so a room joined right after reads the new one.
+                let saved =
+                    tokio::task::spawn_blocking(move || session::save_video_secret(&secret)).await;
+                if let Ok(Err(error)) = saved {
+                    log::warn!("{error:#}");
+                }
             }
             Command::LoadSpeller => {
                 let client = self.client.clone();
