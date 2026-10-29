@@ -157,6 +157,10 @@ struct Stats {
     errors: u32,
     /// The most people heard in one tick.
     streams: usize,
+    /// When the last tick reached us, and the longest wait between two:
+    /// songbird ticks every 20 ms, so much more means the sound came late.
+    last: Option<Instant>,
+    longest: Duration,
 }
 
 /// How long a voice stays lit after it was last heard.
@@ -181,6 +185,10 @@ impl EventHandler for Tick {
         let mut decoders = self.decoders.lock().unwrap_or_else(|e| e.into_inner());
         let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
         stats.ticks += 1;
+        if let Some(last) = stats.last {
+            stats.longest = stats.longest.max(now.duration_since(last));
+        }
+        stats.last = Some(now);
         for ssrc in &tick.silent {
             stats.gaps.remove(ssrc);
         }
@@ -239,17 +247,21 @@ impl EventHandler for Tick {
             tap.push(&mixed);
         }
         if stats.ticks >= REPORT_TICKS {
-            log::info!(
-                "call: received {} packets, {} lost or late ({:.1}%), {} undecodable, up to {} voices; {}",
+            let line = format!(
+                "received {} packets, {} lost or late ({:.1}%), {} undecodable, up to {} voices; ticks up to {} ms apart; {}",
                 stats.packets,
                 stats.lost,
                 f64::from(stats.lost) * 100.0 / f64::from((stats.packets + stats.lost).max(1)),
                 stats.errors,
                 stats.streams,
+                stats.longest.as_millis(),
                 self.shared.report(),
             );
+            log::info!("call: {line}");
+            report(&line);
             *stats = Stats {
                 gaps: std::mem::take(&mut stats.gaps),
+                last: stats.last,
                 ..Stats::default()
             };
         }
@@ -268,6 +280,28 @@ impl EventHandler for Tick {
             (self.wake)();
         }
         None
+    }
+}
+
+/// Appends a line of call statistics to `~/.cache/discofast/call.log`,
+/// so a call that sounded choppy can be looked at afterwards. The file is
+/// started over when it passes a megabyte.
+fn report(line: &str) {
+    use std::io::Write;
+    let Some(dir) = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .map(|d| d.join("discofast"))
+    else {
+        return;
+    };
+    let path = dir.join("call.log");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 1 << 20) {
+        let _ = std::fs::remove_file(&path);
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(file, "{} {line}", jiff::Timestamp::now().strftime("%Y-%m-%d %H:%M:%S"));
     }
 }
 

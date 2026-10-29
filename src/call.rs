@@ -55,13 +55,21 @@ pub struct Ring {
     write: AtomicUsize,
     read: AtomicUsize,
     primed: AtomicBool,
-    cushion: usize,
+    /// What builds up before playing; grows after running dry when the
+    /// ring adapts, and creeps back once the sound is steady.
+    cushion: AtomicUsize,
+    base: usize,
+    adaptive: bool,
+    /// Pops since the last time the ring ran dry.
+    steady: AtomicU32,
     max: usize,
     /// Times the reader found it dry.
     pub underruns: AtomicU32,
     /// Times sound was thrown away: no room for the writer, or the reader
     /// skipping ahead because the delay grew.
     pub overruns: AtomicU32,
+    /// The largest an adaptive cushion grows.
+    cap: usize,
 }
 
 impl Ring {
@@ -71,17 +79,41 @@ impl Ring {
         let per_second = RATE as f32 * channels as f32;
         let max = (per_second * RING_SECONDS) as usize;
         let size = (max * 2).next_power_of_two();
+        let cushion = (per_second * cushion) as usize;
         Self {
             buf: (0..size).map(|_| AtomicU32::new(0)).collect(),
             mask: size - 1,
             write: AtomicUsize::new(0),
             read: AtomicUsize::new(0),
             primed: AtomicBool::new(false),
-            cushion: (per_second * cushion) as usize,
+            cushion: AtomicUsize::new(cushion),
+            base: cushion,
+            adaptive: false,
+            steady: AtomicU32::new(0),
             max,
             underruns: AtomicU32::new(0),
             overruns: AtomicU32::new(0),
+            cap: cushion,
         }
+    }
+
+    /// A ring whose cushion grows by `step` seconds each time it runs dry,
+    /// up to `most`, and shrinks back after a minute without, as WebRTC's
+    /// jitter buffer: late bursts of sound then stop breaking it up.
+    pub fn adaptive(channels: usize, cushion: f32, most: f32) -> Self {
+        let per_second = RATE as f32 * channels as f32;
+        let mut ring = Self::new(channels, cushion);
+        ring.adaptive = true;
+        ring.cap = (per_second * most) as usize;
+        // Room for the deepest cushion and a little over before skipping,
+        // within what the buffer holds.
+        ring.max = ring.max.max(ring.cap + ring.base).min(ring.buf.len() * 3 / 4);
+        ring
+    }
+
+    /// The cushion now, in samples.
+    pub fn cushion(&self) -> usize {
+        self.cushion.load(Ordering::Relaxed)
     }
 
     /// The writer's side. What does not fit is dropped and counted.
@@ -112,15 +144,16 @@ impl Ring {
     pub fn pop(&self, out: &mut [f32]) {
         let mut read = self.read.load(Ordering::Relaxed);
         let mut have = self.write.load(Ordering::Acquire).wrapping_sub(read);
+        let cushion = self.cushion();
         if have > self.max {
             // The delay grew: skip to the newest sound.
-            let keep = self.cushion.max(out.len());
+            let keep = cushion.max(out.len());
             read += have - keep;
             have = keep;
             self.overruns.fetch_add(1, Ordering::Relaxed);
         }
         if !self.primed.load(Ordering::Relaxed) {
-            if have < self.cushion.max(out.len()) {
+            if have < cushion.max(out.len()) {
                 self.read.store(read, Ordering::Release);
                 out.fill(0.0);
                 return;
@@ -134,9 +167,24 @@ impl Ring {
         self.read.store(read + n, Ordering::Release);
         out[n..].fill(0.0);
         if n < out.len() {
-            // Ran dry: build the cushion again.
+            // Ran dry: build the cushion again, a deeper one when adapting.
             self.primed.store(false, Ordering::Relaxed);
             self.underruns.fetch_add(1, Ordering::Relaxed);
+            if self.adaptive {
+                let step = self.base / 3;
+                self.cushion
+                    .store((cushion + step).min(self.cap), Ordering::Relaxed);
+                self.steady.store(0, Ordering::Relaxed);
+            }
+        } else if self.adaptive && cushion > self.base {
+            // A minute or two of steady sound (pops come every 10 to 20
+            // ms): give back a little of the delay.
+            let steady = self.steady.fetch_add(1, Ordering::Relaxed) + 1;
+            if steady >= 6_000 {
+                self.steady.store(0, Ordering::Relaxed);
+                self.cushion
+                    .store(cushion.saturating_sub(self.base / 6).max(self.base), Ordering::Relaxed);
+            }
         }
     }
 
@@ -154,7 +202,7 @@ impl Ring {
     /// when sound piles up (read faster), negative when it runs short, at
     /// most `DRIFT`. `ahead` is what the reader is about to take.
     fn drift(&self, ahead: usize) -> f32 {
-        let target = (self.cushion + ahead) as f32;
+        let target = (self.cushion() + ahead) as f32;
         ((self.len() as f32 - target) / target.max(1.0)).clamp(-1.0, 1.0) * DRIFT
     }
 }
@@ -326,7 +374,8 @@ impl Default for Shared {
         Self {
             mic: Ring::new(1, 0.04),
             played: Ring::new(1, 0.0),
-            speakers: Ring::new(CHANNELS, 0.06),
+            // 60 ms, up to 180 ms when the sound comes in bursts.
+            speakers: Ring::adaptive(CHANNELS, 0.06, 0.18),
             deaf: AtomicBool::new(false),
             filter: Filter {
                 noise: AtomicU8::new(2),
@@ -382,8 +431,9 @@ impl Shared {
     pub fn report(&self) -> String {
         let ring = |name: &str, ring: &Ring, channels: usize| {
             format!(
-                "{name} {} ms (underruns {}, overruns {})",
+                "{name} {} ms of {} ms cushion (underruns {}, overruns {})",
                 ring.len() / channels * 1000 / RATE as usize,
+                ring.cushion() / channels * 1000 / RATE as usize,
                 ring.underruns.swap(0, Ordering::Relaxed),
                 ring.overruns.swap(0, Ordering::Relaxed),
             )
@@ -1056,69 +1106,97 @@ fn open_speakers(device: &cpal::Device, shared: &Arc<Shared>) -> Result<cpal::St
         if rate == RATE { "" } else { ", resampled from 48 kHz" },
     );
     let config: cpal::StreamConfig = config.into();
-    let shared = Arc::clone(shared);
-    // 48 kHz frames waiting to be played, and how far into them.
-    let mut pending: VecDeque<[f32; 2]> = VecDeque::with_capacity(16_384);
-    let mut position = 0f64;
-    let mut pulled = Vec::with_capacity(32_768);
-    // What was played, mono, for the echo canceller.
-    let mut reference = Vec::with_capacity(16_384);
-    let base = f64::from(RATE) / f64::from(rate);
+    let mut playback = Playback::new(Arc::clone(shared), rate, channels);
     let stream = device
         .build_output_stream(
             &config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let frames = data.len() / channels.max(1);
-                shared.speaker_frames.store(frames as u32, Ordering::Relaxed);
-                // The network's clock and the sound card's never agree
-                // exactly: play a hair faster when sound piles up, slower
-                // when it runs short, so the ring neither skips nor runs dry.
-                let bend = shared.speakers.drift(frames * CHANNELS);
-                let step = base * (1.0 + f64::from(bend));
-                // Exactly the frames this callback covers, no more, so the
-                // ring is not drained faster than it fills.
-                let needed = (position + frames as f64 * step).ceil() as usize + 1;
-                if pending.len() < needed {
-                    pulled.resize((needed - pending.len()) * CHANNELS, 0.0);
-                    shared.speakers.pop(&mut pulled);
-                    pending.extend(pulled.as_chunks::<2>().0.iter().copied());
-                }
-                let deaf = shared.deaf.load(Ordering::Relaxed);
-                let gain = if deaf {
-                    0.0
-                } else {
-                    f32::from_bits(shared.speaker_gain.load(Ordering::Relaxed))
-                };
-                for (i, frame) in data.chunks_mut(channels.max(1)).enumerate() {
-                    let at = position + i as f64 * step;
-                    let k = at as usize;
-                    let t = (at - k as f64) as f32;
-                    let a = pending.get(k).copied().unwrap_or([0.0; 2]);
-                    let b = pending.get(k + 1).copied().unwrap_or(a);
-                    let l = (a[0] + (b[0] - a[0]) * t) * gain;
-                    let r = (a[1] + (b[1] - a[1]) * t) * gain;
-                    for (c, sample) in frame.iter_mut().enumerate() {
-                        *sample = if c % 2 == 0 { l } else { r };
-                    }
-                }
-                let advanced = position + frames as f64 * step;
-                let used = (advanced as usize).min(pending.len());
-                reference.clear();
-                reference.extend(
-                    pending
-                        .range(..used)
-                        .map(|[l, r]| (l + r) * 0.5 * gain),
-                );
-                shared.played.push(&reference);
-                pending.drain(..used);
-                position = advanced - used as f64;
-            },
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| playback.fill(data),
             |error| log::warn!("call speakers: {error}"),
             None,
         )
         .map_err(|e| e.to_string())?;
     stream.play().map_err(|e| e.to_string())?;
     Ok(stream)
+}
+
+/// The speakers' side of the call: takes 48 kHz stereo from the ring at
+/// the sound card's own rate and clock, and hands the echo canceller what
+/// was played. Apart from the callback so it can be driven in tests.
+pub struct Playback {
+    shared: Arc<Shared>,
+    channels: usize,
+    /// 48 kHz frames waiting to be played, and how far into them.
+    pending: VecDeque<[f32; 2]>,
+    position: f64,
+    pulled: Vec<f32>,
+    /// What was played, mono, for the echo canceller.
+    reference: Vec<f32>,
+    base: f64,
+}
+
+impl Playback {
+    pub fn new(shared: Arc<Shared>, rate: u32, channels: usize) -> Self {
+        Self {
+            shared,
+            channels: channels.max(1),
+            pending: VecDeque::with_capacity(16_384),
+            position: 0.0,
+            pulled: Vec::with_capacity(32_768),
+            reference: Vec::with_capacity(16_384),
+            base: f64::from(RATE) / f64::from(rate),
+        }
+    }
+
+    /// One callback's worth of interleaved frames.
+    pub fn fill(&mut self, data: &mut [f32]) {
+        let shared = &self.shared;
+        let channels = self.channels;
+        let frames = data.len() / channels;
+        shared.speaker_frames.store(frames as u32, Ordering::Relaxed);
+        // The network's clock and the sound card's never agree exactly:
+        // play a hair faster when sound piles up, slower when it runs
+        // short, so the ring neither skips nor runs dry.
+        let bend = shared.speakers.drift(frames * CHANNELS);
+        let step = self.base * (1.0 + f64::from(bend));
+        // Exactly the frames this callback covers, no more, so the ring
+        // is not drained faster than it fills.
+        let needed = (self.position + frames as f64 * step).ceil() as usize + 1;
+        if self.pending.len() < needed {
+            self.pulled.resize((needed - self.pending.len()) * CHANNELS, 0.0);
+            shared.speakers.pop(&mut self.pulled);
+            self.pending
+                .extend(self.pulled.as_chunks::<2>().0.iter().copied());
+        }
+        let deaf = shared.deaf.load(Ordering::Relaxed);
+        let gain = if deaf {
+            0.0
+        } else {
+            f32::from_bits(shared.speaker_gain.load(Ordering::Relaxed))
+        };
+        for (i, frame) in data.chunks_mut(channels).enumerate() {
+            let at = self.position + i as f64 * step;
+            let k = at as usize;
+            let t = (at - k as f64) as f32;
+            let a = self.pending.get(k).copied().unwrap_or([0.0; 2]);
+            let b = self.pending.get(k + 1).copied().unwrap_or(a);
+            let l = (a[0] + (b[0] - a[0]) * t) * gain;
+            let r = (a[1] + (b[1] - a[1]) * t) * gain;
+            for (c, sample) in frame.iter_mut().enumerate() {
+                *sample = if c % 2 == 0 { l } else { r };
+            }
+        }
+        let advanced = self.position + frames as f64 * step;
+        let used = (advanced as usize).min(self.pending.len());
+        self.reference.clear();
+        self.reference.extend(
+            self.pending
+                .range(..used)
+                .map(|[l, r]| (l + r) * 0.5 * gain),
+        );
+        shared.played.push(&self.reference);
+        self.pending.drain(..used);
+        self.position = advanced - used as f64;
+    }
 }
 
 /// How far the call has got.
@@ -1283,6 +1361,23 @@ mod tests {
     }
 
     #[test]
+    fn an_adaptive_ring_deepens_after_running_dry() {
+        let ring = Ring::adaptive(1, 0.06, 0.18);
+        let base = ring.cushion();
+        let mut out = vec![0.0; 480];
+        ring.push(&vec![1.0; base]);
+        ring.pop(&mut out);
+        let mut big = vec![0.0; base * 2];
+        ring.pop(&mut big);
+        assert_eq!(ring.underruns.load(Ordering::Relaxed), 1);
+        assert!(ring.cushion() > base);
+        for _ in 0..20 {
+            ring.pop(&mut big);
+        }
+        assert!(ring.cushion() <= (RATE as f32 * 0.18) as usize);
+    }
+
+    #[test]
     fn the_ring_survives_a_writer_and_a_reader_on_two_threads() {
         let ring = Arc::new(Ring::new(1, 0.0));
         let writer = Arc::clone(&ring);
@@ -1379,6 +1474,188 @@ mod tests {
         }
         assert!(after < before / 3.0, "{after} of {before}");
         assert!(voice < 0.5, "{voice}");
+    }
+
+    /// The send path in real time, as in a call: a microphone thread
+    /// pushing 10 ms at a time with the jitter a sound server has, and
+    /// songbird's mixer taking 20 ms every 20 ms. Reports how long the
+    /// filter takes, how often the ring ran dry and where the sound broke.
+    /// `cargo test --release realtime -- --ignored --nocapture`
+    fn send_in_real_time(noise: u8, seconds: u64) -> (Vec<f32>, Vec<Duration>, u32, u32) {
+        let shared = Arc::new(Shared::default());
+        shared.filter.noise.store(noise, Ordering::Relaxed);
+        // The gate always open, so only real breaks are silence.
+        shared.filter.gate.store(false, Ordering::Relaxed);
+        shared.filter.threshold.store((-100f32).to_bits(), Ordering::Relaxed);
+        shared.filter.version.fetch_add(1, Ordering::Relaxed);
+        let mut source = MicSource::new(Arc::clone(&shared));
+        if noise >= 2 {
+            // Let the model load before the clock starts, as a call does
+            // while it connects.
+            let _ = source.next_block();
+            std::thread::sleep(Duration::from_secs(3));
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let mic = {
+            let shared = Arc::clone(&shared);
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let start = Instant::now();
+                let mut sent = 0usize;
+                let mut seed = 7u32;
+                while !stop.load(Ordering::Relaxed) {
+                    // A sound server hands 5 to 15 ms at a time.
+                    seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                    let wait = 5 + (seed >> 16) % 11;
+                    std::thread::sleep(Duration::from_millis(u64::from(wait)));
+                    let due = (start.elapsed().as_secs_f64() * f64::from(RATE)) as usize;
+                    let block: Vec<f32> = (sent..due)
+                        .map(|i| {
+                            let t = i as f32 / RATE as f32;
+                            // A voice-like tone that never stops.
+                            (t * 2.0 * std::f32::consts::PI * 220.0).sin()
+                                * (0.25 + 0.1 * (t * 3.0).sin())
+                        })
+                        .collect();
+                    sent = due;
+                    shared.mic.push(&block);
+                }
+            })
+        };
+        let start = Instant::now();
+        let mut out = Vec::new();
+        let mut took = Vec::new();
+        let mut tick = 0u32;
+        while start.elapsed() < Duration::from_secs(seconds) {
+            tick += 1;
+            let due = start + Duration::from_millis(20 * u64::from(tick));
+            if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                std::thread::sleep(wait);
+            }
+            let began = Instant::now();
+            out.extend(source.next_block());
+            took.push(began.elapsed());
+        }
+        stop.store(true, Ordering::Relaxed);
+        mic.join().unwrap();
+        (
+            out,
+            took,
+            shared.mic.underruns.load(Ordering::Relaxed),
+            shared.mic.overruns.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Breaks in a sound that should never stop: runs of 1 ms or more
+    /// near silence, after the first half second.
+    fn breaks(sound: &[f32]) -> usize {
+        let mut count = 0;
+        let mut quiet = 0;
+        for s in &sound[(RATE / 2) as usize..] {
+            if s.abs() < 1e-3 {
+                quiet += 1;
+                if quiet == 48 {
+                    count += 1;
+                }
+            } else {
+                quiet = 0;
+            }
+        }
+        count
+    }
+
+    #[test]
+    #[ignore = "real time, ten seconds each"]
+    fn realtime_send_path() {
+        for noise in [0, 1, 2] {
+            let (out, took, under, over) = send_in_real_time(noise, 10);
+            let max = took.iter().max().copied().unwrap_or_default();
+            let slow = took.iter().filter(|t| **t > Duration::from_millis(10)).count();
+            let mean = took.iter().sum::<Duration>() / took.len().max(1) as u32;
+            println!(
+                "noise {noise}: {} blocks, filter mean {mean:?} max {max:?}, {slow} over 10 ms; mic ring underruns {under} overruns {over}; {} breaks",
+                took.len(),
+                breaks(&out),
+            );
+        }
+    }
+
+    /// The receive path in real time: songbird's ticks of 20 ms reaching
+    /// the ring late by up to `jitter` ms (and now and then a stall of
+    /// `stall` ms), and a sound card pulling `frames` at a time on a clock
+    /// `skew` off. Returns the breaks heard and the ring's underruns.
+    fn receive_in_real_time(jitter: u64, stall: u64, frames: usize, skew: f64, seconds: u64) -> (usize, u32, u32) {
+        let shared = Arc::new(Shared::default());
+        let stop = Arc::new(AtomicBool::new(false));
+        let network = {
+            let shared = Arc::clone(&shared);
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let start = Instant::now();
+                let mut seed = 3u32;
+                let mut n = 0u64;
+                let mut last = start;
+                while !stop.load(Ordering::Relaxed) {
+                    seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                    let mut late = if jitter > 0 { u64::from(seed >> 16) % jitter } else { 0 };
+                    if stall > 0 && n % 250 == 125 {
+                        late += stall;
+                    }
+                    let due = (start + Duration::from_millis(20 * n + late)).max(last);
+                    if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                        std::thread::sleep(wait);
+                    }
+                    last = due;
+                    let tick: Vec<f32> = (0..960)
+                        .flat_map(|i| {
+                            let t = (n as usize * 960 + i) as f32 / RATE as f32;
+                            let s = (t * 2.0 * std::f32::consts::PI * 220.0).sin() * 0.3;
+                            [s, s]
+                        })
+                        .collect();
+                    shared.speakers.push(&tick);
+                    n += 1;
+                }
+            })
+        };
+        let mut playback = Playback::new(Arc::clone(&shared), RATE, 2);
+        let period = frames as f64 / f64::from(RATE) / skew;
+        let start = Instant::now();
+        let mut heard = Vec::new();
+        let mut data = vec![0f32; frames * 2];
+        let mut k = 0u32;
+        while start.elapsed() < Duration::from_secs(seconds) {
+            k += 1;
+            let due = start + Duration::from_secs_f64(period * f64::from(k));
+            if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                std::thread::sleep(wait);
+            }
+            playback.fill(&mut data);
+            heard.extend(data.iter().step_by(2));
+        }
+        stop.store(true, Ordering::Relaxed);
+        network.join().unwrap();
+        (
+            breaks(&heard),
+            shared.speakers.underruns.load(Ordering::Relaxed),
+            shared.speakers.overruns.load(Ordering::Relaxed),
+        )
+    }
+
+    #[test]
+    #[ignore = "real time, a minute in all"]
+    fn realtime_receive_path() {
+        for (name, jitter, stall, frames, skew) in [
+            ("ideal", 0, 0, 480, 1.0),
+            ("PipeWire quantum 1024", 0, 0, 1024, 1.0),
+            ("card 0.3% fast", 0, 0, 1024, 1.003),
+            ("events up to 30 ms late", 30, 0, 1024, 1.0),
+            ("events up to 50 ms late", 50, 0, 1024, 1.0),
+            ("a 100 ms stall every 5 s", 10, 100, 1024, 1.0),
+        ] {
+            let (b, under, over) = receive_in_real_time(jitter, stall, frames, skew, 10);
+            println!("{name}: {b} breaks, underruns {under}, overruns {over}");
+        }
     }
 
     #[test]
