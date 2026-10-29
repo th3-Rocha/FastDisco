@@ -344,7 +344,7 @@ fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
             "",
             &[
                 (SettingsPage::Account, Icon::User, "Conta"),
-                (SettingsPage::Privacy, Icon::Shield, "Dados e privacidade"),
+                (SettingsPage::Privacy, Icon::ShieldLock, "Dados e privacidade"),
                 (SettingsPage::Messages, Icon::MessageCircle, "Permissões de mensagens"),
                 (SettingsPage::Notifications, Icon::Bell, "Notificações"),
             ],
@@ -361,7 +361,7 @@ fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
                 ),
                 (SettingsPage::Keybinds, Icon::Keyboard, "Atalhos de teclado"),
                 (SettingsPage::Linux, Icon::Monitor, "Configurações do Linux"),
-                (SettingsPage::Advanced, Icon::Sliders, "Avançado"),
+                (SettingsPage::Advanced, Icon::Code, "Avançado"),
             ],
         ),
     ];

@@ -304,7 +304,7 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                         icon_button(
                             ui,
                             &palette,
-                            Icon::UserPlus,
+                            Icon::AddGroup,
                             24.0,
                             false,
                             "Adicionar amigos à DM",
