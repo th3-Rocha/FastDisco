@@ -1,6 +1,6 @@
 [package]
 name = "discofast"
-version = "0.26.0"
+version = "0.27.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -80,6 +80,8 @@ cpal = "0.16"
 # for both.
 opus2 = { version = "0.4", features = ["bundled"] }
 ogg = "0.9"
+# DISCOFAST_AUDIO_DEBUG: WAV recordings of the call at three points.
+hound = "3.5"
 # Voice channels: Discord's voice gateway, UDP, encryption, the DAVE
 # end-to-end protocol, Opus and mixing. Only its driver, which Discofast
 # feeds from its own gateway. ("gateway" only because its driver needs

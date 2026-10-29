@@ -15,13 +15,22 @@ use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use songbird::driver::DecodeMode;
+use songbird::driver::{Bitrate, DecodeMode, MixMode};
 use songbird::id::{ChannelId, GuildId, UserId};
 use songbird::input::RawAdapter;
 use songbird::packet::Packet as _;
 use songbird::{Config, ConnectionInfo, CoreEvent, Driver, Event, EventContext, EventHandler};
 
-use crate::call::{MicSource, RATE, Shared};
+use crate::call::{MicSource, RATE, Shared, Tap};
+
+/// What the microphone is sent at: Opus at 64 kbps, mono, as a voice
+/// needs. songbird's default is 128 kbps stereo, made for music.
+const BITRATE: i32 = 64_000;
+/// How many 20 ms packets songbird holds per person to put late and
+/// out-of-order ones back in place before decoding: 100 ms.
+const PLAYOUT: u8 = 5;
+/// Ticks between two lines of call statistics in the log: ten seconds.
+const REPORT_TICKS: u32 = 500;
 
 /// Where to connect, from VOICE_STATE_UPDATE and VOICE_SERVER_UPDATE.
 #[derive(Clone, Debug)]
@@ -47,8 +56,18 @@ pub async fn connect(
     wake: impl Fn() + Send + Sync + 'static,
     gone: impl Fn(String) + Send + Sync + 'static,
 ) -> Result<Driver, String> {
-    let config = Config::default().decode_mode(DecodeMode::Decrypt);
+    let config = Config::default()
+        .decode_mode(DecodeMode::Decrypt)
+        .mix_mode(MixMode::Mono)
+        .playout_buffer_length(std::num::NonZeroU8::new(PLAYOUT).unwrap_or(std::num::NonZeroU8::MIN));
     let mut driver = Driver::new(config);
+    driver.set_bitrate(Bitrate::Bits(BITRATE));
+    log::info!(
+        "call: Opus {} kbps mono, playout buffer {} packets ({} ms)",
+        BITRATE / 1000,
+        PLAYOUT,
+        u32::from(PLAYOUT) * 20,
+    );
     let ssrcs: Arc<Mutex<HashMap<u32, u64>>> = Arc::default();
     driver.add_global_event(
         CoreEvent::SpeakingStateUpdate.into(),
@@ -64,6 +83,8 @@ pub async fn connect(
             decoders: Mutex::default(),
             heard: Mutex::default(),
             wake: Box::new(wake),
+            stats: Mutex::default(),
+            tap: Tap::open("3-recebido", RATE, 2),
         },
     );
     driver.add_global_event(
@@ -72,7 +93,7 @@ pub async fn connect(
             report: Box::new(gone),
         },
     );
-    driver.play_input(RawAdapter::new(MicSource::new(shared), RATE, 2).into());
+    driver.play_input(RawAdapter::new(MicSource::new(shared), RATE, 1).into());
     let info = ConnectionInfo {
         channel_id: ChannelId(id(server.channel)?),
         endpoint: server.endpoint,
@@ -116,6 +137,22 @@ struct Tick {
     /// words.
     heard: Mutex<HashMap<u64, Instant>>,
     wake: Box<dyn Fn() + Send + Sync>,
+    stats: Mutex<Stats>,
+    /// What was received after decoding, for `DISCOFAST_AUDIO_DEBUG`.
+    tap: Option<Tap>,
+}
+
+/// Counted between two reports in the log.
+#[derive(Default)]
+struct Stats {
+    ticks: u32,
+    packets: u32,
+    /// Missing when their turn came: lost or later than the playout
+    /// buffer; the decoder made up the sound.
+    lost: u32,
+    errors: u32,
+    /// The most people heard in one tick.
+    streams: usize,
 }
 
 /// How long a voice stays lit after it was last heard.
@@ -138,6 +175,9 @@ impl EventHandler for Tick {
             .clone();
         let mut heard = self.heard.lock().unwrap_or_else(|e| e.into_inner());
         let mut decoders = self.decoders.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
+        stats.ticks += 1;
+        stats.streams = stats.streams.max(tick.speaking.len());
         decoders.retain(|ssrc, _| tick.speaking.contains_key(ssrc) || tick.silent.contains(ssrc));
         for (ssrc, data) in &tick.speaking {
             let decoder = match decoders.entry(*ssrc) {
@@ -152,7 +192,13 @@ impl EventHandler for Tick {
                     }
                 }
             };
+            if data.packet.is_some() {
+                stats.packets += 1;
+            } else {
+                stats.lost += 1;
+            }
             let Some(pcm) = decode(decoder, data.packet.as_ref()) else {
+                stats.errors += 1;
                 continue;
             };
             let energy = pcm.iter().map(|s| s * s).sum::<f32>() / pcm.len().max(1) as f32;
@@ -178,16 +224,25 @@ impl EventHandler for Tick {
         for sample in &mut mixed {
             *sample = sample.clamp(-1.0, 1.0);
         }
+        // The echo canceller's copy is taken where the speakers play it,
+        // in time with what the microphone hears.
         self.shared.speakers.push(&mixed);
-        if !self.shared.deaf.load(std::sync::atomic::Ordering::Relaxed) {
-            let mono: Vec<f32> = mixed
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|[l, r]| (l + r) * 0.5)
-                .collect();
-            self.shared.played.push(&mono);
+        if let Some(tap) = &self.tap {
+            tap.push(&mixed);
         }
+        if stats.ticks >= REPORT_TICKS {
+            log::info!(
+                "call: received {} packets, {} lost or late ({:.1}%), {} undecodable, up to {} voices; {}",
+                stats.packets,
+                stats.lost,
+                f64::from(stats.lost) * 100.0 / f64::from((stats.packets + stats.lost).max(1)),
+                stats.errors,
+                stats.streams,
+                self.shared.report(),
+            );
+            *stats = Stats::default();
+        }
+        drop(stats);
         heard.retain(|_, at| now.duration_since(*at) < HOLD);
         let talking: HashSet<u64> = heard.keys().copied().collect();
         drop(heard);
@@ -211,8 +266,11 @@ fn decode(
     decoder: &mut opus2::Decoder,
     packet: Option<&songbird::events::context_data::RtpData>,
 ) -> Option<Vec<f32>> {
-    // Room for the longest Opus frame, 120 ms.
-    let mut pcm = vec![0f32; RATE as usize * 2 * 120 / 1000];
+    // Room for the longest Opus frame, 120 ms; a lost packet is made up
+    // for exactly one 20 ms tick, as libopus conceals as much as it is
+    // given room for.
+    let length = if packet.is_some() { 120 } else { 20 };
+    let mut pcm = vec![0f32; RATE as usize * 2 * length / 1000];
     let samples = match packet {
         Some(data) => {
             let rtp = data.rtp();
@@ -281,6 +339,23 @@ impl EventHandler for Gone {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lost_packet_is_made_up_for_one_tick_only() {
+        let mut encoder =
+            opus2::Encoder::new(RATE, opus2::Channels::Mono, opus2::Application::Voip).unwrap();
+        let mut decoder = opus2::Decoder::new(RATE, opus2::Channels::Stereo).unwrap();
+        let tone: Vec<f32> = (0..960).map(|i| (i as f32 * 0.05).sin() * 0.3).collect();
+        let mut packet = vec![0u8; 4000];
+        let n = encoder.encode_float(&tone, &mut packet).unwrap();
+        let mut pcm = vec![0f32; 5760 * 2];
+        let decoded = decoder.decode_float(&packet[..n], &mut pcm, false).unwrap();
+        assert_eq!(decoded, 960);
+        // Before, the concealment filled the whole 120 ms buffer and the
+        // decoder's state ran 100 ms ahead of the call.
+        let concealed = decode(&mut decoder, None).unwrap();
+        assert_eq!(concealed.len(), 960 * 2);
+    }
 
     #[test]
     fn the_dave_trailer_is_cut_and_plain_opus_kept() {

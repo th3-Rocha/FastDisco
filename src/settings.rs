@@ -50,6 +50,10 @@ pub struct Settings {
     /// The call's voice filter: noise suppression 0 off, 1 standard
     /// (WebRTC's), 2 and up "Inteligente" (DeepFilterNet's neural network).
     pub noise_suppression: u8,
+    /// How far the "Inteligente" suppression may lower the noise, in dB:
+    /// 100 takes it all out, lower leaves some of the room in. Only in
+    /// settings.json, for comparing.
+    pub noise_limit_db: u8,
     pub echo_cancellation: bool,
     pub auto_gain: bool,
     /// The microphone sends only while the user talks.
@@ -99,6 +103,7 @@ impl Default for Settings {
             spellcheck: true,
             dictionary: Vec::new(),
             noise_suppression: 2,
+            noise_limit_db: 100,
             echo_cancellation: true,
             auto_gain: true,
             auto_sensitivity: true,
