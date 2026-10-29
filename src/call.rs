@@ -316,8 +316,6 @@ pub struct Shared {
     pub speaker_gain: AtomicU32,
     /// The microphone's level in dB, as f32 bits, for the meters.
     pub level: AtomicU32,
-    /// The microphone test: the microphone plays back on the speakers.
-    pub loopback: AtomicBool,
     /// Frames in the last microphone and speaker callback, for the log.
     pub mic_frames: AtomicU32,
     pub speaker_frames: AtomicU32,
@@ -345,7 +343,6 @@ impl Default for Shared {
             mic_gain: AtomicU32::new(1f32.to_bits()),
             speaker_gain: AtomicU32::new(1f32.to_bits()),
             level: AtomicU32::new((-100f32).to_bits()),
-            loopback: AtomicBool::new(false),
             mic_frames: AtomicU32::new(0),
             speaker_frames: AtomicU32::new(0),
         }
@@ -428,8 +425,10 @@ struct Stages {
 }
 
 impl Stages {
-    fn new(filter: &Filter) -> Self {
-        let echo = filter.echo.load(Ordering::Relaxed);
+    /// `echo`: whether the echo canceller may run; not in the microphone
+    /// test, where it would take out the user's own voice played back.
+    fn new(filter: &Filter, echo: bool) -> Self {
+        let echo = echo && filter.echo.load(Ordering::Relaxed);
         let gain = filter.gain.load(Ordering::Relaxed);
         if neural(filter) {
             let limit = f32::from(filter.limit.load(Ordering::Relaxed));
@@ -560,6 +559,8 @@ pub struct MicSource {
     filter: Mutex<Filtering>,
     /// What leaves the filter, for `DISCOFAST_AUDIO_DEBUG`.
     tap: Option<Tap>,
+    /// The microphone test's source: no echo cancelling.
+    test: bool,
 }
 
 struct Filtering {
@@ -574,9 +575,13 @@ struct Filtering {
 
 impl MicSource {
     pub fn new(shared: Arc<Shared>) -> Self {
+        Self::with(shared, false)
+    }
+
+    fn with(shared: Arc<Shared>, test: bool) -> Self {
         Self {
             filter: Mutex::new(Filtering {
-                stages: Stages::new(&shared.filter),
+                stages: Stages::new(&shared.filter, !test),
                 version: shared.filter.version.load(Ordering::Relaxed),
                 voice: VoiceDetector::new(),
                 open: 0.0,
@@ -585,6 +590,7 @@ impl MicSource {
             shared,
             pending: Vec::new(),
             tap: Tap::open("2-processado", RATE, 1),
+            test,
         }
     }
 
@@ -604,7 +610,7 @@ impl MicSource {
         let version = shared.filter.version.load(Ordering::Relaxed);
         if version != f.version {
             f.version = version;
-            f.stages = Stages::new(&shared.filter);
+            f.stages = Stages::new(&shared.filter, !self.test);
         }
         let auto = shared.filter.gate.load(Ordering::Relaxed);
         let threshold =
@@ -813,11 +819,15 @@ impl Resampler {
     }
 }
 
-/// "Teste do microfone": the microphone played back on the speakers, and
-/// its level for the meter, until it is dropped.
+/// "Teste do microfone": the microphone played back on the speakers as
+/// the others would hear it, through the same filter, so changing the
+/// noise suppression during the test is heard at once; and its level for
+/// the meter, until it is dropped.
 pub struct MicTest {
     pub shared: Arc<Shared>,
     _audio: Audio,
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl MicTest {
@@ -825,16 +835,52 @@ impl MicTest {
         let shared = Arc::new(Shared::default());
         shared.filter.set(settings);
         shared.set_gains(settings);
-        shared.loopback.store(true, Ordering::Relaxed);
         let audio = Audio::start(
             Arc::clone(&shared),
             settings.input_device.clone(),
             settings.output_device.clone(),
         )?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut source = MicSource::with(Arc::clone(&shared), true);
+        let (to, done) = (Arc::clone(&shared), Arc::clone(&stop));
+        // A block every 20 ms, as songbird's mixer reads it in a call.
+        let thread = std::thread::Builder::new()
+            .name("mic-test".into())
+            .spawn(move || {
+                let period = Duration::from_millis(20);
+                let mut next = Instant::now();
+                let mut stereo = Vec::with_capacity(BLOCK * CHANNELS);
+                while !done.load(Ordering::Relaxed) {
+                    let block = source.next_block();
+                    stereo.clear();
+                    stereo.extend(block.iter().flat_map(|s| [*s, *s]));
+                    to.speakers.push(&stereo);
+                    next += period;
+                    let now = Instant::now();
+                    if next > now {
+                        std::thread::sleep(next - now);
+                    } else if now - next > period * 5 {
+                        // Fell far behind (the machine was busy): start over.
+                        next = now;
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
         Ok(Self {
             shared,
             _audio: audio,
+            stop,
+            thread: Some(thread),
         })
+    }
+}
+
+impl Drop for MicTest {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -943,7 +989,6 @@ where
     let mut converted = Vec::with_capacity(16_384);
     let mut scratch = Vec::with_capacity(16_384);
     let mut mono = Vec::with_capacity(16_384);
-    let mut stereo = Vec::with_capacity(32_768);
     let raw = Tap::open("1-captura", config.sample_rate.0, config.channels);
     let channels = usize::from(config.channels).max(1);
     device.build_input_stream(
@@ -973,11 +1018,6 @@ where
                 let rms = (mono.iter().map(|s| s * s).sum::<f32>() / mono.len() as f32).sqrt();
                 let db = (20.0 * rms.max(1e-5).log10()).max(-100.0);
                 shared.level.store(db.to_bits(), Ordering::Relaxed);
-            }
-            if shared.loopback.load(Ordering::Relaxed) {
-                stereo.clear();
-                stereo.extend(mono.iter().flat_map(|s| [*s, *s]));
-                shared.speakers.push(&stereo);
             }
             shared.mic.push(&mono);
         },

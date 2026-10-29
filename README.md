@@ -158,7 +158,7 @@ everything Discord's desktop app does.
 - [x] Voice filter: DeepFilterNet3 neural noise suppression (or WebRTC's), echo cancellation, automatic gain and input sensitivity
 - [x] Call audio without clicks or drift: lock-free rings, clock drift correction both ways, exact packet loss concealment, Opus at 64 kbps mono, filter in WebRTC's order (echo, noise, gain)
 - [x] Call audio diagnostics: `DISCOFAST_AUDIO_DEBUG=<folder>` records the raw microphone, the filtered sound and what was received as WAVs, and the log reports packet loss and buffer health every ten seconds
-- [x] Voice settings: microphone and speaker choice, their volumes, microphone test, input profiles and manual sensitivity
+- [x] Voice settings: microphone and speaker choice, their volumes, microphone test (heard through the voice filter, so the noise suppression can be switched while listening), input profiles and manual sensitivity
 - [x] Age-restricted channels show Discord's notice when the account has not confirmed its age
 - [x] Right-click on someone in a voice channel: their volume and a local mute, and for moderators server mute, server deafen, disconnect and move
 - [x] Voice channel rows as Discord's: chat, invite and settings buttons, the channel status (and setting it), "Convidar para voz", and the voice channel's text chat
