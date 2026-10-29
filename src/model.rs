@@ -864,12 +864,12 @@ pub mod permission {
     pub const MANAGE_EMOJIS: u64 = 1 << 30;
     pub const MANAGE_EVENTS: u64 = 1 << 33;
     pub const MANAGE_THREADS: u64 = 1 << 34;
-    pub const MANAGE_MESSAGES: u64 = 1 << 13;
     pub const MODERATE_MEMBERS: u64 = 1 << 40;
 
     /// Every permission the role and channel editors offer, in Discord's
     /// groups: the bit, its name and what it allows.
-    pub const ALL: &[(&str, &[(u64, &str, &str)])] = &[
+    pub type Group = (&'static str, &'static [(u64, &'static str, &'static str)]);
+    pub const ALL: &[Group] = &[
         ("PERMISSÕES GERAIS DO SERVIDOR", &[
             (1 << 10, "Ver canais", "Permite ver os canais (exceto os privados)."),
             (1 << 4, "Gerenciar canais", "Permite criar, editar e excluir canais."),

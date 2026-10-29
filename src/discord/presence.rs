@@ -238,7 +238,12 @@ pub async fn scan(client: reqwest::Client, token: String, updates: mpsc::Unbound
             let executables: Vec<String> = g["executables"]
                 .as_array()?
                 .iter()
-                .filter(|e| e["os"].as_str() == Some(os) && !e["is_launcher"].as_bool().unwrap_or(false))
+                // Games under Proton run their Windows executables on Linux.
+                .filter(|e| {
+                    let on = e["os"].as_str();
+                    (on == Some(os) || (os == "linux" && on == Some("win32")))
+                        && !e["is_launcher"].as_bool().unwrap_or(false)
+                })
                 .filter_map(|e| e["name"].as_str())
                 .map(|n| n.rsplit(['/', '\\']).next().unwrap_or(n).to_lowercase())
                 .filter(|n| n.len() > 2 && !GENERIC.contains(&n.as_str()))

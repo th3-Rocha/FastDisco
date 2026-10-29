@@ -250,7 +250,7 @@ pub fn popout(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                 let when = thread
                     .last_message
                     .or(Some(id))
-                    .map(|m| ago(m))
+                    .map(ago)
                     .unwrap_or_default();
                 Elide::new(ui, rect.right() - 12.0).text(
                     pos2(rect.left() + 14.0, rect.bottom() - 18.0),
