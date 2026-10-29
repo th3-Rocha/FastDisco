@@ -112,6 +112,12 @@ pub enum Action {
     ShowToken,
     LoginBack,
     RetryQr,
+    /// Signs in as another saved account.
+    SwitchAccount(Id),
+    /// Shows the login to add an account, keeping this one saved.
+    AddAccount,
+    /// Takes a saved account off this computer.
+    ForgetAccount(Id),
     /// Asks before logging out.
     AskLogout,
     CancelLogout,
@@ -666,6 +672,14 @@ impl App {
                     self.model = Model::default();
                     self.backend.send(Command::StartQr);
                 }
+                Event::AccountFailed(error) => {
+                    self.screen = if self.model.me != 0 {
+                        Screen::Main
+                    } else {
+                        Screen::Login
+                    };
+                    self.chat.dialog = Some(crate::chat::Dialog::Failed(error));
+                }
                 Event::SignedIn => {
                     self.login = Login::default();
                     self.screen = Screen::Connecting;
@@ -813,8 +827,26 @@ impl App {
     }
 
     fn ready(&mut self, model: Model) {
-        let first = self.screen != Screen::Main;
+        // Another account: nothing of the last one's places carries over.
+        let switched = self.model.me != 0 && self.model.me != model.me;
+        if switched {
+            self.channel = None;
+            self.back.clear();
+            self.forward.clear();
+            self.here = None;
+            self.last_channel.clear();
+            self.drafts.clear();
+            self.collapsed.clear();
+            self.threads = crate::threads::Threads::default();
+            self.events = crate::events::Events::default();
+            self.discovery = crate::discovery::Discovery::default();
+            self.admin = crate::admin::Admin::default();
+            self.nav = crate::nav::Nav::default();
+            self.chat.profiles.clear();
+        }
+        let first = self.screen != Screen::Main || switched;
         self.model = model;
+        self.remember_account();
         self.screen = Screen::Main;
         // After a reconnect, stay where the user was if it still exists.
         let still_there = self
@@ -829,6 +861,26 @@ impl App {
         } else if let Some(channel) = self.channel {
             self.open_channel(channel);
         }
+    }
+
+    /// Keeps the signed-in account in the list for "Mudar de conta", and
+    /// its token in the keyring under its id.
+    fn remember_account(&mut self) {
+        let me = self.model.me;
+        let Some(user) = self.model.user(me) else { return };
+        let saved = crate::settings::SavedAccount {
+            id: me,
+            name: user.name.clone(),
+            username: user.username.clone(),
+            picture: user.picture.clone(),
+        };
+        match self.settings.accounts.iter_mut().find(|a| a.id == me) {
+            Some(old) if *old == saved => {}
+            Some(old) => *old = saved,
+            None => self.settings.accounts.push(saved),
+        }
+        self.save_settings();
+        self.backend.send(Command::RememberAccount(me));
     }
 
     /// Development aid: `DISCOFAST_OPEN=name` opens the first text channel
@@ -975,7 +1027,29 @@ impl App {
                 Action::Logout => {
                     self.confirm_logout = false;
                     self.screen = Screen::Connecting;
+                    let me = self.model.me;
+                    self.settings.accounts.retain(|a| a.id != me);
+                    self.save_settings();
+                    self.backend.send(Command::ForgetAccount(me));
+                    self.leave_voice();
                     self.backend.send(Command::Logout);
+                }
+                Action::SwitchAccount(user) => {
+                    if user != self.model.me {
+                        self.leave_voice();
+                        self.screen = Screen::Connecting;
+                        self.backend.send(Command::SwitchAccount(user));
+                    }
+                }
+                Action::AddAccount => {
+                    self.leave_voice();
+                    self.screen = Screen::Connecting;
+                    self.backend.send(Command::AddAccount);
+                }
+                Action::ForgetAccount(user) => {
+                    self.settings.accounts.retain(|a| a.id != user);
+                    self.save_settings();
+                    self.backend.send(Command::ForgetAccount(user));
                 }
                 Action::GoHome => self.go_home(),
                 Action::OpenServer(id) => self.open_server(id),

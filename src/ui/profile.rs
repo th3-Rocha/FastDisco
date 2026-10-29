@@ -999,7 +999,40 @@ fn own_card(app: &App, ui: &mut Ui, badges: &[crate::model::Badge], out: &mut Ve
             egui::Popup::menu(&row)
                 .align(egui::RectAlign::RIGHT_START)
                 .show(|ui| {
-                    ui.set_min_width(200.0);
+                    ui.set_min_width(220.0);
+                    // The accounts on this computer, the current one ticked.
+                    let me = app.model.me;
+                    for account in app.settings.accounts.clone() {
+                        let current = account.id == me;
+                        let label = format!(
+                            "{}{}  ·  {}",
+                            if current { "✓ " } else { "" },
+                            account.name,
+                            account.username
+                        );
+                        let response = ui.add_enabled(!current, egui::Button::new(label));
+                        if response.clicked() {
+                            out.push(Action::SwitchAccount(account.id));
+                            out.push(Action::Chat(ChatAction::CloseProfile));
+                            ui.close();
+                        }
+                        if !current {
+                            response.context_menu(|ui| {
+                                if ui.button("Remover deste computador").clicked() {
+                                    out.push(Action::ForgetAccount(account.id));
+                                    ui.close();
+                                }
+                            });
+                        }
+                    }
+                    if !app.settings.accounts.is_empty() {
+                        ui.separator();
+                    }
+                    if ui.button("Adicionar uma conta").clicked() {
+                        out.push(Action::AddAccount);
+                        out.push(Action::Chat(ChatAction::CloseProfile));
+                        ui.close();
+                    }
                     if ui
                         .button(RichText::new("Sair").color(palette.danger))
                         .clicked()

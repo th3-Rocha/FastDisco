@@ -101,7 +101,7 @@ everything Discord's desktop app does.
 - [x] Login with a token; the token is kept in the OS keyring
 - [x] Gateway with heartbeat, resume and reconnect
 - [ ] hCaptcha when Discord asks for one at login
-- [ ] Switching between several accounts
+- [x] Switching between several accounts: each kept in the keyring, listed under "Mudar de conta" and on the login screen
 
 ### Layout and navigation
 

@@ -31,6 +31,16 @@ pub struct ColorTheme {
     pub intensity: u8,
 }
 
+/// An account signed in on this computer, for "Mudar de conta". Its
+/// token is in the OS keyring, never here.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedAccount {
+    pub id: crate::model::Id,
+    pub name: String,
+    pub username: String,
+    pub picture: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -96,6 +106,8 @@ pub struct Settings {
     /// window, as Discord's Nitro themes, free here. None for the plain
     /// theme.
     pub color_theme: Option<ColorTheme>,
+    /// The accounts signed in on this computer, the current one among them.
+    pub accounts: Vec<SavedAccount>,
 }
 
 impl Default for Settings {
@@ -133,6 +145,7 @@ impl Default for Settings {
             video_server: String::new(),
             video_key: String::new(),
             color_theme: None,
+            accounts: Vec::new(),
         }
     }
 }

@@ -49,6 +49,14 @@ pub enum Command {
     },
     StartQr,
     Logout,
+    /// Keeps the current token as this account's, for switching back.
+    RememberAccount(u64),
+    /// Signs in with another saved account.
+    SwitchAccount(u64),
+    /// Leaves this account signed in and shows the login, to add another.
+    AddAccount,
+    /// Forgets a saved account that is not the current one.
+    ForgetAccount(u64),
     /// The newest messages of a channel, or those before a message.
     LoadMessages {
         channel: u64,
@@ -205,6 +213,8 @@ pub enum Connection {
 pub enum Event {
     /// No saved token, or Discord no longer accepts it.
     SignedOut,
+    /// A saved account could not be switched to.
+    AccountFailed(String),
     SignedIn,
     MfaRequired {
         ticket: String,
@@ -964,6 +974,39 @@ impl Worker {
                 }
                 forget().await;
                 self.emit(Event::SignedOut);
+            }
+            Command::RememberAccount(user) => {
+                if let Some(token) = self.token.clone() {
+                    let saved =
+                        tokio::task::spawn_blocking(move || session::save_account(user, &token)).await;
+                    if let Ok(Err(error)) = saved {
+                        log::warn!("{error:#}");
+                    }
+                }
+            }
+            Command::SwitchAccount(user) => {
+                let token = tokio::task::spawn_blocking(move || session::load_account(user)).await;
+                match token {
+                    Ok(Ok(Some(token))) => {
+                        if let Err(error) = self.sign_in(token).await {
+                            self.emit(Event::AccountFailed(error));
+                        }
+                    }
+                    _ => self.emit(Event::AccountFailed(
+                        "Esta conta não está mais salva. Entre de novo.".into(),
+                    )),
+                }
+            }
+            Command::AddAccount => {
+                if let Some((task, _)) = self.gateway.take() {
+                    task.abort();
+                }
+                self.token = None;
+                forget().await;
+                self.emit(Event::SignedOut);
+            }
+            Command::ForgetAccount(user) => {
+                let _ = tokio::task::spawn_blocking(move || session::forget_account(user)).await;
             }
         }
     }

@@ -96,6 +96,31 @@ fn form(app: &mut App, ui: &mut Ui) {
         width,
     );
     ui.add_space(20.0);
+    // Accounts already signed in on this computer: one click back in.
+    let accounts = app.settings.accounts.clone();
+    if !accounts.is_empty() {
+        ui.label(
+            egui::RichText::new("CONTAS SALVAS")
+                .font(font(Weight::Bold, 12.0))
+                .color(LABEL),
+        );
+        ui.add_space(6.0);
+        for account in accounts {
+            let label = format!("{}  ·  {}", account.name, account.username);
+            let button = egui::Button::new(
+                egui::RichText::new(label)
+                    .font(font(Weight::Medium, 15.0))
+                    .color(palette.strong),
+            )
+            .fill(palette.sidebar)
+            .min_size(vec2(width, 40.0));
+            if ui.add(button).clicked() {
+                app.actions.push(crate::app::Action::SwitchAccount(account.id));
+            }
+            ui.add_space(6.0);
+        }
+        ui.add_space(14.0);
+    }
 
     let login = &mut app.login;
     let focus = std::mem::take(&mut login.focus);

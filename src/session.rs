@@ -48,6 +48,28 @@ pub fn forget() -> Result<()> {
     }
 }
 
+/// Another account's token, kept for switching to it.
+pub fn save_account(user: u64, token: &str) -> Result<()> {
+    entry(&format!("account:{user}"))?
+        .set_password(token)
+        .context("Could not save the account in the OS keyring")
+}
+
+pub fn load_account(user: u64) -> Result<Option<String>> {
+    match entry(&format!("account:{user}"))?.get_password() {
+        Ok(token) => Ok(Some(token)),
+        Err(keyring_core::Error::NoEntry) => Ok(None),
+        Err(error) => Err(error).context("Could not read the account from the OS keyring"),
+    }
+}
+
+pub fn forget_account(user: u64) -> Result<()> {
+    match entry(&format!("account:{user}"))?.delete_credential() {
+        Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
+        Err(error) => Err(error).context("Could not remove the account from the OS keyring"),
+    }
+}
+
 /// The video server's secret, if one was saved.
 pub fn load_video_secret() -> Result<Option<String>> {
     match entry(VIDEO_SECRET)?.get_password() {
