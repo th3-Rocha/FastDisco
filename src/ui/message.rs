@@ -1205,6 +1205,11 @@ pub(super) fn media(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
             _ => file_card(row, ui, attachment, false),
         }
     }
+    // Invite links as Discord's cards: the call's for a voice channel.
+    for code in invite_codes(&message.text) {
+        ui.add_space(4.0);
+        invite_card(row, ui, &code);
+    }
     // Link previews and bot embeds, unless the user turned them off.
     for embed in message.embeds.iter().filter(|_| row.app.settings.embeds) {
         ui.add_space(4.0);
@@ -1233,6 +1238,229 @@ pub(super) fn media(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
             }
         }
     }
+}
+
+/// The invite codes in a message's text, each once, at most three.
+fn invite_codes(text: &str) -> Vec<String> {
+    let mut codes: Vec<String> = Vec::new();
+    for prefix in ["discord.gg/", "discord.com/invite/", "discordapp.com/invite/"] {
+        let mut rest = text;
+        while let Some(at) = rest.find(prefix) {
+            rest = &rest[at + prefix.len()..];
+            let code: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+                .collect();
+            if code.len() >= 2 && !codes.contains(&code) && codes.len() < 3 {
+                codes.push(code);
+            }
+        }
+    }
+    codes
+}
+
+/// An invite's card, as Discord's: for a voice channel of a server the
+/// user is in, the call (who is there, for how long, and "Entrar na
+/// chamada de voz"); otherwise the server with its counts and "Entrar".
+fn invite_card(row: &mut Row<'_>, ui: &mut Ui, code: &str) {
+    use crate::admin::{AdminAction, Preview};
+    let app = row.app;
+    let palette = app.palette;
+    let Some(preview) = app.admin.previews.get(code) else {
+        row.out.push(Action::Admin(AdminAction::ResolveInvite(code.to_owned())));
+        return;
+    };
+    let width = 432f32.min(ui.available_width());
+    let fill = crate::theme::mix(palette.chat, palette.sidebar, 0.6);
+    let frame = Frame::new()
+        .fill(fill)
+        .stroke(Stroke::new(1.0, palette.divider))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(Margin::same(16));
+    let info = match preview {
+        Preview::Loading => {
+            frame.show(ui, |ui| {
+                ui.set_width(width - 32.0);
+                ui.label(egui::RichText::new("Resolvendo convite…").font(font(Weight::Medium, 14.0)).color(palette.muted));
+            });
+            return;
+        }
+        Preview::Failed => {
+            frame.show(ui, |ui| {
+                ui.set_width(width - 32.0);
+                ui.label(egui::RichText::new("VOCÊ ENVIOU UM CONVITE, MAS…").font(font(Weight::Bold, 12.0)).color(palette.muted));
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("Convite inválido").font(font(Weight::SemiBold, 16.0)).color(palette.danger));
+                ui.label(egui::RichText::new("Tente enviar um novo convite!").font(font(Weight::Regular, 14.0)).color(palette.muted));
+            });
+            return;
+        }
+        Preview::Ready(info) => info.clone(),
+    };
+    let member = info.guild.and_then(|g| app.model.guild(g)).is_some();
+    let channel = info.channel.and_then(|c| app.model.channel(c));
+    if info.voice && member && let Some(channel) = channel {
+        let id = channel.id;
+        let inside = app.model.in_voice(id);
+        frame.show(ui, |ui| {
+            ui.set_width(width - 32.0);
+            // The channel and how long the call has gone on.
+            let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
+            paint_icon(ui, Icon::Speaker, pos2(line.left() + 10.0, line.center().y), 20.0, super::call::TALKING);
+            ui.painter().text(
+                pos2(line.left() + 28.0, line.center().y),
+                Align2::LEFT_CENTER,
+                &channel.name,
+                font(Weight::Medium, 16.0),
+                palette.text,
+            );
+            if !inside.is_empty() && let Some(start) = channel.voice_start {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                let seconds = now.saturating_sub(start);
+                ui.painter().text(
+                    pos2(line.right(), line.center().y),
+                    Align2::RIGHT_CENTER,
+                    format!("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60),
+                    egui::FontId::monospace(13.0),
+                    super::call::TALKING,
+                );
+                ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+            }
+            ui.add_space(10.0);
+            let (rule, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().hline(rule.x_range(), rule.center().y, Stroke::new(1.0, palette.divider));
+            ui.add_space(10.0);
+            // Who is there, and the channel's status.
+            let (people, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
+            let mut x = people.left() + 12.0;
+            for (user, _) in inside.iter().take(6) {
+                if let Some(user) = app.model.user(*user) {
+                    avatar(ui, app, user, pos2(x, people.center().y), 12.0, None);
+                }
+                x += 20.0;
+            }
+            let note = channel
+                .voice_status
+                .clone()
+                .unwrap_or_else(|| if inside.is_empty() { "Ninguém está aqui ainda.".into() } else { String::new() });
+            ui.painter().text(
+                pos2(if inside.is_empty() { people.left() } else { x + 4.0 }, people.center().y),
+                Align2::LEFT_CENTER,
+                note,
+                font(Weight::Regular, 15.0),
+                palette.muted,
+            );
+            ui.add_space(12.0);
+            let joined = app.call.as_ref().is_some_and(|c| c.channel == id);
+            let (button, response) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
+            let green = Color32::from_rgb(0x00, 0x86, 0x3a);
+            let color = if joined {
+                palette.selected
+            } else if response.hovered() {
+                crate::theme::mix(green, Color32::BLACK, 0.15)
+            } else {
+                green
+            };
+            ui.painter().rect_filled(button, CornerRadius::same(8), color);
+            let label = if joined { "Você está nesta chamada" } else { "Entrar na chamada de voz" };
+            let text = ui.painter().layout_no_wrap(label.into(), font(Weight::SemiBold, 16.0), Color32::WHITE);
+            let total = text.size().x + 28.0;
+            let left = button.center().x - total / 2.0;
+            if !joined {
+                paint_icon(ui, Icon::Speaker, pos2(left + 10.0, button.center().y), 20.0, Color32::WHITE);
+            }
+            ui.painter().galley(
+                pos2(left + if joined { 14.0 } else { 28.0 }, button.center().y - text.size().y / 2.0),
+                text,
+                Color32::WHITE,
+            );
+            if !joined {
+                let response = response.on_hover_cursor(CursorIcon::PointingHand);
+                if response.clicked() {
+                    row.out.push(Action::JoinVoice(id));
+                }
+            }
+        });
+        let (note, _) = ui.allocate_exact_size(vec2(width, 22.0), Sense::hover());
+        paint_icon(ui, Icon::EyeOff, pos2(note.left() + 8.0, note.center().y), 14.0, palette.muted);
+        let text = ui.painter().layout(
+            format!("Apenas membros do servidor podem ver quem está em {}", channel.name),
+            font(Weight::Regular, 13.0),
+            palette.muted,
+            width - 20.0,
+        );
+        ui.painter().galley(pos2(note.left() + 20.0, note.center().y - text.size().y / 2.0), text, palette.muted);
+        return;
+    }
+    // A server invite.
+    let code = code.to_owned();
+    frame.show(ui, |ui| {
+        ui.set_width(width - 32.0);
+        ui.label(
+            egui::RichText::new("VOCÊ RECEBEU UM CONVITE PARA ENTRAR EM UM SERVIDOR")
+                .font(font(Weight::Bold, 12.0))
+                .color(palette.muted),
+        );
+        ui.add_space(12.0);
+        let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 50.0), Sense::hover());
+        let icon = Rect::from_min_size(line.min, Vec2::splat(50.0));
+        match app.picture(info.guild_icon.as_deref()) {
+            Some(uri) => {
+                egui::Image::new(uri).corner_radius(CornerRadius::same(16)).paint_at(ui, icon);
+            }
+            None => {
+                ui.painter().rect_filled(icon, CornerRadius::same(16), palette.chat);
+                let initials: String = info.guild_name.split_whitespace().filter_map(|w| w.chars().next()).take(3).collect();
+                ui.painter().text(icon.center(), Align2::CENTER_CENTER, initials, font(Weight::Medium, 16.0), palette.text);
+            }
+        }
+        let text_left = icon.right() + 16.0;
+        ui.painter().text(
+            pos2(text_left, line.top() + 14.0),
+            Align2::LEFT_CENTER,
+            &info.guild_name,
+            font(Weight::SemiBold, 16.0),
+            palette.strong,
+        );
+        let y = line.top() + 36.0;
+        let mut x = text_left;
+        for (dot, count, label) in [
+            (palette.online, info.online, "Online"),
+            (palette.offline, info.members, "Membros"),
+        ] {
+            let Some(count) = count else { continue };
+            ui.painter().circle_filled(pos2(x + 4.0, y), 4.0, dot);
+            let text = ui.painter().layout_no_wrap(
+                format!("{count} {label}"),
+                font(Weight::Regular, 14.0),
+                palette.muted,
+            );
+            let w = text.size().x;
+            ui.painter().galley(pos2(x + 12.0, y - text.size().y / 2.0), text, palette.muted);
+            x += w + 24.0;
+        }
+        let button = Rect::from_min_size(pos2(line.right() - 80.0, line.center().y - 20.0), vec2(80.0, 40.0));
+        let response = ui.interact(button, ui.id().with(("invite-join", &code)), Sense::click());
+        let green = Color32::from_rgb(0x00, 0x86, 0x3a);
+        let (fill, label) = if member {
+            (palette.selected, "Entrou")
+        } else if response.hovered() {
+            (crate::theme::mix(green, Color32::BLACK, 0.15), "Entrar")
+        } else {
+            (green, "Entrar")
+        };
+        ui.painter().rect_filled(button, CornerRadius::same(8), fill);
+        ui.painter().text(button.center(), Align2::CENTER_CENTER, label, font(Weight::SemiBold, 14.0), Color32::WHITE);
+        let response = response.on_hover_cursor(CursorIcon::PointingHand);
+        if response.clicked() {
+            match (member, info.guild) {
+                (true, Some(guild)) => row.out.push(Action::OpenServer(guild)),
+                _ => row.out.push(Action::Admin(AdminAction::AcceptInvite(code.clone()))),
+            }
+        }
+    });
 }
 
 /// The size a picture is shown at: its own, fitted inside the box.

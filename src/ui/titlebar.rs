@@ -16,7 +16,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         .resizable(false)
         .exact_size(TITLE_HEIGHT)
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.rail))
+        .frame(Frame::new().fill(palette.frame))
         .show(ui, |ui| {
             let rect = ui.max_rect();
             // Under everything else, so the buttons win the pointer.
@@ -90,7 +90,7 @@ fn arrows(app: &mut App, ui: &mut Ui, left_center: egui::Pos2) {
         let response = ui.interact(rect, ui.id().with(hint), Sense::click());
         let response = response.on_hover_text(hint);
         let tint = match (enabled, response.hovered()) {
-            (false, _) => mix(palette.rail, palette.icon, 0.4),
+            (false, _) => mix(palette.frame, palette.icon, 0.4),
             (true, true) => palette.strong,
             (true, false) => palette.icon,
         };

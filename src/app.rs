@@ -490,7 +490,8 @@ impl App {
         if self.settings.notification_sound {
             self.sound(crate::sounds::Sound::Message);
         }
-        self.notifier.show(&title, &body, channel, false);
+        let picture = self.model.user(message.author).and_then(|u| u.picture.clone());
+        self.notifier.show(&title, &body, picture.as_deref(), channel, false);
     }
 
     /// One of the app's sounds, unless the user turned them off.

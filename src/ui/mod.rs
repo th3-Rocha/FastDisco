@@ -74,7 +74,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             let window = ui.max_rect();
             // Behind the sidebar's rounded corner.
             ui.painter()
-                .rect_filled(window, 0.0, app.palette.rail);
+                .rect_filled(window, 0.0, app.palette.frame);
             titlebar::show(app, ui);
             titlebar::voice_taken(app, ui);
             rail::show(app, ui);

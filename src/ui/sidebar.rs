@@ -169,14 +169,14 @@ fn header(app: &mut App, ui: &mut Ui) {
                 }
                 Place::Home => {
                     let field =
-                        Rect::from_center_size(rect.center(), vec2(rect.width() - 20.0, 28.0));
+                        Rect::from_center_size(rect.center(), vec2(rect.width() - 20.0, 32.0));
                     ui.painter()
-                        .rect_filled(field, CornerRadius::same(4), palette.rail);
+                        .rect_filled(field, CornerRadius::same(8), palette.composer);
                     ui.painter().text(
-                        pos2(field.left() + 8.0, field.center().y),
+                        pos2(field.left() + 12.0, field.center().y),
                         Align2::LEFT_CENTER,
                         "Encontre ou comece uma conversa",
-                        font(Weight::Medium, 13.0),
+                        font(Weight::Medium, 14.0),
                         palette.muted,
                     );
                 }
@@ -702,8 +702,8 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
     ui.painter().text(
         pos2(rect.left() + 18.0, rect.center().y),
         Align2::LEFT_CENTER,
-        "MENSAGENS DIRETAS",
-        font(Weight::SemiBold, 12.0),
+        "Mensagens diretas",
+        font(Weight::Medium, 14.0),
         palette.muted,
     );
     paint_icon(

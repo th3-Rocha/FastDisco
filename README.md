@@ -171,6 +171,7 @@ everything Discord's desktop app does.
 - [x] Groups show their own picture
 - [x] "Criar seu servidor": make your own or start from Discord's templates, the audience question, the name and icon
 - [x] "Entrar em um servidor" with an invite (the browser takes over when Discord asks for a captcha)
+- [x] Invite links as Discord's cards: the server with its online and member counts and "Entrar", or for a voice channel the call itself, with who is in it, how long it has gone on and "Entrar na chamada de voz"
 - [x] The rail's grey add-server tile
 - [x] The microphone's and headphones' arrow menus: device, input profile, volume, voice settings
 - [x] Account settings as Discord's: account info, password and security (multi-factor, connected devices with sign-out), account status (age group), Family Center, disable and delete the account
@@ -201,7 +202,7 @@ everything Discord's desktop app does.
 - [x] User settings, as Discord's
 - [x] Profiles, notes, mutual servers and friends
 - [x] Editing display name and bio
-- [x] Light and dark themes, following the Omarchy theme
+- [x] Light and dark themes, following the Omarchy theme; the dark one is Discord's grey theme from its 2025 redesign, with its 40 px server icons
 - [x] Zoom and accessibility switches
 - [ ] Changing your status: online, idle, do not disturb, invisible
 - [ ] Setting a custom status
@@ -211,7 +212,7 @@ everything Discord's desktop app does.
 
 ### Desktop
 
-- [x] Notifications for direct messages and mentions
+- [x] Notifications for direct messages and mentions, with the author's picture
 - [x] The app's sounds: joining and leaving calls, people coming and going, mute, deafen, new messages
 - [x] Unread count in the window title
 - [x] Tray, closing to the tray

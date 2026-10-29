@@ -4,6 +4,8 @@
 //! Requests go through the backend's generic API call, tagged so their
 //! answers find their way back here.
 
+use std::collections::HashMap;
+
 use reqwest::Method;
 use serde_json::{Value, json};
 
@@ -15,6 +17,10 @@ use crate::model::Id;
 #[derive(Clone, Debug)]
 pub enum Tag {
     Invite,
+    /// What an invite in a message leads to, for its card.
+    InvitePreview {
+        code: String,
+    },
     Nick {
         guild: Id,
         nick: String,
@@ -281,8 +287,49 @@ pub fn invite_code(text: &str) -> String {
     text.rsplit('/').next().unwrap_or(text).to_owned()
 }
 
+/// An invite link's card in a message: being looked up, gone, or what
+/// it leads to.
+#[derive(Clone, Debug)]
+pub enum Preview {
+    Loading,
+    Failed,
+    Ready(InviteInfo),
+}
+
+/// What Discord says an invite leads to.
+#[derive(Clone, Debug, Default)]
+pub struct InviteInfo {
+    pub guild: Option<Id>,
+    pub guild_name: String,
+    pub guild_icon: Option<String>,
+    pub channel: Option<Id>,
+    /// A voice or stage channel: the card is the call's.
+    pub voice: bool,
+    pub members: Option<u64>,
+    pub online: Option<u64>,
+}
+
+impl InviteInfo {
+    fn parse(value: &Value) -> Self {
+        let guild = crate::discord::parse::id(&value["guild"]["id"]);
+        Self {
+            guild,
+            guild_name: value["guild"]["name"].as_str().unwrap_or_default().to_owned(),
+            guild_icon: guild.zip(value["guild"]["icon"].as_str()).map(|(id, hash)| {
+                format!("{}/icons/{id}/{hash}.png?size=96", crate::discord::CDN)
+            }),
+            channel: crate::discord::parse::id(&value["channel"]["id"]),
+            voice: matches!(value["channel"]["type"].as_u64(), Some(2 | 13)),
+            members: value["approximate_member_count"].as_u64(),
+            online: value["approximate_presence_count"].as_u64(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Admin {
+    /// Invite cards in messages, by code.
+    pub previews: HashMap<String, Preview>,
     pub menu: bool,
     pub modal: Option<Modal>,
     pub busy: bool,
@@ -318,6 +365,10 @@ pub struct Session {
 
 #[derive(Clone, Debug)]
 pub enum AdminAction {
+    /// Looks up an invite seen in a message, once.
+    ResolveInvite(String),
+    /// "Entrar" on an invite card.
+    AcceptInvite(String),
     ToggleMenu,
     CloseMenu,
     Open(Modal),
@@ -386,6 +437,24 @@ impl App {
                 Some(change),
             ),
             AdminAction::CloseMenu => self.admin.menu = false,
+            AdminAction::ResolveInvite(code) => {
+                if self.admin.previews.contains_key(&code) {
+                    return;
+                }
+                self.admin.previews.insert(code.clone(), Preview::Loading);
+                self.api(
+                    Tag::InvitePreview { code: code.clone() },
+                    Method::GET,
+                    format!("/invites/{code}?with_counts=true&with_expiration=true"),
+                    None,
+                );
+            }
+            AdminAction::AcceptInvite(code) => self.api(
+                Tag::Joined { code: code.clone() },
+                Method::POST,
+                format!("/invites/{code}"),
+                Some(json!({})),
+            ),
             AdminAction::Open(modal) => {
                 self.admin.menu = false;
                 self.admin.error = None;
@@ -840,6 +909,11 @@ impl App {
         let value = match result {
             Ok(value) => value,
             Err(error) => {
+                if let Tag::InvitePreview { code } = &tag {
+                    log::debug!("invite {code}: {error}");
+                    self.admin.previews.insert(code.clone(), Preview::Failed);
+                    return;
+                }
                 if let Tag::DataRequested = tag {
                     self.admin.data_request = Some(format!("Não foi possível pedir: {error}"));
                     return;
@@ -979,6 +1053,11 @@ impl App {
                 if let Some(settings) = &mut self.admin.settings {
                     settings.message = Some("Alterações salvas.".into());
                 }
+            }
+            Tag::InvitePreview { code } => {
+                self.admin
+                    .previews
+                    .insert(code, Preview::Ready(InviteInfo::parse(&value)));
             }
             Tag::Invites { guild } => {
                 if let Some(settings) = self.admin.settings.as_mut().filter(|s| s.guild == guild) {

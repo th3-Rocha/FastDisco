@@ -14,7 +14,8 @@ use crate::model::{Id, permission};
 use crate::nav::NavAction;
 use crate::theme::RAIL_WIDTH;
 
-const ICON: f32 = 48.0;
+/// Discord's server icons since its 2025 redesign.
+const ICON: f32 = 40.0;
 const GAP: f32 = 8.0;
 
 pub fn show(app: &mut App, ui: &mut Ui) {
@@ -23,14 +24,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         .resizable(false)
         .exact_size(RAIL_WIDTH)
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.rail).inner_margin(Margin::ZERO))
+        .frame(Frame::new().fill(palette.frame).inner_margin(Margin::ZERO))
         .show(ui, |ui| {
             // Room for the user's card, which spans the rail and sidebar.
             egui::Panel::bottom("rail-foot")
                 .resizable(false)
                 .exact_size(super::sidebar::card_space(app))
                 .show_separator_line(false)
-                .frame(Frame::new().fill(palette.rail))
+                .frame(Frame::new().fill(palette.frame))
                 .show(ui, |_| {});
             egui::ScrollArea::vertical()
                 .id_salt("server-rail")
@@ -496,7 +497,7 @@ fn item(
     if let Some(icon) = corner {
         let tile = Rect::from_center_size(pos2(rect.right() - 3.0, rect.top() + 3.0), Vec2::splat(20.0));
         ui.painter()
-            .rect_filled(tile.expand(2.0), CornerRadius::same(7), palette.rail);
+            .rect_filled(tile.expand(2.0), CornerRadius::same(7), palette.frame);
         ui.painter()
             .rect_filled(tile, CornerRadius::same(6), Color32::from_rgb(0x11, 0x12, 0x14));
         paint_icon(ui, icon, tile.center(), 13.0, palette.text);
@@ -507,7 +508,7 @@ fn item(
             &palette,
             pos2(rect.right() + 2.0, rect.bottom() - 6.0),
             mentions,
-            Some(palette.rail),
+            Some(palette.frame),
         );
     }
     if hovered && !ui.data(|d| d.get_temp::<Id>(egui::Id::new(DRAG)).is_some()) {

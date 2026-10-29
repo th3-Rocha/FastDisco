@@ -6,7 +6,9 @@ use egui::Color32;
 /// Every colour the interface draws.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Palette {
-    /// The server rail, the search field and the deepest surfaces.
+    /// The title bar and the server rail, around everything else.
+    pub frame: Color32,
+    /// Text fields and the deepest surfaces.
     pub rail: Color32,
     /// The channel list and the member list.
     pub sidebar: Color32,
@@ -45,27 +47,31 @@ pub struct Palette {
 }
 
 impl Palette {
+    /// Discord's grey theme ("Cinza" since its 2025 redesign): the title
+    /// bar, the rail and the channel list one colour, the conversation a
+    /// step lighter, the user card floating over both.
     pub const fn dark() -> Self {
         Self {
-            rail: rgb(0x1e1f22),
-            sidebar: rgb(0x2b2d31),
-            chat: rgb(0x313338),
-            user_panel: rgb(0x232428),
-            hover: rgb(0x35373c),
-            selected: rgb(0x404249),
-            composer: rgb(0x383a40),
-            message_hover: rgb(0x2e3035),
-            divider: rgb(0x1f2023),
-            text: rgb(0xdbdee1),
-            strong: rgb(0xf2f3f5),
-            muted: rgb(0x949ba4),
-            icon: rgb(0xb5bac1),
+            frame: rgb(0x2c2d32),
+            rail: rgb(0x222327),
+            sidebar: rgb(0x2c2d32),
+            chat: rgb(0x323339),
+            user_panel: rgb(0x393a41),
+            hover: rgb(0x36373d),
+            selected: rgb(0x404147),
+            composer: rgb(0x393a41),
+            message_hover: rgb(0x2f3035),
+            divider: rgb(0x3c3d43),
+            text: rgb(0xdfe0e2),
+            strong: rgb(0xfbfbfb),
+            muted: rgb(0x9fa0a6),
+            icon: rgb(0xb8b9bf),
             accent: rgb(0x5865f2),
-            online: rgb(0x23a55a),
-            idle: rgb(0xf0b232),
-            dnd: rgb(0xf23f43),
-            offline: rgb(0x80848e),
-            danger: rgb(0xf23f43),
+            online: rgb(0x43a25a),
+            idle: rgb(0xca9654),
+            dnd: rgb(0xd83a42),
+            offline: rgb(0x82838b),
+            danger: rgb(0xd83a42),
             mention: Color32::from_rgba_premultiplied(0x2c, 0x26, 0x14, 0x30),
             mention_bar: rgb(0xf0b232),
         }
@@ -76,6 +82,7 @@ impl Palette {
     /// Discord's light theme.
     pub const fn light() -> Self {
         Self {
+            frame: rgb(0xe3e5e8),
             rail: rgb(0xe3e5e8),
             sidebar: rgb(0xf2f3f5),
             chat: rgb(0xffffff),
@@ -139,6 +146,7 @@ impl fastframe_theme::Palette for Palette {
             "danger" => self.danger = color,
             "warning" => self.idle = color,
             "rail" => self.rail = color,
+            "frame" => self.frame = color,
             "user_panel" => self.user_panel = color,
             "message_hover" => self.message_hover = color,
             "strong" => self.strong = color,
@@ -160,6 +168,9 @@ impl fastframe_theme::Palette for Palette {
         };
         if !given.contains("rail") {
             self.rail = mix(self.sidebar, shade, if dark { 0.35 } else { 0.1 });
+        }
+        if !given.contains("frame") {
+            self.frame = self.rail;
         }
         if !given.contains("user_panel") {
             self.user_panel = mix(self.sidebar, shade, if dark { 0.2 } else { 0.05 });
@@ -246,4 +257,4 @@ pub const SIDEBAR_RANGE: std::ops::RangeInclusive<f32> = 200.0..=440.0;
 pub const MEMBERS_WIDTH: f32 = 240.0;
 pub const HEADER_HEIGHT: f32 = 48.0;
 /// The strip across the top with the arrows, the place and the inbox.
-pub const TITLE_HEIGHT: f32 = 32.0;
+pub const TITLE_HEIGHT: f32 = 36.0;
