@@ -37,8 +37,13 @@ Every version is built for Linux, Windows and macOS and published on the
   `chmod +x discofast-*.AppImage` and run it. Needs Ubuntu 24.04 or newer.
 - **Linux, by hand**: the `x86_64-unknown-linux-gnu` archive has the
   binary, the launcher entry and the icons.
-- **Windows** (x86_64) and **macOS** (Apple Silicon): unpack the archive
-  and run `discofast`.
+- **Flatpak**: download `discofast-<version>-x86_64.flatpak`, then
+  `flatpak install --user discofast-*.flatpak`.
+- **Windows** (x86_64): run `discofast-<version>-x86_64-setup.exe`, or
+  unpack the archive and run `discofast`.
+- **macOS** (Apple Silicon): open `discofast-<version>-aarch64.dmg` and
+  drag Discofast to Applications. It is signed ad hoc, so the first time
+  open it with a right click, Abrir.
 
 ## Build
 
@@ -226,8 +231,8 @@ everything Discord's desktop app does.
 - [x] Updating itself from the releases page (the AppImage, and the Linux and Windows archives; the AUR updates through yay)
 - [x] AppImage for Ubuntu and other Linux desktops
 - [x] AUR package (`discofast-bin`)
-- [ ] Flatpak
-- [ ] Windows installer and macOS app bundle
+- [x] Flatpak (`discofast-<version>-x86_64.flatpak` on each release; `packaging/flatpak` has the manifest)
+- [x] Windows installer (`-setup.exe`, for the current user, updates itself) and macOS app bundle (`Discofast.app` on a `.dmg`)
 - [x] Rich presence: Discord's local RPC socket for games and apps (music players, editors), and running games recognised from Discord's list (Linux); follows "Compartilhar minha atividade"
 
 ## License

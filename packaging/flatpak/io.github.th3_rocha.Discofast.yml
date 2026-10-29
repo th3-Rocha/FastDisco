@@ -1,0 +1,41 @@
+# Discofast as a Flatpak, built from the released Linux binary:
+#   flatpak-builder --user --install build packaging/flatpak/io.github.th3_rocha.Discofast.yml
+# The release workflow builds it from the binary it just made and attaches
+# the .flatpak bundle to the release.
+app-id: io.github.th3_rocha.Discofast
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+command: discofast
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=all
+  # The token in the OS keyring, notifications and the tray.
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # Rich Presence: games outside the sandbox find Discofast's RPC socket.
+  - --filesystem=xdg-run/discord-ipc-0:create
+  - --filesystem=xdg-run/discord-ipc-1:create
+  # Files to send and to save.
+  - --filesystem=xdg-download
+  - --filesystem=xdg-pictures:ro
+modules:
+  - name: discofast
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 discofast /app/bin/discofast
+      - install -Dm644 discofast.desktop /app/share/applications/io.github.th3_rocha.Discofast.desktop
+      - desktop-file-edit --set-icon=io.github.th3_rocha.Discofast /app/share/applications/io.github.th3_rocha.Discofast.desktop
+      - install -Dm644 io.github.th3_rocha.Discofast.metainfo.xml /app/share/metainfo/io.github.th3_rocha.Discofast.metainfo.xml
+      - for size in 32 64 128 256 512; do install -Dm644 icons/$size.png /app/share/icons/hicolor/${size}x${size}/apps/io.github.th3_rocha.Discofast.png; done
+    sources:
+      # The unpacked release archive, put here by the workflow.
+      - type: dir
+        path: ../../dist/flatpak
+      - type: file
+        path: io.github.th3_rocha.Discofast.metainfo.xml

@@ -1771,7 +1771,7 @@ dependencies = [
 
 [[package]]
 name = "discofast"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "aes-gcm",
  "anyhow",

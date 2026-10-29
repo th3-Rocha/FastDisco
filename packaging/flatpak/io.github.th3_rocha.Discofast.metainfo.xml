@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.th3_rocha.Discofast</id>
+  <name>Discofast</name>
+  <summary>Discord, native and fast</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.th3_rocha">
+    <name>th3-Rocha</name>
+  </developer>
+  <description>
+    <p>
+      A lightweight Discord client written in Rust, with no browser engine.
+      The layout follows Discord's desktop client: the server rail, the
+      channels, the conversation and the member list.
+    </p>
+    <p>
+      Discord's Terms of Service do not allow third-party clients that log
+      in with a user account. Use it at your own risk.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.th3_rocha.Discofast.desktop</launchable>
+  <url type="homepage">https://github.com/th3-Rocha/FastDisco</url>
+  <content_rating type="oars-1.1"/>
+</component>

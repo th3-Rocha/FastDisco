@@ -80,6 +80,9 @@ jobs:
           sudo apt-get install -y libglib2.0-dev libva-dev libdrm-dev libgbm-dev libx11-dev libxext-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev libxtst-dev libpipewire-0.3-dev libpulse-dev
       # Camera and screen through the friends' own LiveKit server.
       - run: cargo build --locked --release --features selfhosted --target ${{ matrix.target }}
+      - name: Inno Setup
+        if: runner.os == 'Windows'
+        run: choco install innosetup --no-progress -y
       - name: Package
         shell: bash
         run: |
@@ -127,6 +130,15 @@ jobs:
             tag="${{ needs.version.outputs.tag }}"
             cp "dist/discofast-${tag#v}-x86_64.AppImage" "dist/fastdisco-${tag#v}-x86_64.AppImage"
           fi
+          tag="${{ needs.version.outputs.tag }}"
+          # An installer for Windows, for the current user.
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "//DVersion=${tag#v}" "//DSource=$(cygpath -w "$PWD/dist/$name")" "//O$(cygpath -w "$PWD/dist")" packaging/windows/discofast.iss
+          fi
+          # Discofast.app on a disk image for macOS.
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            scripts/macos-app.sh "target/${{ matrix.target }}/release/discofast" "${tag#v}" "dist/discofast-${tag#v}-aarch64.dmg"
+          fi
           cd dist
           for dir in "$name" $legacy; do
             if [ "${{ runner.os }}" = "Windows" ]; then
@@ -142,11 +154,52 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*.AppImage
+            dist/*-setup.exe
+            dist/*.dmg
+          if-no-files-found: error
+
+  # A Flatpak bundle made from the Linux binary, attached to the release.
+  flatpak:
+    name: flatpak
+    needs: [version, build]
+    if: needs.version.outputs.tag != ''
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-24.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: x86_64-unknown-linux-gnu
+          path: dist
+      - name: Unpack the Linux build
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          mkdir -p dist/flatpak
+          tar xzf "dist/discofast-$TAG-x86_64-unknown-linux-gnu.tar.gz" -C dist/flatpak --strip-components=1
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: discofast-x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.th3_rocha.Discofast.yml
+          cache: false
+          upload-artifact: false
+      - name: Name the bundle
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          mkdir -p out
+          mv discofast-x86_64.flatpak "out/discofast-${TAG#v}-x86_64.flatpak"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: out/*.flatpak
           if-no-files-found: error
 
   publish:
     name: GitHub release
-    needs: [version, build]
+    needs: [version, build, flatpak]
     # A platform that fails to build leaves the others still released.
     if: ${{ !cancelled() && needs.version.outputs.tag != '' }}
     runs-on: ubuntu-latest
