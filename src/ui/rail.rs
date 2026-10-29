@@ -1,4 +1,4 @@
-//! The server rail: home, the servers, then adding and discovering servers.
+//! The server rail: home, the servers, then adding a server.
 
 use egui::{
     Align2, Color32, CornerRadius, Frame, Margin, Rect, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2,
@@ -49,7 +49,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     let home = item(
                         ui,
                         app,
-                        app.place == Place::Home && app.admin.discover.is_none(),
+                        app.place == Place::Home,
                         false,
                         unread_dms,
                         "Mensagens diretas",
@@ -76,15 +76,11 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 
                     servers(app, ui);
 
-                    // Adding a server opens Discord's "Criar seu servidor";
-                    // discovering them, Discord's page. Grey tiles that
-                    // light up blurple, as Discord's current rail.
-                    for (icon, hint) in [
-                        (Icon::Plus, "Adicionar um servidor"),
-                        (Icon::Compass, "Descubra"),
-                    ] {
-                        let open = icon == Icon::Compass && app.admin.discover.is_some();
-                        let response = item(ui, app, open, false, 0, hint, &[], false, |ui, rect, lit| {
+                    // Adding a server opens Discord's "Criar seu servidor",
+                    // on a grey tile that lights up blurple.
+                    {
+                        let (icon, hint) = (Icon::Plus, "Adicionar um servidor");
+                        let response = item(ui, app, false, false, 0, hint, &[], false, |ui, rect, lit| {
                             ui.painter().rect_filled(
                                 rect,
                                 radius(lit),
@@ -99,17 +95,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             );
                         });
                         if response.clicked() {
-                            app.actions.push(match icon {
-                                Icon::Plus => Action::Admin(AdminAction::Open(
-                                    Modal::CreateGuild {
-                                        step: crate::admin::CreateStep::Start,
-                                        template: 0,
-                                        name: String::new(),
-                                        icon: None,
-                                    },
-                                )),
-                                _ => Action::Admin(AdminAction::OpenDiscover),
-                            });
+                            app.actions.push(Action::Admin(AdminAction::Open(
+                                Modal::CreateGuild {
+                                    step: crate::admin::CreateStep::Start,
+                                    template: 0,
+                                    name: String::new(),
+                                    icon: None,
+                                },
+                            )));
                         }
                         ui.add_space(GAP);
                     }

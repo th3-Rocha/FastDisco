@@ -27,12 +27,6 @@ pub enum Tag {
     Presence,
     /// A new server, opened once the gateway brings it.
     GuildCreated,
-    /// The featured servers for "Descubra".
-    Discover,
-    /// Joined a server from "Descubra".
-    JoinedDiscoverable {
-        guild: Id,
-    },
     /// Joined a server from an invite.
     Joined {
         code: String,
@@ -274,54 +268,6 @@ pub struct Admin {
     pub invite_channel: Option<Id>,
     /// A server just created or joined, to open when it arrives.
     pub open_when_ready: Option<Id>,
-    /// Discord's "Descubra" page, while open.
-    pub discover: Option<Discover>,
-}
-
-/// The servers Discord features on its "Descubra" page.
-#[derive(Default)]
-pub struct Discover {
-    pub guilds: Vec<DiscoverGuild>,
-    pub loading: bool,
-    pub error: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct DiscoverGuild {
-    pub id: Id,
-    pub name: String,
-    pub description: String,
-    pub icon: Option<String>,
-    pub splash: Option<String>,
-    pub online: u64,
-    pub members: u64,
-    pub verified: bool,
-}
-
-fn discover_guild(value: &Value) -> Option<DiscoverGuild> {
-    use crate::discord::CDN;
-    let id = crate::discord::parse::id(&value["id"])?;
-    let features = value["features"].as_array();
-    let has = |f: &str| features.is_some_and(|l| l.iter().any(|x| x == f));
-    Some(DiscoverGuild {
-        id,
-        name: value["name"].as_str().unwrap_or_default().to_owned(),
-        description: value["description"].as_str().unwrap_or_default().to_owned(),
-        icon: value["icon"]
-            .as_str()
-            .map(|h| format!("{CDN}/icons/{id}/{h}.png?size=96")),
-        splash: value["discovery_splash"]
-            .as_str()
-            .map(|h| format!("{CDN}/discovery-splashes/{id}/{h}.jpg?size=600"))
-            .or_else(|| {
-                value["splash"]
-                    .as_str()
-                    .map(|h| format!("{CDN}/splashes/{id}/{h}.jpg?size=600"))
-            }),
-        online: value["approximate_presence_count"].as_u64().unwrap_or(0),
-        members: value["approximate_member_count"].as_u64().unwrap_or(0),
-        verified: has("VERIFIED") || has("PARTNERED"),
-    })
 }
 
 #[derive(Clone, Debug)]
@@ -333,10 +279,6 @@ pub enum AdminAction {
     InviteTo(Id),
     /// Choosing the new server's icon.
     PickIcon,
-    /// Discord's "Descubra" page.
-    OpenDiscover,
-    /// Joining a server from "Descubra".
-    JoinDiscoverable(Id),
     /// Online, idle, do not disturb or invisible, from the profile card.
     SetStatus(crate::model::Status),
     /// The open dialog's main button.
@@ -393,32 +335,6 @@ impl App {
                 self.admin.modal = Some(modal);
             }
             AdminAction::PickIcon => self.backend().send(Command::PickIcon),
-            AdminAction::OpenDiscover => {
-                let fresh = self.admin.discover.is_none();
-                let discover = self.admin.discover.get_or_insert_with(Discover::default);
-                if fresh && discover.guilds.is_empty() {
-                    discover.loading = true;
-                    self.api(
-                        Tag::Discover,
-                        Method::GET,
-                        "/discoverable-guilds?offset=0&limit=48".into(),
-                        None,
-                    );
-                }
-            }
-            AdminAction::JoinDiscoverable(guild) => {
-                if self.model.guild(guild).is_some() {
-                    self.admin.discover = None;
-                    self.actions.push(crate::app::Action::OpenServer(guild));
-                    return;
-                }
-                self.api(
-                    Tag::JoinedDiscoverable { guild },
-                    Method::PUT,
-                    format!("/guilds/{guild}/members/@me?lurker=false"),
-                    Some(json!({})),
-                );
-            }
             AdminAction::SetStatus(status) => {
                 let me = self.model.me;
                 if let Some(user) = self.model.users.get_mut(&me) {
@@ -802,19 +718,6 @@ impl App {
             Err(error) => {
                 // Discord asks for a captcha to join from outside its own
                 // apps: the invite opens in the browser instead.
-                if let Tag::Discover = tag {
-                    if let Some(discover) = &mut self.admin.discover {
-                        discover.loading = false;
-                        discover.error = Some(error);
-                    }
-                    return;
-                }
-                if let Tag::JoinedDiscoverable { guild } = tag {
-                    self.apply_chat(crate::chat::ChatAction::OpenUrl(format!(
-                        "https://discord.com/channels/{guild}"
-                    )));
-                    return;
-                }
                 if let Tag::Joined { code } = &tag
                     && error.to_lowercase().contains("captcha")
                 {
@@ -842,21 +745,6 @@ impl App {
                 }
             }
             Tag::Presence => self.admin.modal = None,
-            Tag::Discover => {
-                if let Some(discover) = &mut self.admin.discover {
-                    discover.loading = false;
-                    let list = value["guilds"].as_array().or(value.as_array());
-                    discover.guilds = list
-                        .into_iter()
-                        .flatten()
-                        .filter_map(discover_guild)
-                        .collect();
-                }
-            }
-            Tag::JoinedDiscoverable { guild } => {
-                self.admin.discover = None;
-                self.open_guild_when_ready(guild);
-            }
             Tag::GuildCreated => {
                 self.admin.modal = None;
                 if let Some(id) = crate::discord::parse::id(&value["id"]) {

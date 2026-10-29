@@ -886,20 +886,11 @@ impl App {
                     self.screen = Screen::Connecting;
                     self.backend.send(Command::Logout);
                 }
-                Action::GoHome => {
-                    self.admin.discover = None;
-                    self.go_home();
-                }
-                Action::OpenServer(id) => {
-                    self.admin.discover = None;
-                    self.open_server(id);
-                }
+                Action::GoHome => self.go_home(),
+                Action::OpenServer(id) => self.open_server(id),
                 Action::Back => self.step(true),
                 Action::Forward => self.step(false),
-                Action::OpenChannel(id) => {
-                    self.admin.discover = None;
-                    self.open_channel(id);
-                }
+                Action::OpenChannel(id) => self.open_channel(id),
                 Action::ToggleCategory(id) => {
                     if !self.collapsed.remove(&id) {
                         self.collapsed.insert(id);
