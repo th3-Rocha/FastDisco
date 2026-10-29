@@ -209,7 +209,7 @@ everything Discord's desktop app does.
 - [x] User settings, as Discord's
 - [x] Profiles, notes, mutual servers and friends
 - [x] Editing display name and bio
-- [x] Light and dark themes, following the Omarchy theme; the dark one is Discord's grey theme from its 2025 redesign, with its 40 px server icons
+- [x] Light and dark themes, following the Omarchy theme; the dark one is Discord's grey theme from its 2025 redesign, with its server icons as large and its rail as narrow as Discord's, the Discofast snout (white and blurple) on the direct messages tile, and folders without the call or event corner
 - [x] Colour themes, free: 22 gradients behind see-through surfaces, and "Personalize o seu tema" (dark or light, up to five colours on a saturation square and hue bar, intensity, "Surpreenda-me!"), kept in settings.json
 - [x] Discord's redesigned message box: "+" (file, poll, voice message, apps), gift, emoji (with the GIF and sticker tabs) and apps; today's messages show only the time
 - [x] Zoom and accessibility switches

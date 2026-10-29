@@ -251,7 +251,7 @@ const fn rgb(hex: u32) -> Color32 {
     Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }
 
-pub const RAIL_WIDTH: f32 = 72.0;
+pub const RAIL_WIDTH: f32 = 70.0;
 pub const SIDEBAR_WIDTH: f32 = 240.0;
 /// How narrow and how wide the channel list can be dragged.
 pub const SIDEBAR_RANGE: std::ops::RangeInclusive<f32> = 200.0..=440.0;

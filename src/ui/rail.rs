@@ -15,8 +15,8 @@ use crate::nav::NavAction;
 use crate::theme::RAIL_WIDTH;
 
 /// Discord's server icons since its 2025 redesign.
-const ICON: f32 = 40.0;
-const GAP: f32 = 8.0;
+const ICON: f32 = 44.0;
+const GAP: f32 = 7.0;
 
 pub fn show(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
@@ -60,8 +60,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         |ui, rect, lit| {
                             let fill = if lit { palette.accent } else { palette.chat };
                             ui.painter().rect_filled(rect, radius(lit), fill);
-                            let tint = if lit { Color32::WHITE } else { palette.text };
-                            paint_icon(ui, Icon::Discord, rect.center(), 28.0, tint);
+                            let face = if lit { Color32::WHITE } else { palette.text };
+                            paint_snout(ui, rect.center(), 30.0, face, palette.accent);
                         },
                     );
                     if home.clicked() {
@@ -136,6 +136,33 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         });
 }
 
+/// The tooltip's text colour, Discord's near-white.
+const TOOLTIP_TEXT: Color32 = Color32::from_rgb(0xf0, 0xf0, 0xf1);
+
+/// How many servers a folder's tooltip names before "...".
+const FOLDER_NAMES: usize = 5;
+
+/// The Discofast snout, drawn: a face and two nostrils tilted outwards,
+/// `width` wide, as assets/icon.svg.
+fn paint_snout(ui: &Ui, center: egui::Pos2, width: f32, face: Color32, nostril: Color32) {
+    let unit = width / (2.0 * 236.0);
+    let ellipse = |cx: f32, rx: f32, ry: f32, tilt: f32| -> Vec<egui::Pos2> {
+        let (sin, cos) = tilt.to_radians().sin_cos();
+        (0..48)
+            .map(|i| {
+                let a = i as f32 / 48.0 * std::f32::consts::TAU;
+                let (x, y) = (rx * a.cos(), ry * a.sin());
+                center + vec2(cx + x * cos - y * sin, x * sin + y * cos) * unit
+            })
+            .collect()
+    };
+    let painter = ui.painter();
+    painter.add(Shape::convex_polygon(ellipse(0.0, 236.0, 184.0, 0.0), face, Stroke::NONE));
+    for (cx, tilt) in [(-80.0, -8.0), (80.0, 8.0)] {
+        painter.add(Shape::convex_polygon(ellipse(cx, 40.0, 70.0, tilt), nostril, Stroke::NONE));
+    }
+}
+
 /// The server being dragged, kept in egui's memory while the button is down.
 const DRAG: &str = "rail-drag";
 
@@ -172,20 +199,20 @@ fn servers(app: &mut App, ui: &mut Ui) {
             .map(|g| app.model.guild_unread(g))
             .fold((false, 0), |(u, m), (gu, gm)| (u || gu, m + gm));
         let inside = app.server().is_some_and(|s| folder.guilds.contains(&s));
+        // Its name, or its first servers' names and "...", as Discord's.
         let hint = folder.name.clone().unwrap_or_else(|| {
-            folder
+            let names: Vec<&str> = folder
                 .guilds
                 .iter()
                 .filter_map(|g| app.model.guild(*g))
                 .map(|g| g.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
+                .collect();
+            let mut text = names.iter().take(FOLDER_NAMES).copied().collect::<Vec<_>>().join(", ");
+            if names.len() > FOLDER_NAMES {
+                text.push_str(", ...");
+            }
+            text
         });
-        let folder_voice: Vec<Id> = folder
-            .guilds
-            .iter()
-            .flat_map(|g| in_voice(app, *g))
-            .collect();
         let color = folder_color(folder.color);
         let head = item(
             ui,
@@ -194,13 +221,10 @@ fn servers(app: &mut App, ui: &mut Ui) {
             unread && !open,
             if open { 0 } else { mentions },
             &hint,
-            &if open { Vec::new() } else { folder_voice },
-            !open
-                && folder
-                    .guilds
-                    .iter()
-                    .filter_map(|g| app.model.guild(*g))
-                    .any(|g| !g.events.is_empty()),
+            // A folder shows neither the call nor the event corner, as
+            // Discord's: those are on its servers once it is open.
+            &[],
+            false,
             |ui, rect, _| {
                 if open {
                     paint_icon(ui, Icon::Folder, rect.center(), 24.0, color);
@@ -209,10 +233,10 @@ fn servers(app: &mut App, ui: &mut Ui) {
                 ui.painter()
                     .rect_filled(rect, CornerRadius::same(16), color.gamma_multiply(0.4));
                 for (i, guild) in folder.guilds.iter().take(4).enumerate() {
-                    let dx = if i % 2 == 0 { -10.0 } else { 10.0 };
-                    let dy = if i < 2 { -10.0 } else { 10.0 };
+                    let dx = if i % 2 == 0 { -11.0 } else { 11.0 };
+                    let dy = if i < 2 { -11.0 } else { 11.0 };
                     let mini =
-                        Rect::from_center_size(rect.center() + vec2(dx, dy), Vec2::splat(16.0));
+                        Rect::from_center_size(rect.center() + vec2(dx, dy), Vec2::splat(18.0));
                     if let Some(g) = app.model.guild(*guild) {
                         paint_guild(ui, app, g, mini, false);
                     }
@@ -470,7 +494,7 @@ fn drag(app: &App, ui: &mut Ui, slots: &[(Rect, Slot)], out: &mut Vec<Action>) {
 /// A circle that becomes a rounded square under the pointer or when chosen.
 fn radius(lit: bool) -> CornerRadius {
     // Discord's icons are rounded squares now, a little rounder at rest.
-    CornerRadius::same(if lit { 12 } else { 14 })
+    CornerRadius::same(if lit { 13 } else { 15 })
 }
 
 /// One rail slot with the pill on its left: a dot for unread, taller under
@@ -563,17 +587,32 @@ fn in_voice(app: &App, guild: Id) -> Vec<Id> {
 }
 
 /// "Rust Brasil" is "RB", as the rail shows a server without an icon.
+/// Discord's own rule: each run of ASCII letters, digits and _ becomes
+/// its first character, anything else (accents, symbols) stays, and the
+/// spaces go; "'s " counts as a space.
 fn acronym(name: &str) -> String {
-    name.split_whitespace()
-        .filter_map(|word| word.chars().next())
-        .take(5)
-        .collect()
+    let name = name.replace("'s ", " ");
+    let mut out = String::new();
+    let mut in_word = false;
+    for c in name.chars() {
+        let word = c.is_ascii_alphanumeric() || c == '_';
+        if word && !in_word {
+            out.push(c);
+        } else if !word && !c.is_whitespace() {
+            out.push(c);
+        }
+        in_word = word;
+    }
+    out
 }
 
-/// Discord's tooltip beside the rail: the name in a dark bubble to the
-/// right, pointing at the icon.
+
+/// Discord's tooltip beside the rail: the name in a grey bubble with a
+/// thin border to the right, pointing at the icon.
 fn rail_tooltip(ui: &Ui, app: &App, icon: Rect, text: &str, voice: &[Id]) {
-    let floating = Color32::from_rgb(0x11, 0x12, 0x14);
+    // Discord's 2025 floating surface and its edge.
+    let floating = Color32::from_rgb(0x39, 0x3a, 0x41);
+    let edge = Color32::from_rgb(0x43, 0x45, 0x4c);
     let at = egui::pos2(icon.right() + 14.0, icon.center().y);
     egui::Area::new(egui::Id::new("rail-tooltip"))
         .order(egui::Order::Tooltip)
@@ -583,7 +622,8 @@ fn rail_tooltip(ui: &Ui, app: &App, icon: Rect, text: &str, voice: &[Id]) {
         .show(ui.ctx(), |ui| {
             let frame = egui::Frame::new()
                 .fill(floating)
-                .corner_radius(CornerRadius::same(6))
+                .stroke(Stroke::new(1.0, edge))
+                .corner_radius(CornerRadius::same(8))
                 .inner_margin(egui::Margin::symmetric(12, 8))
                 .show(ui, |ui| {
                     // Laid out at Discord's widest, breaking between words:
@@ -591,27 +631,30 @@ fn rail_tooltip(ui: &Ui, app: &App, icon: Rect, text: &str, voice: &[Id]) {
                     // every letter.
                     let galley = ui.painter().layout(
                         super::widgets::hyphens(text).into_owned(),
-                        font(Weight::SemiBold, 16.0),
-                        Color32::WHITE,
+                        font(Weight::SemiBold, 15.0),
+                        TOOLTIP_TEXT,
                         196.0,
                     );
                     let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
-                    ui.painter().galley(rect.min, galley, Color32::WHITE);
+                    ui.painter().galley(rect.min, galley, TOOLTIP_TEXT);
                     if !voice.is_empty() {
                         voice_row(ui, app, voice, floating);
                     }
                 });
             let r = frame.response.rect;
-            let tip = [
+            // The arrow, its two outer sides in the border's colour.
+            let (tip, top, bottom) = (
                 egui::pos2(r.left() - 5.0, r.center().y),
-                egui::pos2(r.left(), r.center().y - 5.0),
-                egui::pos2(r.left(), r.center().y + 5.0),
-            ];
+                egui::pos2(r.left() + 0.5, r.center().y - 5.0),
+                egui::pos2(r.left() + 0.5, r.center().y + 5.0),
+            );
             ui.painter().add(egui::Shape::convex_polygon(
-                tip.to_vec(),
+                vec![tip, top, bottom],
                 floating,
                 egui::Stroke::NONE,
             ));
+            ui.painter()
+                .add(egui::Shape::line(vec![top, tip, bottom], Stroke::new(1.0, edge)));
         });
 }
 
@@ -653,5 +696,16 @@ fn voice_row(ui: &mut Ui, app: &App, voice: &[Id], behind: Color32) {
             font(Weight::SemiBold, 11.0),
             app.palette.strong,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn acronyms_follow_discord() {
+        assert_eq!(super::acronym("Rust Brasil"), "RB");
+        assert_eq!(super::acronym("Dós d rên"), "Dósdrên");
+        assert_eq!(super::acronym("Bob's Place"), "BP");
+        assert_eq!(super::acronym("C++ Devs"), "C++D");
     }
 }
