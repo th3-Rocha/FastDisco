@@ -157,6 +157,8 @@ pub enum Action {
     Threads(crate::threads::ThreadAction),
     /// A server's scheduled events.
     Events(crate::events::EventAction),
+    /// Permissions, channels, pictures, emoji, AutoMod and timeouts.
+    Manage(crate::manage::ManageAction),
     /// Looks for a newer Discofast now.
     CheckUpdate,
     /// Restarts into the downloaded update.
@@ -233,6 +235,7 @@ pub struct App {
     pub interact: crate::interact::Interact,
     pub threads: crate::threads::Threads,
     pub events: crate::events::Events,
+    pub manage: crate::manage::Manage,
     /// The spell checker, once its dictionaries are loaded.
     pub speller: Option<std::sync::Arc<crate::spell::Speller>>,
     /// The voice call the user is in.
@@ -317,6 +320,7 @@ impl App {
             interact: crate::interact::Interact::default(),
             threads: crate::threads::Threads::default(),
             events: crate::events::Events::default(),
+            manage: crate::manage::Manage::default(),
             speller: None,
             call: None,
             mic_test: None,
@@ -705,6 +709,7 @@ impl App {
                     crate::backend::Tag::Interact(tag) => self.interact_result(tag, result),
                     crate::backend::Tag::Threads(tag) => self.threads_result(tag, result),
                     crate::backend::Tag::Events(tag) => self.events_result(tag, result),
+                    crate::backend::Tag::Manage(tag) => self.manage_result(tag, result),
                 },
                 Event::Profile { user, profile } => {
                     self.chat.profiles.insert(
@@ -756,7 +761,7 @@ impl App {
                     }
                 }
                 Event::FilesPicked(paths) => self.apply_chat(ChatAction::AddFiles(paths)),
-                Event::IconPicked(path) => self.icon_picked(&path),
+                Event::IconPicked(path) => self.picture_picked(&path),
                 Event::Image {
                     url,
                     bytes,
@@ -969,6 +974,7 @@ impl App {
                 Action::Admin(action) => self.apply_admin(action),
                 Action::Threads(action) => self.apply_threads(action),
                 Action::Events(action) => self.apply_events(action),
+                Action::Manage(action) => self.apply_manage(action),
                 Action::Nav(action) => self.apply_nav(action),
                 Action::Interact(action) => self.apply_interact(action),
                 Action::SetNoiseSuppression(level) => {
@@ -1727,6 +1733,10 @@ impl App {
             | "MESSAGE_REACTION_REMOVE"
             | "MESSAGE_REACTION_REMOVE_ALL"
             | "TYPING_START" => self.chat_dispatch(kind, &data),
+            "GUILD_UPDATE" | "GUILD_ROLE_CREATE" | "GUILD_ROLE_UPDATE" | "GUILD_ROLE_DELETE"
+            | "GUILD_EMOJIS_UPDATE" | "GUILD_STICKERS_UPDATE" | "GUILD_MEMBER_UPDATE" => {
+                self.guild_dispatch(kind, &data)
+            }
             "THREAD_CREATE" | "THREAD_UPDATE" | "THREAD_DELETE" | "THREAD_LIST_SYNC"
             | "THREAD_MEMBER_UPDATE" | "THREAD_MEMBERS_UPDATE" => self.thread_dispatch(kind, &data),
             "SESSIONS_REPLACE" => {

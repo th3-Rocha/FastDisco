@@ -13,6 +13,7 @@ mod folders;
 mod icons;
 mod interact;
 mod login;
+mod manage;
 mod markdown;
 mod media;
 mod migrate;

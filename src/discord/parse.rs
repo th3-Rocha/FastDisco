@@ -181,6 +181,8 @@ pub fn channel(value: &Value, guild: Option<Id>) -> Option<Channel> {
             .as_str()
             .map(|hash| format!("{CDN}/channel-icons/{id}/{hash}.png?size=96")),
         stage_topic: None,
+        slowmode: value["rate_limit_per_user"].as_u64().unwrap_or(0) as u32,
+        nsfw: value["nsfw"].as_bool().unwrap_or(false),
         thread: (kind == ChannelKind::Thread).then(|| thread_meta(value)),
         tags: value["available_tags"]
             .as_array()
@@ -228,7 +230,7 @@ pub fn voice_start(value: &Value) -> Option<u64> {
     .filter(|t| *t > 0)
 }
 
-fn role(value: &Value) -> Option<Role> {
+pub fn role(value: &Value) -> Option<Role> {
     let color = value["color"].as_u64().unwrap_or(0);
     Some(Role {
         id: id(&value["id"])?,
@@ -282,6 +284,9 @@ pub fn guild(value: &Value, model: &mut Model) -> Option<Guild> {
         icon: properties["icon"]
             .as_str()
             .map(|hash| format!("{CDN}/icons/{id}/{hash}.png?size=96")),
+        banner: properties["banner"]
+            .as_str()
+            .map(|hash| format!("{CDN}/banners/{id}/{hash}.png?size=480")),
         owner: self::id(&properties["owner_id"]).unwrap_or(0),
         roles,
         channels,
@@ -663,6 +668,14 @@ fn reaction(value: &Value) -> Option<Reaction> {
         count: value["count"].as_u64().unwrap_or(1) as u32,
         me: value["me"].as_bool().unwrap_or(false),
     })
+}
+
+/// A server's emoji list.
+pub fn emojis(value: &Value) -> Vec<CustomEmoji> {
+    value
+        .as_array()
+        .map(|l| l.iter().filter_map(custom_emoji).collect())
+        .unwrap_or_default()
 }
 
 fn custom_emoji(value: &Value) -> Option<CustomEmoji> {

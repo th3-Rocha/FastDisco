@@ -93,6 +93,10 @@ pub enum GuildPage {
     Invites,
     Bans,
     Audit,
+    Stickers,
+    AutoMod,
+    /// The channel in `Manage::channel`.
+    Channel,
 }
 
 /// A dialog over the window.
@@ -155,6 +159,14 @@ pub enum Modal {
     Ban {
         guild: Id,
         user: Id,
+        /// How much of their recent history goes too, in seconds.
+        history: u64,
+    },
+    /// "Castigo": how long they cannot talk.
+    Timeout {
+        guild: Id,
+        user: Id,
+        minutes: u32,
     },
     DeleteGuild {
         guild: Id,
@@ -513,7 +525,9 @@ impl App {
                 }
                 self.admin.modal = Some(modal);
             }
-            AdminAction::PickIcon => self.backend().send(Command::PickIcon),
+            AdminAction::PickIcon => self.apply_manage(crate::manage::ManageAction::PickImage(
+                crate::manage::Picking::NewGuild,
+            )),
             AdminAction::SetUserSettings(patch) => {
                 if let (Some(store), Some(changes)) =
                     (self.model.account.settings.as_object_mut(), patch.as_object())
@@ -624,6 +638,9 @@ impl App {
                         format!("/guilds/{guild}/bans?limit=1000"),
                         None,
                     ),
+                    GuildPage::AutoMod => {
+                        self.apply_manage(crate::manage::ManageAction::LoadAutoMod)
+                    }
                     GuildPage::Audit => self.api(
                         Tag::Audit { guild },
                         Method::GET,
@@ -662,6 +679,7 @@ impl App {
                     settings.role_color = r
                         .color
                         .map_or([0x99, 0xaa, 0xb5], |c| [c.r(), c.g(), c.b()]);
+                    self.manage.role_permissions = r.permissions;
                     settings.message = None;
                 }
             }
@@ -672,7 +690,11 @@ impl App {
                 let Some(role) = settings.role else { return };
                 let [r, g, b] = settings.role_color;
                 let color = (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
-                let body = json!({ "name": settings.role_name.trim(), "color": color });
+                let body = json!({
+                    "name": settings.role_name.trim(),
+                    "color": color,
+                    "permissions": self.manage.role_permissions.to_string(),
+                });
                 self.api(
                     Tag::RoleSaved,
                     Method::PATCH,
@@ -704,25 +726,9 @@ impl App {
 
     /// The new server's icon, as the data URI Discord takes.
     pub fn icon_picked(&mut self, path: &std::path::Path) {
-        use base64::Engine;
-        let Ok(bytes) = std::fs::read(path) else {
+        let Some(uri) = crate::manage::data_uri(path) else {
             return;
         };
-        let kind = match path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref()
-        {
-            Some("jpg" | "jpeg") => "jpeg",
-            Some("gif") => "gif",
-            Some("webp") => "webp",
-            _ => "png",
-        };
-        let uri = format!(
-            "data:image/{kind};base64,{}",
-            base64::engine::general_purpose::STANDARD.encode(bytes)
-        );
         if let Some(Modal::CreateGuild { icon, .. }) = &mut self.admin.modal {
             *icon = Some(uri);
         }
@@ -937,13 +943,29 @@ impl App {
                     None,
                 );
             }
-            Modal::Ban { guild, user } => {
+            Modal::Ban {
+                guild,
+                user,
+                history,
+            } => {
                 self.api(
                     Tag::Removed { user },
                     Method::PUT,
                     format!("/guilds/{guild}/bans/{user}"),
-                    Some(json!({ "delete_message_seconds": 0 })),
+                    Some(json!({ "delete_message_seconds": history })),
                 );
+            }
+            Modal::Timeout {
+                guild,
+                user,
+                minutes,
+            } => {
+                self.admin.busy = false;
+                self.apply_manage(crate::manage::ManageAction::Timeout {
+                    guild,
+                    user,
+                    minutes,
+                });
             }
             Modal::DeleteGuild { guild, typed } => {
                 let name = self

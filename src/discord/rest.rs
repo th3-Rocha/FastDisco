@@ -465,6 +465,43 @@ pub async fn call(
     }
 }
 
+/// A multipart call, for what Discord takes as a form: a sticker's
+/// fields and its file.
+pub async fn form(
+    client: &reqwest::Client,
+    token: &str,
+    path: &str,
+    fields: Vec<(String, String)>,
+    file: std::path::PathBuf,
+) -> Result<Value, String> {
+    let bytes = tokio::fs::read(&file).await.map_err(|e| e.to_string())?;
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".into());
+    let mut form = reqwest::multipart::Form::new();
+    for (key, value) in fields {
+        form = form.text(key, value);
+    }
+    form = form.part("file", reqwest::multipart::Part::bytes(bytes).file_name(name));
+    let response = client
+        .post(format!("{API}{path}"))
+        .header("Authorization", token)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = response.status();
+    let value: Value = response.json().await.unwrap_or(Value::Null);
+    if status.is_success() {
+        Ok(value)
+    } else {
+        Err(value["message"]
+            .as_str()
+            .map_or_else(|| status.to_string(), str::to_owned))
+    }
+}
+
 /// A voice message to send: the OGG file and what Discord's player shows.
 #[derive(Clone, Debug)]
 pub struct Voice {

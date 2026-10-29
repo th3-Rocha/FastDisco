@@ -581,15 +581,12 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
             response.on_hover_text(hint).clicked()
         };
         let settings = guild.is_some_and(|g| {
-            app.model.can(g, crate::model::permission::MANAGE_GUILD)
+            app.model.can(g, crate::model::permission::MANAGE_CHANNELS)
         });
-        // The gear only for who can change the server, as Discord.
-        if settings
-            && button(Icon::Settings, "Editar canal")
-            && let Some(guild) = guild
-        {
+        // The gear only for who can change channels, as Discord.
+        if settings && button(Icon::Settings, "Editar canal") {
             app.actions
-                .push(Action::Admin(crate::admin::AdminAction::OpenSettings(guild)));
+                .push(Action::Manage(crate::manage::ManageAction::OpenChannel(id)));
         }
         if !matches!(channel.kind, ChannelKind::Thread | ChannelKind::Category)
             && button(Icon::UserPlus, "Criar convite")

@@ -10,6 +10,7 @@ mod customizer;
 mod events;
 mod friends;
 mod login;
+mod manage;
 mod message;
 mod nav;
 pub mod overlay;

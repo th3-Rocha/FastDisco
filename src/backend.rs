@@ -22,6 +22,7 @@ pub enum Tag {
     Interact(crate::interact::Tag),
     Threads(crate::threads::Tag),
     Events(crate::events::Tag),
+    Manage(crate::manage::Tag),
 }
 
 #[derive(Debug)]
@@ -124,6 +125,13 @@ pub enum Command {
     PickFiles,
     /// A picture for a new server's icon.
     PickIcon,
+    /// A multipart API call with a file; the reply comes back tagged.
+    ApiForm {
+        tag: Tag,
+        path: String,
+        fields: Vec<(String, String)>,
+        file: std::path::PathBuf,
+    },
     Ack {
         channel: u64,
         message: u64,
@@ -592,6 +600,17 @@ impl Worker {
                     let _ = events.send(Event::Api { tag, result });
                 });
             }
+            Command::ApiForm {
+                tag,
+                path,
+                fields,
+                file,
+            } => {
+                self.spawn(move |client, token, events| async move {
+                    let result = rest::form(&client, &token, &path, fields, file).await;
+                    let _ = events.send(Event::Api { tag, result });
+                });
+            }
             Command::Profile { user, guild } => {
                 self.spawn(move |client, token, events| async move {
                     let (profile, note) = tokio::join!(
@@ -692,8 +711,8 @@ impl Worker {
                 let (events, ctx) = (self.events.clone(), self.ctx.clone());
                 tokio::spawn(async move {
                     let picked = rfd::AsyncFileDialog::new()
-                        .set_title("Escolher ícone")
-                        .add_filter("Imagens", &["png", "jpg", "jpeg", "gif", "webp"])
+                        .set_title("Escolher imagem")
+                        .add_filter("Imagens", &["png", "jpg", "jpeg", "gif", "webp", "apng", "json"])
                         .pick_file()
                         .await;
                     if let Some(file) = picked {

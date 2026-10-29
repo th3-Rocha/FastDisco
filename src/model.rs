@@ -292,6 +292,10 @@ pub struct Channel {
     pub icon: Option<String>,
     /// A stage's topic while it is live.
     pub stage_topic: Option<String>,
+    /// Seconds between messages, for those who cannot skip it.
+    pub slowmode: u32,
+    /// Only adults may enter.
+    pub nsfw: bool,
     /// A thread's or a forum post's details.
     pub thread: Option<ThreadMeta>,
     /// A forum's tags.
@@ -684,6 +688,7 @@ pub struct Guild {
     pub id: Id,
     pub name: String,
     pub icon: Option<String>,
+    pub banner: Option<String>,
     pub owner: Id,
     /// Highest position first.
     pub roles: Vec<Role>,
@@ -825,6 +830,68 @@ pub mod permission {
     pub const MANAGE_EMOJIS: u64 = 1 << 30;
     pub const MANAGE_EVENTS: u64 = 1 << 33;
     pub const MANAGE_THREADS: u64 = 1 << 34;
+    pub const MANAGE_MESSAGES: u64 = 1 << 13;
+    pub const MODERATE_MEMBERS: u64 = 1 << 40;
+
+    /// Every permission the role and channel editors offer, in Discord's
+    /// groups: the bit, its name and what it allows.
+    pub const ALL: &[(&str, &[(u64, &str, &str)])] = &[
+        ("PERMISSÕES GERAIS DO SERVIDOR", &[
+            (1 << 10, "Ver canais", "Permite ver os canais (exceto os privados)."),
+            (1 << 4, "Gerenciar canais", "Permite criar, editar e excluir canais."),
+            (1 << 28, "Gerenciar cargos", "Permite criar cargos e editar os que estão abaixo do seu."),
+            (1 << 30, "Gerenciar expressões", "Permite adicionar e remover emojis, figurinhas e sons."),
+            (1 << 7, "Ver registro de auditoria", "Permite ver as alterações feitas no servidor."),
+            (1 << 29, "Gerenciar webhooks", "Permite criar, editar e excluir webhooks."),
+            (1 << 5, "Gerenciar servidor", "Permite mudar o nome, a região e o ícone do servidor."),
+        ]),
+        ("PERMISSÕES DE MEMBROS", &[
+            (1 << 0, "Criar convite", "Permite convidar pessoas para o servidor."),
+            (1 << 26, "Alterar apelido", "Permite mudar o próprio apelido."),
+            (1 << 27, "Gerenciar apelidos", "Permite mudar o apelido de outros membros."),
+            (1 << 1, "Expulsar membros", "Permite remover membros do servidor."),
+            (1 << 2, "Banir membros", "Permite banir membros e apagar o histórico deles."),
+            (1 << 40, "Castigar membros", "Permite impedir temporariamente que alguém converse."),
+        ]),
+        ("PERMISSÕES DE CANAIS DE TEXTO", &[
+            (1 << 11, "Enviar mensagens", "Permite enviar mensagens nos canais de texto."),
+            (1 << 38, "Enviar mensagens em tópicos", "Permite enviar mensagens em tópicos."),
+            (1 << 35, "Criar tópicos públicos", "Permite criar tópicos que todos no canal veem."),
+            (1 << 36, "Criar tópicos privados", "Permite criar tópicos só para convidados."),
+            (1 << 14, "Inserir links", "Permite que os links mostrem uma prévia."),
+            (1 << 15, "Anexar arquivos", "Permite enviar arquivos e mídia."),
+            (1 << 6, "Adicionar reações", "Permite adicionar novas reações às mensagens."),
+            (1 << 18, "Usar emojis externos", "Permite usar emojis de outros servidores."),
+            (1 << 37, "Usar figurinhas externas", "Permite usar figurinhas de outros servidores."),
+            (1 << 17, "Mencionar @everyone, @here e todos os cargos", "Permite notificar todos de uma vez."),
+            (1 << 13, "Gerenciar mensagens", "Permite apagar e fixar mensagens de outros membros."),
+            (1 << 34, "Gerenciar tópicos", "Permite renomear, fechar e trancar tópicos."),
+            (1 << 16, "Ver histórico de mensagens", "Permite ler as mensagens enviadas antes."),
+            (1 << 12, "Enviar mensagens em texto-para-voz", "Permite usar /tts."),
+            (1 << 31, "Usar comandos de aplicativos", "Permite usar comandos de barra e de contexto."),
+            (1 << 46, "Enviar mensagens de voz", "Permite enviar mensagens de voz."),
+            (1 << 49, "Criar enquetes", "Permite criar enquetes."),
+        ]),
+        ("PERMISSÕES DE CANAIS DE VOZ", &[
+            (1 << 20, "Conectar", "Permite entrar nos canais de voz."),
+            (1 << 21, "Falar", "Permite falar nos canais de voz."),
+            (1 << 9, "Vídeo", "Permite compartilhar vídeo e a tela."),
+            (1 << 25, "Usar detecção de voz", "Sem ela, só o aperte para falar funciona."),
+            (1 << 8, "Voz prioritária", "Abaixa os outros quando esta pessoa fala."),
+            (1 << 42, "Usar a soundboard", "Permite tocar sons da soundboard."),
+            (1 << 22, "Silenciar membros", "Permite silenciar outros membros na voz."),
+            (1 << 23, "Ensurdecer membros", "Permite ensurdecer outros membros na voz."),
+            (1 << 24, "Mover membros", "Permite mover e desconectar membros da voz."),
+            (1 << 32, "Pedir para falar", "Permite pedir para falar em palcos."),
+        ]),
+        ("PERMISSÕES DE EVENTOS", &[
+            (1 << 44, "Criar eventos", "Permite criar eventos."),
+            (1 << 33, "Gerenciar eventos", "Permite editar e cancelar eventos de outros."),
+        ]),
+        ("PERMISSÕES AVANÇADAS", &[
+            (1 << 3, "Administrador", "Todas as permissões, ignorando as dos canais. Conceda com cuidado."),
+        ]),
+    ];
 }
 
 impl Model {

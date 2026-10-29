@@ -296,7 +296,11 @@ fn member_menu(
                 ui.close();
             }
             if ban && menu_item(ui, &palette, &format!("Banir {name}"), palette.danger).clicked() {
-                chosen.push(Action::Admin(AdminAction::Open(Modal::Ban { guild, user })));
+                chosen.push(Action::Admin(AdminAction::Open(Modal::Ban {
+                    guild,
+                    user,
+                    history: 0,
+                })));
                 ui.close();
             }
         }

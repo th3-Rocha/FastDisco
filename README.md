@@ -191,12 +191,12 @@ everything Discord's desktop app does.
 
 - [x] Server menu: invite, create channel and category, server nickname, leave
 - [x] Server settings: overview, roles (name and colour), emoji, members (kick and ban), invites, bans, audit log, deleting the server
-- [ ] Role permissions and channel permission overwrites
-- [ ] Uploading server icons, banners, emoji and stickers
-- [ ] Creating and joining servers from the rail
+- [x] Role permissions (creating and deleting roles too) and a channel's settings with its permission overwrites
+- [x] Uploading server icons, banners, emoji and stickers
+- [x] Creating and joining servers from the rail
 - [ ] Server discovery
 - [ ] Onboarding and rules screening
-- [ ] AutoMod and moderation tools (timeouts, bulk delete)
+- [x] AutoMod rules (list, switch, delete, block words) and moderation: timeouts, bans that delete recent messages
 
 ### Profile and settings
 

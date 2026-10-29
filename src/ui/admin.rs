@@ -203,6 +203,7 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
         Modal::Leave { .. } => ("Sair do servidor", "Sair do servidor", true),
         Modal::Kick { .. } => ("Expulsar membro", "Expulsar", true),
         Modal::Ban { .. } => ("Banir membro", "Banir", true),
+        Modal::Timeout { .. } => ("Castigar membro", "Castigar", true),
         Modal::DeleteGuild { .. } => ("Excluir servidor", "Excluir servidor", true),
     };
     let response = egui::Modal::new(egui::Id::new("admin-modal"))
@@ -353,10 +354,57 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
                         let name = app.model.guild(guild).map(|g| g.name.clone()).unwrap_or_default();
                         ui.label(RichText::new(format!("Tem certeza que deseja sair de {name}? Você não poderá voltar a menos que seja convidado de novo.")).color(palette.text));
                     }
-                    Modal::Kick { guild, user } | Modal::Ban { guild, user } => {
+                    Modal::Kick { guild, user } => {
                         let name = app.model.name_in(Some(guild), user);
-                        let verb = if matches!(modal, Modal::Ban { .. }) { "banir" } else { "expulsar" };
-                        ui.label(RichText::new(format!("Tem certeza que deseja {verb} {name} do servidor?")).color(palette.text));
+                        ui.label(RichText::new(format!("Tem certeza que deseja expulsar {name} do servidor?")).color(palette.text));
+                    }
+                    Modal::Ban { guild, user, mut history } => {
+                        let name = app.model.name_in(Some(guild), user);
+                        ui.label(RichText::new(format!("Tem certeza que deseja banir {name} do servidor?")).color(palette.text));
+                        ui.label(RichText::new("EXCLUIR HISTÓRICO DE MENSAGENS").font(font(Weight::Bold, 12.0)).color(palette.muted));
+                        let choices = [
+                            (0, "Não excluir nada"),
+                            (3_600, "Última hora"),
+                            (21_600, "Últimas 6 horas"),
+                            (43_200, "Últimas 12 horas"),
+                            (86_400, "Últimas 24 horas"),
+                            (259_200, "Últimos 3 dias"),
+                            (604_800, "Últimos 7 dias"),
+                        ];
+                        let before = history;
+                        egui::ComboBox::from_id_salt("ban-history")
+                            .selected_text(choices.iter().find(|c| c.0 == history).map_or("", |c| c.1))
+                            .width(ui.available_width())
+                            .show_ui(ui, |ui| {
+                                for (seconds, label) in choices {
+                                    ui.selectable_value(&mut history, seconds, label);
+                                }
+                            });
+                        if history != before {
+                            edited = Some(Modal::Ban { guild, user, history });
+                        }
+                    }
+                    Modal::Timeout { guild, user, mut minutes } => {
+                        let name = app.model.name_in(Some(guild), user);
+                        ui.label(RichText::new(format!("{name} não poderá enviar mensagens, reagir nem falar na voz durante o castigo.")).color(palette.text));
+                        ui.label(RichText::new("DURAÇÃO").font(font(Weight::Bold, 12.0)).color(palette.muted));
+                        let before = minutes;
+                        ui.horizontal_wrapped(|ui| {
+                            for (value, label) in [
+                                (1, "60 segundos"),
+                                (5, "5 minutos"),
+                                (10, "10 minutos"),
+                                (60, "1 hora"),
+                                (1_440, "1 dia"),
+                                (10_080, "1 semana"),
+                                (0, "Remover castigo"),
+                            ] {
+                                ui.selectable_value(&mut minutes, value, label);
+                            }
+                        });
+                        if minutes != before {
+                            edited = Some(Modal::Timeout { guild, user, minutes });
+                        }
                     }
                     Modal::DeleteGuild { guild, mut typed } => {
                         let name = app.model.guild(guild).map(|g| g.name.clone()).unwrap_or_default();
@@ -457,6 +505,7 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                         ),
                         (GuildPage::Roles, "Cargos", can(permission::MANAGE_ROLES)),
                         (GuildPage::Emoji, "Emoji", can(permission::MANAGE_EMOJIS)),
+                        (GuildPage::Stickers, "Figurinhas", can(permission::MANAGE_EMOJIS)),
                         (GuildPage::Members, "Membros", true),
                         (
                             GuildPage::Invites,
@@ -464,14 +513,21 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                             can(permission::MANAGE_GUILD),
                         ),
                         (GuildPage::Bans, "Banimentos", can(permission::BAN)),
+                        (GuildPage::AutoMod, "AutoMod", can(permission::MANAGE_GUILD)),
                         (
                             GuildPage::Audit,
                             "Registro de auditoria",
                             can(permission::VIEW_AUDIT_LOG),
                         ),
                     ];
+                    let channel_label = app
+                        .manage
+                        .channel
+                        .and_then(|c| app.model.channel(c))
+                        .map(|c| format!("# {}", c.name));
+                    let channel_page = (GuildPage::Channel, channel_label.as_deref().unwrap_or(""), channel_label.is_some());
                     let mut chosen = None;
-                    for (target, label, allowed) in pages {
+                    for (target, label, allowed) in pages.into_iter().chain([channel_page]) {
                         if !allowed {
                             continue;
                         }
@@ -559,6 +615,9 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                         GuildPage::Invites => invites(app, ui),
                         GuildPage::Bans => bans(app, ui),
                         GuildPage::Audit => audit(app, ui),
+                        GuildPage::Stickers => super::manage::stickers(app, ui, guild),
+                        GuildPage::AutoMod => super::manage::automod(app, ui),
+                        GuildPage::Channel => super::manage::channel(app, ui, guild),
                     }
                     if let Some(message) =
                         app.admin.settings.as_ref().and_then(|s| s.message.clone())
@@ -668,6 +727,7 @@ fn overview(app: &mut App, ui: &mut Ui) {
     });
     ui.add_space(12.0);
     save_button(app, ui, AdminAction::SaveGuild);
+    super::manage::pictures(app, ui, guild);
 }
 
 fn roles(app: &mut App, ui: &mut Ui) {
@@ -683,7 +743,18 @@ fn roles(app: &mut App, ui: &mut Ui) {
         .guild(guild)
         .map(|g| g.roles.clone())
         .unwrap_or_default();
-    ui.label(RichText::new("Use cargos para agrupar os membros e dar permissões. Clique em um cargo para editar o nome e a cor.").color(palette.muted));
+    ui.label(RichText::new("Use cargos para agrupar os membros e dar permissões. Clique em um cargo para editar o nome, a cor e as permissões.").color(palette.muted));
+    if ui
+        .add(
+            egui::Button::new(RichText::new("Criar cargo").color(Color32::WHITE))
+                .fill(palette.accent)
+                .corner_radius(CornerRadius::same(4)),
+        )
+        .clicked()
+    {
+        app.actions
+            .push(Action::Manage(crate::manage::ManageAction::CreateRole));
+    }
     let mut pick = None;
     for role in roles.iter().filter(|r| r.id != guild) {
         let (rect, response) =
@@ -743,6 +814,10 @@ fn roles(app: &mut App, ui: &mut Ui) {
             ui.color_edit_button_srgb(&mut settings.role_color);
         }
         save_button(app, ui, AdminAction::SaveRole);
+        if let Some(role) = selected {
+            super::manage::role_permissions(app, ui, role);
+            save_button(app, ui, AdminAction::SaveRole);
+        }
     }
 }
 
@@ -773,6 +848,7 @@ fn emoji(app: &mut App, ui: &mut Ui) {
             );
         });
     }
+    super::manage::emoji_upload(app, ui, guild);
 }
 
 fn members(app: &mut App, ui: &mut Ui) {
@@ -802,6 +878,7 @@ fn members(app: &mut App, ui: &mut Ui) {
         app.model.can(guild, permission::KICK),
         app.model.can(guild, permission::BAN),
     );
+    let moderate = app.model.can(guild, permission::MODERATE_MEMBERS);
     let mut chosen = None;
     for user in users {
         let Some(u) = app.model.user(user).cloned() else {
@@ -835,10 +912,13 @@ fn members(app: &mut App, ui: &mut Ui) {
                             .button(RichText::new("Banir").color(palette.danger))
                             .clicked()
                     {
-                        chosen = Some(Modal::Ban { guild, user });
+                        chosen = Some(Modal::Ban { guild, user, history: 0 });
                     }
                     if kick && ui.button("Expulsar").clicked() {
                         chosen = Some(Modal::Kick { guild, user });
+                    }
+                    if moderate && ui.button("Castigar").clicked() {
+                        chosen = Some(Modal::Timeout { guild, user, minutes: 60 });
                     }
                 });
             }
