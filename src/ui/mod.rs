@@ -6,6 +6,7 @@ mod bots;
 mod call;
 mod chat;
 mod composer;
+mod customizer;
 mod friends;
 mod login;
 mod message;
@@ -73,8 +74,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
             let window = ui.max_rect();
             // Behind the sidebar's rounded corner.
-            ui.painter()
-                .rect_filled(window, 0.0, app.palette.frame);
+            crate::theme::paint_backdrop(ui.painter(), window, app.palette.frame);
             titlebar::show(app, ui);
             titlebar::voice_taken(app, ui);
             rail::show(app, ui);
@@ -85,6 +85,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if settings_open {
                 settings::window(app, ui);
             }
+            customizer::show(app, ui);
             profile::popout(app, ui);
             sidebar::logout_dialog(app, ui);
             admin::modal(app, ui);

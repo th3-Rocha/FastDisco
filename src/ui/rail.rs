@@ -1,7 +1,7 @@
 //! The server rail: home, the servers, then adding a server.
 
 use egui::{
-    Align2, Color32, CornerRadius, Frame, Margin, Rect, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2,
+    Align2, Color32, CornerRadius, Frame, Rect, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2,
 };
 use fastframe_fonts::Weight;
 
@@ -24,14 +24,15 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         .resizable(false)
         .exact_size(RAIL_WIDTH)
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.frame).inner_margin(Margin::ZERO))
+        // The window behind is already the frame colour.
+        .frame(Frame::NONE)
         .show(ui, |ui| {
             // Room for the user's card, which spans the rail and sidebar.
             egui::Panel::bottom("rail-foot")
                 .resizable(false)
                 .exact_size(super::sidebar::card_space(app))
                 .show_separator_line(false)
-                .frame(Frame::new().fill(palette.frame))
+                .frame(Frame::NONE)
                 .show(ui, |_| {});
             egui::ScrollArea::vertical()
                 .id_salt("server-rail")

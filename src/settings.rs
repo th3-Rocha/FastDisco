@@ -21,6 +21,16 @@ pub enum Theme {
     File(String),
 }
 
+/// A gradient theme: one to five colours, over the dark or the light
+/// surfaces, at an intensity, as Discord's theme editor makes them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ColorTheme {
+    pub colors: Vec<[u8; 3]>,
+    pub light: bool,
+    /// 0 to 100: how much of the colour shows through.
+    pub intensity: u8,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -82,6 +92,10 @@ pub struct Settings {
     /// key; its secret is in the OS keyring. Empty is none.
     pub video_server: String,
     pub video_key: String,
+    /// A colour theme over the dark or light one: a gradient behind the
+    /// window, as Discord's Nitro themes, free here. None for the plain
+    /// theme.
+    pub color_theme: Option<ColorTheme>,
 }
 
 impl Default for Settings {
@@ -118,6 +132,7 @@ impl Default for Settings {
             local_mutes: BTreeSet::new(),
             video_server: String::new(),
             video_key: String::new(),
+            color_theme: None,
         }
     }
 }

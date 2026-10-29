@@ -109,8 +109,9 @@ impl Palette {
 
     /// Whether the background is dark, for egui's own widgets.
     pub fn is_dark(&self) -> bool {
-        let c = self.chat;
-        (u32::from(c.r()) * 299 + u32::from(c.g()) * 587 + u32::from(c.b()) * 114) / 1000 < 128
+        // Unmultiplied: a colour theme's surfaces are see-through.
+        let [r, g, b, _] = self.chat.to_srgba_unmultiplied();
+        (u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114) / 1000 < 128
     }
 }
 
@@ -258,3 +259,208 @@ pub const MEMBERS_WIDTH: f32 = 240.0;
 pub const HEADER_HEIGHT: f32 = 48.0;
 /// The strip across the top with the arrows, the place and the inbox.
 pub const TITLE_HEIGHT: f32 = 36.0;
+
+/// The colour themes offered, as Discord's grid: a name, light or dark,
+/// and the gradient's colours.
+pub const PRESETS: &[(&str, bool, &[u32])] = &[
+    ("Menta", true, &[0x9fd8a6, 0xc9e6b4]),
+    ("Pêssego", true, &[0xf5d38a, 0xf0a68a]),
+    ("Lavanda", true, &[0xa7b7e0, 0x9ec4c9]),
+    ("Limonada", true, &[0xd8ecc0, 0xf4d9b0]),
+    ("Rosa antigo", true, &[0xd59ab8, 0xd8c79b]),
+    ("Algodão-doce", true, &[0xf3c4d2, 0xc7cdf2]),
+    ("Céu", true, &[0xa9d6f0, 0xe6f0c4]),
+    ("Creme", true, &[0xf3edd8, 0xe3d6b8]),
+    ("Crepúsculo", false, &[0x3b2a7a, 0xb5652d]),
+    ("Neon", false, &[0x1d4fd8, 0xc026d3, 0x0ea5e9]),
+    ("Floresta", false, &[0x1e3b2a, 0x6b5a2e]),
+    ("Sangue", false, &[0x7a0d14, 0x1a0505]),
+    ("Meia-noite", false, &[0x2a2270, 0x0d0b1f]),
+    ("Tijolo", false, &[0x7a3b2e, 0x5a2e25]),
+    ("Névoa", false, &[0x4b5066, 0x8d8fa8]),
+    ("Musgo", false, &[0x3d5a4b, 0x6b7d6e]),
+    ("Oceano", false, &[0x2d4a78, 0x2f7a8a]),
+    ("Aurora", false, &[0x1aa39a, 0x7b3fa0]),
+    ("Pôr do sol", false, &[0xc81d6b, 0xe0a023]),
+    ("Nebulosa", false, &[0x0f5c8c, 0x2e9e6b, 0x1a2b6b]),
+    ("Areia", false, &[0x6b5a3c, 0x3a3226]),
+    ("Safira", false, &[0x1e2a8a, 0x3b4fd1]),
+];
+
+/// A preset as the settings keep it.
+pub fn preset(index: usize) -> Option<crate::settings::ColorTheme> {
+    let (_, light, colors) = PRESETS.get(index)?;
+    Some(crate::settings::ColorTheme {
+        colors: colors.iter().map(|c| [(c >> 16) as u8, (c >> 8) as u8, *c as u8]).collect(),
+        light: *light,
+        intensity: 74,
+    })
+}
+
+fn color(c: [u8; 3]) -> Color32 {
+    Color32::from_rgb(c[0], c[1], c[2])
+}
+
+/// The gradient behind the window: the theme's colours, darkened for a
+/// dark theme and lightened for a light one so text stays readable.
+pub fn backdrop(theme: &crate::settings::ColorTheme) -> Vec<Color32> {
+    let (toward, by) = if theme.light {
+        (Color32::WHITE, 0.25)
+    } else {
+        (Color32::BLACK, 0.45)
+    };
+    theme.colors.iter().map(|c| mix(color(*c), toward, by)).collect()
+}
+
+/// The dark or light palette tinted by a colour theme. The window's frame,
+/// the channel list and the conversation turn see-through, so the
+/// gradient painted behind shows; everything over them takes a little
+/// of the theme's colour.
+pub fn tinted(theme: &crate::settings::ColorTheme) -> Palette {
+    let mut p = if theme.light { Palette::light() } else { Palette::dark() };
+    let colors = backdrop(theme);
+    if colors.is_empty() {
+        return p;
+    }
+    let n = colors.len() as u32;
+    let sum = colors.iter().fold([0u32; 3], |a, c| {
+        [a[0] + u32::from(c.r()), a[1] + u32::from(c.g()), a[2] + u32::from(c.b())]
+    });
+    let average = Color32::from_rgb((sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8);
+    let t = f32::from(theme.intensity.min(100)) / 100.0;
+    for slot in [
+        &mut p.user_panel,
+        &mut p.composer,
+        &mut p.hover,
+        &mut p.selected,
+        &mut p.rail,
+        &mut p.message_hover,
+        &mut p.divider,
+    ] {
+        *slot = mix(*slot, average, t * 0.3);
+    }
+    // Solid, for menus and dialogs; `region` makes the big areas see-through.
+    for slot in [&mut p.frame, &mut p.sidebar, &mut p.chat] {
+        *slot = mix(*slot, average, t * 0.35);
+    }
+    p
+}
+
+/// How see-through the big areas are: 0 without a colour theme.
+static SEE_THROUGH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// One of the window's big areas, which a colour theme's gradient shows
+/// through.
+#[derive(Clone, Copy)]
+pub enum Region {
+    /// The title bar and the server rail.
+    Frame,
+    Sidebar,
+    Chat,
+}
+
+/// `fill` for a big area: see-through over the gradient under a colour
+/// theme, as it is otherwise.
+pub fn region(fill: Color32, region: Region) -> Color32 {
+    let t = f32::from_bits(SEE_THROUGH.load(std::sync::atomic::Ordering::Relaxed));
+    if t <= 0.0 {
+        return fill;
+    }
+    let clear = match region {
+        Region::Frame => 0.8,
+        Region::Sidebar => 0.65,
+        Region::Chat => 0.6,
+    };
+    let [r, g, b, _] = fill.to_srgba_unmultiplied();
+    Color32::from_rgba_unmultiplied(r, g, b, ((1.0 - clear * t) * 255.0) as u8)
+}
+
+static BACKDROP: std::sync::RwLock<Vec<Color32>> = std::sync::RwLock::new(Vec::new());
+
+/// The gradient `paint_backdrop` draws; empty for a plain theme.
+pub fn set_backdrop(colors: Vec<Color32>, intensity: u8) {
+    let t = if colors.is_empty() { 0.0 } else { f32::from(intensity.min(100)) / 100.0 };
+    SEE_THROUGH.store(f32::to_bits(t), std::sync::atomic::Ordering::Relaxed);
+    let mut current = BACKDROP.write().unwrap_or_else(|e| e.into_inner());
+    if *current != colors {
+        *current = colors;
+    }
+}
+
+/// The colour at `t` (0 to 1) along a gradient's stops.
+pub fn sample(colors: &[Color32], t: f32) -> Color32 {
+    match colors.len() {
+        0 => Color32::TRANSPARENT,
+        1 => colors[0],
+        n => {
+            let x = t.clamp(0.0, 1.0) * (n - 1) as f32;
+            let i = (x as usize).min(n - 2);
+            mix(colors[i], colors[i + 1], x - i as f32)
+        }
+    }
+}
+
+/// Paints a diagonal gradient over `rect`, top left to bottom right, with
+/// rounded corners of `corner`.
+pub fn paint_gradient(painter: &egui::Painter, rect: egui::Rect, colors: &[Color32], corner: f32) {
+    let at = |pos: egui::Pos2| {
+        let u = (pos.x - rect.left()) / rect.width().max(1.0);
+        let v = (pos.y - rect.top()) / rect.height().max(1.0);
+        sample(colors, u * 0.6 + v * 0.4)
+    };
+    let mut mesh = egui::Mesh::default();
+    if corner <= 0.0 {
+        const STEPS: u32 = 16;
+        for row in 0..=STEPS {
+            for column in 0..=STEPS {
+                let pos = rect.lerp_inside(egui::vec2(
+                    column as f32 / STEPS as f32,
+                    row as f32 / STEPS as f32,
+                ));
+                mesh.colored_vertex(pos, at(pos));
+            }
+        }
+        let w = STEPS + 1;
+        for row in 0..STEPS {
+            for column in 0..STEPS {
+                let i = row * w + column;
+                mesh.add_triangle(i, i + 1, i + w);
+                mesh.add_triangle(i + 1, i + w + 1, i + w);
+            }
+        }
+    } else {
+        // A fan from the centre over the rounded outline: the gradient is
+        // linear in position, so the triangles carry it exactly.
+        let r = corner.min(rect.width() / 2.0).min(rect.height() / 2.0);
+        let corners = [
+            (rect.right_bottom() + egui::vec2(-r, -r), 0.0f32),
+            (rect.left_bottom() + egui::vec2(r, -r), 90.0),
+            (rect.left_top() + egui::vec2(r, r), 180.0),
+            (rect.right_top() + egui::vec2(-r, r), 270.0),
+        ];
+        mesh.colored_vertex(rect.center(), at(rect.center()));
+        for (center, start) in corners {
+            for step in 0..=6 {
+                let angle = (start + step as f32 * 15.0).to_radians();
+                let pos = center + egui::vec2(angle.cos(), angle.sin()) * r;
+                mesh.colored_vertex(pos, at(pos));
+            }
+        }
+        let n = mesh.vertices.len() as u32 - 1;
+        for i in 1..=n {
+            mesh.add_triangle(0, i, if i == n { 1 } else { i + 1 });
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// The window's background: the colour theme's gradient, or `fill`.
+pub fn paint_backdrop(painter: &egui::Painter, rect: egui::Rect, fill: Color32) {
+    let colors = BACKDROP.read().unwrap_or_else(|e| e.into_inner()).clone();
+    if colors.is_empty() {
+        painter.rect_filled(rect, 0.0, fill);
+    } else {
+        paint_gradient(painter, rect, &colors, 0.0);
+        painter.rect_filled(rect, 0.0, region(fill, Region::Frame));
+    }
+}

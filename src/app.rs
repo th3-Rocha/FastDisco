@@ -121,6 +121,10 @@ pub enum Action {
     CloseSettings,
     Toggle(Flag),
     SetTheme(crate::settings::Theme),
+    /// A colour theme over the plain one, or back to plain.
+    SetColorTheme(Option<crate::settings::ColorTheme>),
+    /// Opens or closes the theme editor; opening it closes the settings.
+    Customize(bool),
     SetZoom(f32),
     /// The voice filter's noise suppression, 0 off to 3 very high.
     SetNoiseSuppression(u8),
@@ -229,6 +233,8 @@ pub struct App {
     pub call: Option<crate::call::Session>,
     /// The microphone test of the voice settings, while it runs.
     pub mic_test: Option<crate::call::MicTest>,
+    /// "Personalize o seu tema" is open over the left of the window.
+    pub customizer: bool,
     /// The microphones and speakers, listed in the background when the
     /// voice settings open.
     pub devices: std::sync::Arc<std::sync::Mutex<Option<crate::devices::Devices>>>,
@@ -306,6 +312,7 @@ impl App {
             speller: None,
             call: None,
             mic_test: None,
+            customizer: false,
             devices: Default::default(),
             call_view: false,
             voice_taken: None,
@@ -379,7 +386,10 @@ impl App {
 
     /// The palette the settings ask for, once the themes are listed.
     pub fn chosen_palette(&self) -> Palette {
-        self.palette_for(&self.settings.theme)
+        match &self.settings.color_theme {
+            Some(theme) => crate::theme::tinted(theme),
+            None => self.palette_for(&self.settings.theme),
+        }
     }
 
     pub fn palette_for(&self, theme: &crate::settings::Theme) -> Palette {
@@ -401,6 +411,14 @@ impl App {
     }
 
     fn apply_palette(&mut self) {
+        crate::theme::set_backdrop(
+            self.settings
+                .color_theme
+                .as_ref()
+                .map(crate::theme::backdrop)
+                .unwrap_or_default(),
+            self.settings.color_theme.as_ref().map_or(0, |t| t.intensity),
+        );
         let palette = self.chosen_palette();
         if palette != self.palette || !self.styled {
             self.palette = palette;
@@ -1033,6 +1051,7 @@ impl App {
                         self.mic_test = None;
                     }
                     self.settings_page = Some(page);
+                    self.customizer = false;
                 }
                 Action::CloseSettings => {
                     self.mic_test = None;
@@ -1067,7 +1086,20 @@ impl App {
                     }
                     self.apply_voice();
                 }
+                Action::Customize(open) => {
+                    self.customizer = open;
+                    if open {
+                        self.mic_test = None;
+                        self.settings_page = None;
+                    }
+                }
+                Action::SetColorTheme(theme) => {
+                    self.settings.color_theme = theme;
+                    self.save_settings();
+                    self.apply_palette();
+                }
                 Action::SetTheme(theme) => {
+                    self.settings.color_theme = None;
                     self.settings.theme = theme;
                     self.save_settings();
                     self.scan_themes();

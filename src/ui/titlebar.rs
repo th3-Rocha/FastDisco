@@ -16,7 +16,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         .resizable(false)
         .exact_size(TITLE_HEIGHT)
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.frame))
+        .frame(Frame::NONE)
         .show(ui, |ui| {
             let rect = ui.max_rect();
             // Under everything else, so the buttons win the pointer.

@@ -36,7 +36,7 @@ pub fn show(app: &mut App, ui: &mut Ui, channel: Id) -> Rect {
     };
     let placeholder = match c.kind {
         ChannelKind::Direct | ChannelKind::Group => {
-            format!("Conversar com @{}", app.model.direct_name(c))
+            format!("Conversar em @{}", app.model.direct_name(c))
         }
         _ => format!("Conversar em #{}", c.name),
     };
@@ -322,7 +322,7 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
         ui.vertical(|ui| {
             ui.add_space(10.0);
             // Discord's "+": a file, a poll, or the apps' commands.
-            let plus = icon_button(ui, &palette, Icon::PlusCircle, 24.0, false, "Mais opções");
+            let plus = icon_button(ui, &palette, Icon::Plus, 24.0, false, "Mais opções");
             let mut chosen = None;
             egui::Popup::menu(&plus)
                 .align(egui::RectAlign::TOP_START)
@@ -336,6 +336,11 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
                             crate::interact::InteractAction::OpenPollDraft,
                         ));
                     }
+                    // Discord records voice messages only on the phone;
+                    // here they are under the "+".
+                    if ui.button("Gravar mensagem de voz").clicked() {
+                        chosen = Some(Action::Chat(ChatAction::StartRecording));
+                    }
                     if ui.button("Usar apps").clicked() {
                         app.drafts.insert(channel, "/".into());
                         app.chat.focus_composer = true;
@@ -346,7 +351,7 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
                 app.actions.push(action);
             }
         });
-        let buttons = 5.0 * 24.0 + 4.0 * 16.0;
+        let buttons = 3.0 * 24.0 + 2.0 * 16.0;
         let width = ui.available_width() - buttons - 16.0;
         let focus = std::mem::take(&mut app.chat.focus_composer)
             && app.chat.editing.is_none()
@@ -431,43 +436,26 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
                 {
                     act(app, ChatAction::OpenUrl("https://discord.com/nitro".into()));
                 }
-                for (icon, tab, hint) in [
-                    (Icon::Gif, PickerTab::Gif, "Abrir seletor de GIFs"),
-                    (
-                        Icon::Sticker,
-                        PickerTab::Sticker,
-                        "Abrir seletor de figurinhas",
-                    ),
-                    (Icon::Smile, PickerTab::Emoji, "Selecionar emoji"),
-                ] {
-                    let open = app
-                        .chat
-                        .picker
-                        .as_ref()
-                        .is_some_and(|p| p.tab == tab && p.target == PickerTarget::Composer);
-                    if icon_button(ui, &palette, icon, 24.0, open, hint).clicked() {
-                        act(
-                            app,
-                            ChatAction::OpenPicker {
-                                tab,
-                                target: PickerTarget::Composer,
-                            },
-                        );
-                    }
+                // GIFs and stickers are tabs of the emoji picker, as in
+                // Discord's redesign.
+                let open = app
+                    .chat
+                    .picker
+                    .as_ref()
+                    .is_some_and(|p| p.target == PickerTarget::Composer);
+                if icon_button(ui, &palette, Icon::Smile, 24.0, open, "Selecionar emoji").clicked() {
+                    act(
+                        app,
+                        ChatAction::OpenPicker {
+                            tab: PickerTab::Emoji,
+                            target: PickerTarget::Composer,
+                        },
+                    );
                 }
-                // Discord records voice messages only on the phone; here
-                // the microphone sits after the emoji.
-                if icon_button(
-                    ui,
-                    &palette,
-                    Icon::Mic,
-                    24.0,
-                    false,
-                    "Gravar mensagem de voz",
-                )
-                .clicked()
-                {
-                    act(app, ChatAction::StartRecording);
+                if icon_button(ui, &palette, Icon::Apps, 24.0, false, "Apps").clicked() {
+                    app.drafts.insert(channel, "/".into());
+                    app.chat.focus_composer = true;
+                    app.chat.cursor_to_end = true;
                 }
             });
         });

@@ -184,14 +184,15 @@ pub fn badge(ui: &Ui, palette: &Palette, right_center: Pos2, count: u32, ring: O
         .galley(rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
 }
 
-/// "Hoje às 10:04", "Ontem às 22:50", "21/10/2026 18:03".
+/// "10:04" today, as Discord's redesign shows it, "Ontem às 22:50",
+/// "21/10/2026 18:03".
 pub fn timestamp(time: jiff::Timestamp) -> String {
     let zone = jiff::tz::TimeZone::system();
     let local = time.to_zoned(zone.clone());
     let today = jiff::Timestamp::now().to_zoned(zone).date();
     let date = local.date();
     if date == today {
-        format!("Hoje às {}", local.strftime("%H:%M"))
+        local.strftime("%H:%M").to_string()
     } else if today.yesterday().ok() == Some(date) {
         format!("Ontem às {}", local.strftime("%H:%M"))
     } else {

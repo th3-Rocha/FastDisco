@@ -22,7 +22,7 @@ pub fn show(app: &mut App, ui: &mut Ui) -> Rect {
         .show_separator_line(false)
         .frame(
             Frame::new()
-                .fill(palette.sidebar)
+                .fill(crate::theme::region(palette.sidebar, crate::theme::Region::Sidebar))
                 .corner_radius(CORNER)
                 .inner_margin(Margin::ZERO),
         )
@@ -32,7 +32,7 @@ pub fn show(app: &mut App, ui: &mut Ui) -> Rect {
                 .resizable(false)
                 .exact_size(card_space(app))
                 .show_separator_line(false)
-                .frame(Frame::new().fill(palette.sidebar))
+                .frame(Frame::NONE)
                 .show(ui, |_| {});
             header(app, ui);
             egui::CentralPanel::default()

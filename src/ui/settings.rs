@@ -1169,6 +1169,7 @@ fn appearance(app: &mut App, ui: &mut Ui) {
                 .color(palette.muted),
         );
     }
+    color_themes(app, ui);
     divider(ui, &palette);
     heading(ui, &palette, "NÍVEL DE ZOOM");
     let mut zoom = app.settings.zoom * 100.0;
@@ -1186,6 +1187,95 @@ fn appearance(app: &mut App, ui: &mut Ui) {
             .font(font(Weight::Regular, 14.0))
             .color(palette.muted),
     );
+}
+
+/// "Temas coloridos": the gradient themes, free, and the editor behind
+/// the first tile.
+fn color_themes(app: &mut App, ui: &mut Ui) {
+    let palette = app.palette;
+    divider(ui, &palette);
+    heading(ui, &palette, "TEMAS COLORIDOS");
+    ui.label(
+        RichText::new("Um gradiente por trás do app. Todos de graça, e você pode criar o seu.")
+            .font(font(Weight::Regular, 14.0))
+            .color(palette.muted),
+    );
+    ui.add_space(8.0);
+    let current = app.settings.color_theme.clone();
+    let custom = current.as_ref().is_some_and(|theme| {
+        !(0..crate::theme::PRESETS.len())
+            .filter_map(crate::theme::preset)
+            .any(|p| p.colors == theme.colors)
+    });
+    let time = ui.input(|i| i.time) as f32;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
+        // The editor's tile, then the presets.
+        for index in std::iter::once(None).chain((0..crate::theme::PRESETS.len()).map(Some)) {
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(56.0), Sense::click());
+            let (selected, name) = match index {
+                None => (custom, "Personalizar"),
+                Some(i) => (
+                    current
+                        .as_ref()
+                        .is_some_and(|t| crate::theme::preset(i).is_some_and(|p| p.colors == t.colors)),
+                    crate::theme::PRESETS[i].0,
+                ),
+            };
+            if selected {
+                // A soft glow in the theme's own colours.
+                let colors = current
+                    .as_ref()
+                    .map(|t| t.colors.iter().map(|c| Color32::from_rgb(c[0], c[1], c[2])).collect::<Vec<_>>())
+                    .unwrap_or_default();
+                for ring in 1..=6 {
+                    let t = ((time * 0.6) + ring as f32 * 0.17).fract();
+                    let color = crate::theme::sample(&colors, t).gamma_multiply(0.22 - ring as f32 * 0.03);
+                    ui.painter().rect_filled(rect.expand(ring as f32 * 1.6), CornerRadius::same(10 + ring), color);
+                }
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            match index {
+                None => {
+                    ui.painter().rect_filled(rect, CornerRadius::same(8), palette.rail);
+                    super::widgets::paint_icon(ui, Icon::Palette, rect.center(), 24.0, palette.strong);
+                }
+                Some(i) => {
+                    let colors: Vec<Color32> = crate::theme::PRESETS[i]
+                        .2
+                        .iter()
+                        .map(|c| Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, *c as u8))
+                        .collect();
+                    crate::theme::paint_gradient(ui.painter(), rect, &colors, 8.0);
+                }
+            }
+            let ring = if selected {
+                palette.strong
+            } else if response.hovered() {
+                palette.selected
+            } else {
+                palette.divider
+            };
+            ui.painter().rect_stroke(rect, CornerRadius::same(8), Stroke::new(if selected { 2.0 } else { 1.0 }, ring), egui::StrokeKind::Inside);
+            let response = response.on_hover_text(name).on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() {
+                match index {
+                    None => app.actions.push(Action::Customize(true)),
+                    Some(i) => app.actions.push(Action::SetColorTheme(crate::theme::preset(i))),
+                }
+            }
+        }
+    });
+    if current.is_some() {
+        ui.add_space(8.0);
+        let back = egui::Button::new(RichText::new("Voltar ao tema normal").font(font(Weight::Medium, 14.0)).color(palette.strong))
+            .fill(palette.rail)
+            .corner_radius(8)
+            .min_size(vec2(0.0, 36.0));
+        if ui.add(back).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            app.actions.push(Action::SetColorTheme(None));
+        }
+    }
 }
 
 /// A message in the chosen colours, as Discord's preview.

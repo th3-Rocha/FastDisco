@@ -23,7 +23,7 @@ const MEMBERS_MIN_CHAT: f32 = 640.0;
 pub fn show(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(palette.chat).inner_margin(Margin::ZERO))
+        .frame(Frame::new().fill(crate::theme::region(palette.chat, crate::theme::Region::Chat)).inner_margin(Margin::ZERO))
         .show(ui, |ui| {
             if app.call_view && app.call.is_some() {
                 super::call::view(app, ui);
@@ -642,7 +642,7 @@ fn members(app: &mut App, ui: &mut Ui) {
         .show_separator_line(false)
         .frame(
             Frame::new()
-                .fill(palette.sidebar)
+                .fill(crate::theme::region(palette.sidebar, crate::theme::Region::Sidebar))
                 .inner_margin(Margin::ZERO),
         )
         .show(ui, |ui| {
