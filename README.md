@@ -168,6 +168,7 @@ everything Discord's desktop app does.
 - [x] The microphone's and headphones' arrow menus: device, input profile, volume, voice settings
 - [x] Account settings as Discord's: account info, password and security (multi-factor, connected devices with sign-out), account status (age group), Family Center, disable and delete the account
 - [x] Data and privacy (data consents, requesting your data, activity sharing), message permissions (age-restricted DM commands and iOS servers, DMs from server members, who can send friend requests, blocked accounts with unblock), notifications (sounds, Discord's e-mails, mobile push delay, /tts); each page lists its parts in the side menu
+- [x] On a big screen the settings open in a window over the dimmed app, with the page's name and the close button in a bar, as Discord's
 - [ ] Video calls and screen sharing
 - [ ] Direct message calls
 - [ ] Scheduled events

@@ -67,22 +67,149 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 .show(ui, |ui| {
                     ui.set_max_width(width);
                     ui.spacing_mut().item_spacing = vec2(0.0, 8.0);
-                    match page {
-                        SettingsPage::Account => account(app, ui),
-                        SettingsPage::Privacy => privacy(app, ui),
-                        SettingsPage::Messages => messages(app, ui),
-                        SettingsPage::Profiles => profiles(app, ui),
-                        SettingsPage::Voice => voice(app, ui),
-                        SettingsPage::Appearance => appearance(app, ui),
-                        SettingsPage::Accessibility => accessibility(app, ui),
-                        SettingsPage::Notifications => notifications(app, ui),
-                        SettingsPage::Keybinds => keybinds(app, ui),
-                        SettingsPage::Linux => linux(app, ui),
-                        SettingsPage::Advanced => advanced(app, ui),
-                    }
+                    page_body(app, ui, page);
                 });
             close_button(app, ui, full);
         });
+}
+
+/// On a big screen the settings open over the app, as Discord's current
+/// window; on a small one they fill it.
+pub fn as_window(ctx: &egui::Context) -> bool {
+    let screen = ctx.content_rect();
+    screen.width() >= 1200.0 && screen.height() >= 700.0
+}
+
+fn page_title(page: SettingsPage) -> &'static str {
+    match page {
+        SettingsPage::Account => "Conta",
+        SettingsPage::Privacy => "Dados e privacidade",
+        SettingsPage::Messages => "Permissões de mensagens",
+        SettingsPage::Profiles => "Perfis",
+        SettingsPage::Voice => "Voz e vídeo",
+        SettingsPage::Appearance => "Aparência",
+        SettingsPage::Accessibility => "Acessibilidade",
+        SettingsPage::Notifications => "Notificações",
+        SettingsPage::Keybinds => "Atalhos de teclado",
+        SettingsPage::Linux => "Configurações do Linux",
+        SettingsPage::Advanced => "Avançado",
+    }
+}
+
+/// The settings in a window over the dimmed app: the navigation at the
+/// left, and the page under a bar with its name and the close button.
+pub fn window(app: &mut App, ui: &mut Ui) {
+    let Some(page) = app.settings_page else {
+        return;
+    };
+    let palette = app.palette;
+    if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        app.actions.push(Action::CloseSettings);
+    }
+    let screen = ui.ctx().content_rect();
+    let size = vec2(
+        (screen.width() - 300.0).min(1540.0),
+        (screen.height() - 128.0).min(1000.0),
+    );
+    let nav_width = NAV_WIDTH + 36.0;
+    let response = egui::Modal::new(egui::Id::new("settings-window"))
+        .backdrop_color(Color32::from_black_alpha(170))
+        .frame(
+            Frame::new()
+                .fill(palette.chat)
+                .corner_radius(CornerRadius::same(12))
+                .stroke(Stroke::new(1.0, palette.selected)),
+        )
+        .show(ui.ctx(), |ui| {
+            ui.set_min_size(size);
+            ui.set_max_size(size);
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            let whole = ui.max_rect();
+            let nav = Rect::from_min_size(whole.min, vec2(nav_width, size.y));
+            let page_rect = Rect::from_min_max(pos2(nav.right(), whole.top()), whole.max);
+            ui.painter().rect_filled(
+                nav,
+                CornerRadius { nw: 12, sw: 12, ne: 0, se: 0 },
+                palette.sidebar,
+            );
+            ui.painter()
+                .vline(nav.right(), nav.y_range(), Stroke::new(1.0, palette.selected));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(nav.shrink(16.0)), |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("settings-window-nav")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_width(NAV_WIDTH);
+                        navigation(app, ui, page);
+                    });
+            });
+            // The bar: the page's name and the close button.
+            let bar = Rect::from_min_size(page_rect.min, vec2(page_rect.width(), 54.0));
+            ui.painter().text(
+                pos2(bar.left() + 20.0, bar.center().y),
+                Align2::LEFT_CENTER,
+                page_title(page),
+                font(Weight::SemiBold, 16.0),
+                palette.strong,
+            );
+            ui.painter()
+                .hline(bar.x_range(), bar.bottom(), Stroke::new(1.0, palette.selected));
+            let close = Rect::from_center_size(pos2(bar.right() - 26.0, bar.center().y), Vec2::splat(30.0));
+            let close = ui.interact(close, ui.id().with("close-settings-window"), Sense::click());
+            paint_icon(
+                ui,
+                Icon::Close,
+                close.rect.center(),
+                20.0,
+                if close.hovered() { palette.strong } else { palette.icon },
+            );
+            if close.on_hover_text("Fechar (Esc)").clicked() {
+                app.actions.push(Action::CloseSettings);
+            }
+            // The page, centred in what is left.
+            let body = Rect::from_min_max(pos2(page_rect.left(), bar.bottom() + 1.0), page_rect.max);
+            let width = CONTENT_WIDTH.min(body.width() - 80.0).max(300.0);
+            let inner = Rect::from_min_max(
+                pos2(body.center().x - width / 2.0, body.top()),
+                pos2(body.center().x + width / 2.0, body.bottom()),
+            );
+            ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt(("settings-window-page", page_title(page)))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add_space(24.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(inner.left() - body.left());
+                            ui.vertical(|ui| {
+                                ui.set_width(width);
+                                ui.spacing_mut().item_spacing = vec2(0.0, 8.0);
+                                page_body(app, ui, page);
+                                ui.add_space(32.0);
+                            });
+                        });
+                    });
+            });
+        });
+    if response.should_close() {
+        app.actions.push(Action::CloseSettings);
+    }
+}
+
+fn page_body(app: &mut App, ui: &mut Ui, page: SettingsPage) {
+    match page {
+        SettingsPage::Account => account(app, ui),
+        SettingsPage::Privacy => privacy(app, ui),
+        SettingsPage::Messages => messages(app, ui),
+        SettingsPage::Profiles => profiles(app, ui),
+        SettingsPage::Voice => voice(app, ui),
+        SettingsPage::Appearance => appearance(app, ui),
+        SettingsPage::Accessibility => accessibility(app, ui),
+        SettingsPage::Notifications => notifications(app, ui),
+        SettingsPage::Keybinds => keybinds(app, ui),
+        SettingsPage::Linux => linux(app, ui),
+        SettingsPage::Advanced => advanced(app, ui),
+    }
 }
 
 /// The sections in Discord's new layout: who you are with "Editar perfis"

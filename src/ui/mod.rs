@@ -25,7 +25,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     match app.screen {
         Screen::Connecting => login::loading(app, ui),
         Screen::Login => login::show(app, ui),
-        Screen::Main if app.settings_page.is_some() => {
+        Screen::Main if app.settings_page.is_some() && !settings::as_window(ui.ctx()) => {
             settings::show(app, ui);
             sidebar::logout_dialog(app, ui);
         }
@@ -38,7 +38,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 player.update();
             }
             app.update_animations();
-            nav::keys(app, ui.ctx());
+            // With settings open over the app, its keys and typing go to
+            // the settings.
+            let settings_open = app.settings_page.is_some();
+            if !settings_open {
+                nav::keys(app, ui.ctx());
+            }
             // Who talks changes the rings in the channel list.
             if app.call.is_some() {
                 ui.ctx()
@@ -46,7 +51,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
             // Alt+Up and Alt+Down move between channels, as in Discord.
             let alt = egui::Modifiers::ALT;
-            if ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowUp)) {
+            if settings_open {
+                // Nothing: the settings window has the keyboard.
+            } else if ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowUp)) {
                 app.actions.push(crate::app::Action::StepChannel(-1));
             }
             if ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowDown)) {
@@ -60,8 +67,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 app.actions.push(crate::app::Action::Forward);
             }
             app.track_location();
-            composer::paste_files(app, ui.ctx());
-            composer::type_anywhere(app, ui.ctx());
+            if !settings_open {
+                composer::paste_files(app, ui.ctx());
+                composer::type_anywhere(app, ui.ctx());
+            }
             let window = ui.max_rect();
             // Behind the sidebar's rounded corner.
             ui.painter()
@@ -73,6 +82,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             sidebar::card(app, ui, window);
             chat::show(app, ui);
             sidebar::frame_line(app, ui, sidebar, window);
+            if settings_open {
+                settings::window(app, ui);
+            }
             profile::popout(app, ui);
             sidebar::logout_dialog(app, ui);
             admin::modal(app, ui);
