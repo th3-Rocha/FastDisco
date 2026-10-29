@@ -674,6 +674,8 @@ impl CustomEmoji {
 pub struct Member {
     pub nick: Option<String>,
     pub roles: Vec<Id>,
+    /// Joined but has not yet agreed to the server's rules.
+    pub pending: bool,
 }
 
 /// A row of the member list, as the gateway's lazy list sends it.
@@ -704,6 +706,8 @@ pub struct Guild {
     /// What the server notifies of when the user has not chosen: 0 every
     /// message, 1 only mentions.
     pub default_notify: u8,
+    /// Discord's feature flags: "COMMUNITY", "GUILD_ONBOARDING"...
+    pub features: Vec<String>,
 }
 
 /// A server's scheduled event.

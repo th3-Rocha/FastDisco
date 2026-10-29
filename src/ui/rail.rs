@@ -108,6 +108,30 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         }
                         ui.add_space(GAP);
                     }
+                    // "Explorar", the compass under the add tile.
+                    {
+                        let open = app.discovery.open;
+                        let response = item(ui, app, open, false, 0, "Explorar", &[], false, |ui, rect, lit| {
+                            ui.painter().rect_filled(
+                                rect,
+                                radius(lit || open),
+                                if lit || open { palette.online } else { palette.chat },
+                            );
+                            paint_icon(
+                                ui,
+                                Icon::Compass,
+                                rect.center(),
+                                22.0,
+                                if lit || open { Color32::WHITE } else { palette.online },
+                            );
+                        });
+                        if response.clicked() {
+                            app.actions.push(Action::Discovery(
+                                crate::discovery::DiscoveryAction::Open,
+                            ));
+                        }
+                        ui.add_space(GAP);
+                    }
                 });
         });
 }

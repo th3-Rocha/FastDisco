@@ -194,8 +194,8 @@ everything Discord's desktop app does.
 - [x] Role permissions (creating and deleting roles too) and a channel's settings with its permission overwrites
 - [x] Uploading server icons, banners, emoji and stickers
 - [x] Creating and joining servers from the rail
-- [ ] Server discovery
-- [ ] Onboarding and rules screening
+- [x] Server discovery: "Explorar" in the rail, public servers by category, joining them
+- [x] Onboarding and rules screening: a new server's rules to agree to, then its questions
 - [x] AutoMod rules (list, switch, delete, block words) and moderation: timeouts, bans that delete recent messages
 
 ### Profile and settings

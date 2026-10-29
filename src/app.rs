@@ -159,6 +159,8 @@ pub enum Action {
     Events(crate::events::EventAction),
     /// Permissions, channels, pictures, emoji, AutoMod and timeouts.
     Manage(crate::manage::ManageAction),
+    /// Exploring servers, and a new server's rules and questions.
+    Discovery(crate::discovery::DiscoveryAction),
     /// Looks for a newer Discofast now.
     CheckUpdate,
     /// Restarts into the downloaded update.
@@ -240,6 +242,7 @@ pub struct App {
     pub threads: crate::threads::Threads,
     pub events: crate::events::Events,
     pub manage: crate::manage::Manage,
+    pub discovery: crate::discovery::Discovery,
     /// The spell checker, once its dictionaries are loaded.
     pub speller: Option<std::sync::Arc<crate::spell::Speller>>,
     /// The voice call the user is in.
@@ -327,6 +330,7 @@ impl App {
             threads: crate::threads::Threads::default(),
             events: crate::events::Events::default(),
             manage: crate::manage::Manage::default(),
+            discovery: crate::discovery::Discovery::default(),
             speller: None,
             call: None,
             mic_test: None,
@@ -727,6 +731,7 @@ impl App {
                     crate::backend::Tag::Threads(tag) => self.threads_result(tag, result),
                     crate::backend::Tag::Events(tag) => self.events_result(tag, result),
                     crate::backend::Tag::Manage(tag) => self.manage_result(tag, result),
+                    crate::backend::Tag::Discovery(tag) => self.discovery_result(tag, result),
                 },
                 Event::Profile { user, profile } => {
                     self.chat.profiles.insert(
@@ -992,6 +997,7 @@ impl App {
                 Action::Threads(action) => self.apply_threads(action),
                 Action::Events(action) => self.apply_events(action),
                 Action::Manage(action) => self.apply_manage(action),
+                Action::Discovery(action) => self.apply_discovery(action),
                 Action::Nav(action) => self.apply_nav(action),
                 Action::Interact(action) => self.apply_interact(action),
                 Action::SetNoiseSuppression(level) => {
@@ -1247,6 +1253,7 @@ impl App {
     /// Home opens where the user last was there: a direct message, or
     /// the friends page, as Discord.
     fn go_home(&mut self) {
+        self.discovery.open = false;
         self.place = Place::Home;
         self.channel = None;
         if let Some(channel) = self
@@ -1313,6 +1320,18 @@ impl App {
     }
 
     fn open_server(&mut self, id: Id) {
+        self.discovery.open = false;
+        // Rules not yet agreed to: asked for again, as Discord's banner.
+        let me = self.model.me;
+        if self
+            .model
+            .guild(id)
+            .and_then(|g| g.members.get(&me))
+            .is_some_and(|m| m.pending)
+            && self.discovery.screening.is_none()
+        {
+            self.apply_discovery(crate::discovery::DiscoveryAction::Welcome(id));
+        }
         self.place = Place::Server(id);
         self.channel = None;
         let channel = self
@@ -1711,6 +1730,7 @@ impl App {
                 if self.admin.open_when_ready == Some(id) {
                     self.admin.open_when_ready = None;
                     self.open_server(id);
+                    self.apply_discovery(crate::discovery::DiscoveryAction::Welcome(id));
                 }
             }
             "USER_SETTINGS_UPDATE" => {

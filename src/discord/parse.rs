@@ -280,6 +280,7 @@ pub fn role(value: &Value) -> Option<Role> {
 
 pub fn member(value: &Value) -> Member {
     Member {
+        pending: value["pending"].as_bool().unwrap_or(false),
         nick: label(&value["nick"]),
         roles: value["roles"]
             .as_array()
@@ -333,6 +334,10 @@ pub fn guild(value: &Value, model: &mut Model) -> Option<Guild> {
         stickers: value["stickers"]
             .as_array()
             .map(|l| l.iter().filter_map(sticker).collect())
+            .unwrap_or_default(),
+        features: properties["features"]
+            .as_array()
+            .map(|l| l.iter().filter_map(|f| f.as_str().map(str::to_owned)).collect())
             .unwrap_or_default(),
         default_notify: properties["default_message_notifications"].as_u64().unwrap_or(1) as u8,
         events: value["guild_scheduled_events"]

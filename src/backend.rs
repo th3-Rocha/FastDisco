@@ -23,6 +23,7 @@ pub enum Tag {
     Threads(crate::threads::Tag),
     Events(crate::events::Tag),
     Manage(crate::manage::Tag),
+    Discovery(crate::discovery::Tag),
 }
 
 #[derive(Debug)]

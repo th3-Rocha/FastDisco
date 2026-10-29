@@ -7,6 +7,7 @@ mod call;
 mod chat;
 mod composer;
 mod customizer;
+mod discovery;
 mod events;
 mod friends;
 mod login;
@@ -81,10 +82,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             titlebar::show(app, ui);
             titlebar::voice_taken(app, ui);
             rail::show(app, ui);
-            let sidebar = sidebar::show(app, ui);
-            sidebar::card(app, ui, window);
-            chat::show(app, ui);
-            sidebar::frame_line(app, ui, sidebar, window);
+            if app.discovery.open {
+                discovery::sidebar(app, ui);
+                discovery::page(app, ui);
+            } else {
+                let sidebar = sidebar::show(app, ui);
+                sidebar::card(app, ui, window);
+                chat::show(app, ui);
+                sidebar::frame_line(app, ui, sidebar, window);
+            }
             if settings_open {
                 settings::window(app, ui);
             }
@@ -100,6 +106,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             bots::forward_dialog(app, ui);
             bots::poll_dialog(app, ui);
             call::incoming(app, ui);
+            discovery::dialogs(app, ui);
             let wanted: Vec<crate::model::Id> =
                 ui.data_mut(|d| {
                     std::mem::take(d.get_temp_mut_or_default::<Vec<crate::model::Id>>(
