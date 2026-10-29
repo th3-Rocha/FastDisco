@@ -989,6 +989,7 @@ fn profiles(app: &mut App, ui: &mut Ui) {
             return;
         }
     }
+    profile_pictures(app, ui);
     let Some(form) = app.profile_form.as_mut() else {
         return;
     };
@@ -1071,6 +1072,82 @@ fn profiles(app: &mut App, ui: &mut Ui) {
     if ui.add_enabled(!saving, button).clicked() {
         app.actions.push(Action::SaveProfile);
     }
+}
+
+/// The avatar, the banner and the banner's colour, each changed at once
+/// as Discord's profile editor.
+fn profile_pictures(app: &mut App, ui: &mut Ui) {
+    use crate::manage::{ManageAction, Picking};
+    let palette = app.palette;
+    let me = app.model.me;
+    app.load_profile(me);
+    let profile = match app.chat.profiles.get(&me) {
+        Some((crate::chat::ProfileState::Ready(p), _)) => Some(p.clone()),
+        _ => None,
+    };
+    let button = |ui: &mut Ui, label: &str, primary: bool| {
+        ui.add(
+            egui::Button::new(
+                RichText::new(label)
+                    .font(font(Weight::Medium, 14.0))
+                    .color(if primary { Color32::WHITE } else { palette.text }),
+            )
+            .fill(if primary { palette.accent } else { palette.selected })
+            .corner_radius(CornerRadius::same(4))
+            .min_size(vec2(0.0, 32.0)),
+        )
+        .clicked()
+    };
+    let mut out = Vec::new();
+    heading(ui, &palette, "AVATAR");
+    ui.horizontal(|ui| {
+        if let Some(user) = app.model.user(me) {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), egui::Sense::hover());
+            super::widgets::avatar(ui, app, user, rect.center(), 32.0, None);
+        }
+        ui.add_space(12.0);
+        if button(ui, "Mudar avatar", true) {
+            out.push(ManageAction::PickImage(Picking::Avatar));
+        }
+        if app.model.user(me).is_some_and(|u| u.picture.is_some()) && button(ui, "Remover avatar", false)
+        {
+            out.push(ManageAction::RemoveAvatar);
+        }
+    });
+    ui.add_space(8.0);
+    heading(ui, &palette, "BANNER DO PERFIL");
+    ui.label(
+        RichText::new("Uma imagem no topo do seu perfil. O Discord exige Nitro para imagens.")
+            .color(palette.muted),
+    );
+    ui.horizontal(|ui| {
+        if button(ui, "Mudar banner", true) {
+            out.push(ManageAction::PickImage(Picking::ProfileBanner));
+        }
+    });
+    ui.add_space(8.0);
+    heading(ui, &palette, "COR DO BANNER");
+    let key = egui::Id::new("accent-edit");
+    let current = profile
+        .as_ref()
+        .and_then(|p| p.accent)
+        .map_or([0x58, 0x65, 0xf2], |c| [c.r(), c.g(), c.b()]);
+    let mut color: [u8; 3] = ui.data(|d| d.get_temp(key)).unwrap_or(current);
+    ui.horizontal(|ui| {
+        ui.color_edit_button_srgb(&mut color);
+        ui.data_mut(|d| d.insert_temp(key, color));
+        if button(ui, "Salvar cor", false) {
+            let [r, g, b] = color;
+            out.push(ManageAction::SetAccent(Some(
+                (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
+            )));
+        }
+        if profile.as_ref().is_some_and(|p| p.accent.is_some()) && button(ui, "Remover cor", false) {
+            out.push(ManageAction::SetAccent(None));
+        }
+    });
+    ui.add_space(16.0);
+    app.actions.extend(out.into_iter().map(Action::Manage));
 }
 
 fn appearance(app: &mut App, ui: &mut Ui) {

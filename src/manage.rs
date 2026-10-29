@@ -88,6 +88,26 @@ pub enum ManageAction {
     CreateRule,
     /// Keeps someone from talking for `minutes`, or lifts it with 0.
     Timeout { guild: Id, user: Id, minutes: u32 },
+    /// Changes how a server (none: direct messages) or one of its
+    /// channels notifies.
+    Notify(NotifyChange),
+    /// The user's own picture taken away.
+    RemoveAvatar,
+    /// The colour of the user's banner when there is no picture.
+    SetAccent(Option<u32>),
+}
+
+/// One change to the notification settings.
+#[derive(Clone, Debug, Default)]
+pub struct NotifyChange {
+    pub guild: Option<Id>,
+    pub channel: Option<Id>,
+    /// 0 every message, 1 mentions, 2 nothing, 3 the server's default.
+    pub level: Option<u8>,
+    /// Muted for so many minutes (none: until turned back on), or not.
+    pub mute: Option<Option<Option<u32>>>,
+    pub suppress_everyone: Option<bool>,
+    pub suppress_roles: Option<bool>,
 }
 
 impl App {
@@ -326,6 +346,19 @@ impl App {
                 self.manage.rule_name.clear();
                 self.manage.rule_words.clear();
             }
+            ManageAction::Notify(change) => self.change_notify(change),
+            ManageAction::RemoveAvatar => self.manage_api(
+                Tag::Saved,
+                Method::PATCH,
+                "/users/@me".into(),
+                Some(json!({ "avatar": Value::Null })),
+            ),
+            ManageAction::SetAccent(color) => self.manage_api(
+                Tag::Saved,
+                Method::PATCH,
+                "/users/@me/profile".into(),
+                Some(json!({ "accent_color": color })),
+            ),
             ManageAction::Timeout {
                 guild,
                 user,
@@ -344,6 +377,70 @@ impl App {
                 );
             }
         }
+    }
+
+    /// Shown at once, then sent as Discord's user guild settings.
+    fn change_notify(&mut self, change: NotifyChange) {
+        let mute_body = |mute: Option<u32>| {
+            let window = mute.map_or(-1, |m| i64::from(m) * 60);
+            let end = mute.map(|m| {
+                (jiff::Timestamp::now() + jiff::SignedDuration::from_mins(i64::from(m))).to_string()
+            });
+            json!({ "selected_time_window": window, "end_time": end })
+        };
+        let notify = self.model.notify.entry(change.guild).or_insert_with(|| {
+            crate::model::Notify {
+                level: 3,
+                ..Default::default()
+            }
+        });
+        let mut body = json!({});
+        match change.channel {
+            Some(channel) => {
+                let entry = notify.channels.entry(channel).or_default();
+                let mut over = json!({});
+                if let Some(level) = change.level {
+                    entry.level = level;
+                    over["message_notifications"] = json!(level);
+                }
+                if let Some(mute) = change.mute {
+                    entry.muted = mute.is_some();
+                    over["muted"] = json!(mute.is_some());
+                    if let Some(m) = mute {
+                        over["mute_config"] = mute_body(m);
+                    }
+                }
+                body["channel_overrides"] = json!({ channel.to_string(): over });
+            }
+            None => {
+                if let Some(level) = change.level {
+                    notify.level = level;
+                    body["message_notifications"] = json!(level);
+                }
+                if let Some(mute) = change.mute {
+                    notify.muted = mute.is_some();
+                    body["muted"] = json!(mute.is_some());
+                    if let Some(m) = mute {
+                        body["mute_config"] = mute_body(m);
+                    }
+                }
+                if let Some(on) = change.suppress_everyone {
+                    notify.suppress_everyone = on;
+                    body["suppress_everyone"] = json!(on);
+                }
+                if let Some(on) = change.suppress_roles {
+                    notify.suppress_roles = on;
+                    body["suppress_roles"] = json!(on);
+                }
+            }
+        }
+        let place = change.guild.map_or_else(|| "@me".to_owned(), |g| g.to_string());
+        self.manage_api(
+            Tag::Done,
+            Method::PATCH,
+            format!("/users/@me/guilds/{place}/settings"),
+            Some(body),
+        );
     }
 
     /// A picked picture, by what it was picked for. Emoji and server
@@ -448,7 +545,10 @@ impl App {
             Tag::Saved => {
                 self.page_message("Alterações salvas.");
                 if let Some(form) = &mut self.profile_form {
-                    form.message = Some("Perfil atualizado.".into());
+                    form.message = Some("Salvo.".into());
+                    // The profile card shows the new picture or colour.
+                    let me = self.model.me;
+                    self.chat.profiles.remove(&me);
                 }
                 // Our own avatar or banner, shown at once.
                 if value["discriminator"].is_string()

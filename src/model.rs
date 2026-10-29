@@ -701,6 +701,9 @@ pub struct Guild {
     pub stickers: Vec<Sticker>,
     /// Scheduled events that have not ended.
     pub events: Vec<Event>,
+    /// What the server notifies of when the user has not chosen: 0 every
+    /// message, 1 only mentions.
+    pub default_notify: u8,
 }
 
 /// A server's scheduled event.
@@ -734,6 +737,33 @@ pub struct Model {
     /// Who is in which voice channel: by server (none for direct message
     /// calls) and person.
     pub voice: HashMap<(Option<Id>, Id), VoiceMember>,
+    /// The notification settings, by server; none is direct messages.
+    pub notify: HashMap<Option<Id>, Notify>,
+}
+
+/// How a server (or the direct messages, with no server) notifies:
+/// Discord's user guild settings.
+#[derive(Clone, Debug, Default)]
+pub struct Notify {
+    /// 0 every message, 1 only mentions, 2 nothing; 3 the server's default.
+    pub level: u8,
+    pub muted: bool,
+    pub suppress_everyone: bool,
+    pub suppress_roles: bool,
+    /// Each channel's own level (3 follows the server) and mute.
+    pub channels: HashMap<Id, ChannelNotify>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelNotify {
+    pub level: u8,
+    pub muted: bool,
+}
+
+impl Default for ChannelNotify {
+    fn default() -> Self {
+        Self { level: 3, muted: false }
+    }
 }
 
 /// Someone in a voice channel, and how.
@@ -1126,15 +1156,55 @@ impl Model {
             .find(|id| self.channel(*id).is_some_and(|c| c.kind.is_textual()))
     }
 
-    /// Unread dot and mention count for the rail.
+    /// Unread dot and mention count for the rail. Muted channels count
+    /// for nothing, and a muted server only for its mentions.
     pub fn guild_unread(&self, guild: &Guild) -> (bool, u32) {
+        let muted = self.guild_muted(Some(guild.id));
         guild
             .channels
             .iter()
             .filter_map(|id| self.channel(*id))
-            .filter(|c| c.kind.is_textual() && self.can_view(c))
+            .filter(|c| c.kind.is_textual() && self.can_view(c) && !self.channel_muted(c))
             .fold((false, 0), |(unread, mentions), c| {
-                (unread || c.unread(), mentions + c.mentions)
+                (unread || (c.unread() && !muted), mentions + c.mentions)
+            })
+    }
+
+    pub fn guild_muted(&self, guild: Option<Id>) -> bool {
+        self.notify.get(&guild).is_some_and(|n| n.muted)
+    }
+
+    /// A channel the user muted, or one under a muted category.
+    pub fn channel_muted(&self, channel: &Channel) -> bool {
+        let Some(notify) = self.notify.get(&channel.guild) else {
+            return false;
+        };
+        let muted = |id: Id| notify.channels.get(&id).is_some_and(|c| c.muted);
+        muted(channel.id) || channel.parent.is_some_and(muted)
+    }
+
+    /// What a channel notifies of: 0 every message, 1 only mentions, 2
+    /// nothing, from the channel, its category, the server, and the
+    /// server's default in turn.
+    pub fn notify_level(&self, channel: &Channel) -> u8 {
+        if channel.guild.is_none() {
+            return 0;
+        }
+        let notify = self.notify.get(&channel.guild);
+        let own = |id: Id| {
+            notify
+                .and_then(|n| n.channels.get(&id))
+                .map(|c| c.level)
+                .filter(|l| *l < 3)
+        };
+        own(channel.id)
+            .or_else(|| channel.parent.and_then(own))
+            .or_else(|| notify.map(|n| n.level).filter(|l| *l < 3))
+            .unwrap_or_else(|| {
+                channel
+                    .guild
+                    .and_then(|g| self.guild(g))
+                    .map_or(1, |g| g.default_notify)
             })
     }
 

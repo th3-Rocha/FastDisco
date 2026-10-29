@@ -172,6 +172,10 @@ pub enum Modal {
         guild: Id,
         typed: String,
     },
+    /// A server's notification settings.
+    Notify {
+        guild: Id,
+    },
     /// "Iniciar palco": the stage's topic.
     StartStage {
         channel: Id,
@@ -869,6 +873,10 @@ impl App {
                     "/users/@me/settings".into(),
                     Some(json!({ "custom_status": custom })),
                 );
+            }
+            Modal::Notify { .. } => {
+                self.admin.busy = false;
+                self.admin.modal = None;
             }
             Modal::StartStage { channel, topic } => {
                 let topic = topic.trim().to_owned();

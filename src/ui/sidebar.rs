@@ -404,7 +404,9 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
         return Rect::NOTHING;
     };
     let selected = app.channel == Some(id);
-    let unread = channel.unread();
+    // A muted channel is dimmed and never shows unread, as Discord.
+    let muted = app.model.channel_muted(channel);
+    let unread = channel.unread() && !muted;
     let sense = if movable {
         Sense::click_and_drag()
     } else {
@@ -454,6 +456,8 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
         palette.strong
     } else if hovered {
         palette.text
+    } else if muted {
+        palette.muted.gamma_multiply(0.5)
     } else {
         palette.muted
     };
@@ -625,6 +629,12 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
                 "https://discord.com/channels/{guild}/{id}"
             ))));
             ui.close();
+        }
+        ui.separator();
+        let mut out = Vec::new();
+        super::manage::notify_menu(app, ui, guild, Some(id), &mut out);
+        if let Some(action) = out.pop() {
+            chosen = Some(action);
         }
         ui.separator();
         if ui.button("Copiar ID do canal").clicked() {

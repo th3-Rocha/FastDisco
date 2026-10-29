@@ -482,7 +482,17 @@ impl App {
             return;
         };
         let direct = matches!(c.kind, ChannelKind::Direct | ChannelKind::Group);
-        if !direct && !message.mentions_me {
+        // The user's notification settings: muted servers and channels say
+        // nothing; "every message" says it even without a mention.
+        if self.model.guild_muted(c.guild) || self.model.channel_muted(c) {
+            return;
+        }
+        let level = self.model.notify_level(c);
+        let mentioned = message.mentions_me
+            && !(self.model.notify.get(&c.guild).is_some_and(|n| n.suppress_everyone)
+                && !message.text.contains(&format!("<@{}>", self.model.me))
+                && (message.text.contains("@everyone") || message.text.contains("@here")));
+        if !direct && (level == 2 || (level == 1 && !mentioned)) {
             return;
         }
         let focused = self.ctx.input(|i| i.viewport().focused.unwrap_or(true));
@@ -1733,6 +1743,10 @@ impl App {
             | "MESSAGE_REACTION_REMOVE"
             | "MESSAGE_REACTION_REMOVE_ALL"
             | "TYPING_START" => self.chat_dispatch(kind, &data),
+            "USER_GUILD_SETTINGS_UPDATE" => {
+                let (guild, notify) = parse::notify(&data);
+                self.model.notify.insert(guild, notify);
+            }
             "GUILD_UPDATE" | "GUILD_ROLE_CREATE" | "GUILD_ROLE_UPDATE" | "GUILD_ROLE_DELETE"
             | "GUILD_EMOJIS_UPDATE" | "GUILD_STICKERS_UPDATE" | "GUILD_MEMBER_UPDATE" => {
                 self.guild_dispatch(kind, &data)

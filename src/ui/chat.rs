@@ -241,14 +241,25 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                             app.actions.push(Action::ToggleMembers);
                         }
                         super::nav::popout_button(app, ui, crate::nav::Popout::Pins);
-                        icon_button(
+                        let muted = app
+                            .model
+                            .channel(id)
+                            .is_some_and(|c| app.model.channel_muted(c));
+                        let bell = icon_button(
                             ui,
                             &palette,
                             Icon::Bell,
                             24.0,
-                            false,
+                            muted,
                             "Configurações de notificação",
                         );
+                        let guild = app.server();
+                        let mut out = Vec::new();
+                        egui::Popup::menu(&bell).show(|ui| {
+                            ui.set_min_width(220.0);
+                            super::manage::notify_menu(app, ui, guild, Some(id), &mut out);
+                        });
+                        app.actions.extend(out);
                         if !matches!(kind, ChannelKind::Voice | ChannelKind::Stage)
                             && !kind.is_forum()
                         {

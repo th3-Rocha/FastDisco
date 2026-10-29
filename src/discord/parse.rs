@@ -219,6 +219,42 @@ fn thread_meta(value: &Value) -> ThreadMeta {
     }
 }
 
+/// One server's notification settings (`guild_id` null for direct
+/// messages). A mute with an end that has passed is no mute.
+pub fn notify(value: &Value) -> (Option<Id>, crate::model::Notify) {
+    let muted = |v: &Value| {
+        v["muted"].as_bool().unwrap_or(false)
+            && v["mute_config"]["end_time"]
+                .as_str()
+                .and_then(|t| t.parse::<jiff::Timestamp>().ok())
+                .is_none_or(|end| end > jiff::Timestamp::now())
+    };
+    let channels = value["channel_overrides"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|o| {
+            Some((
+                id(&o["channel_id"])?,
+                crate::model::ChannelNotify {
+                    level: o["message_notifications"].as_u64().unwrap_or(3) as u8,
+                    muted: muted(o),
+                },
+            ))
+        })
+        .collect();
+    (
+        id(&value["guild_id"]),
+        crate::model::Notify {
+            level: value["message_notifications"].as_u64().unwrap_or(3) as u8,
+            muted: muted(value),
+            suppress_everyone: value["suppress_everyone"].as_bool().unwrap_or(false),
+            suppress_roles: value["suppress_roles"].as_bool().unwrap_or(false),
+            channels,
+        },
+    )
+}
+
 /// A voice call's start, in Unix seconds; Discord sends a number or a
 /// string of one.
 pub fn voice_start(value: &Value) -> Option<u64> {
@@ -298,6 +334,7 @@ pub fn guild(value: &Value, model: &mut Model) -> Option<Guild> {
             .as_array()
             .map(|l| l.iter().filter_map(sticker).collect())
             .unwrap_or_default(),
+        default_notify: properties["default_message_notifications"].as_u64().unwrap_or(1) as u8,
         events: value["guild_scheduled_events"]
             .as_array()
             .map(|l| l.iter().filter_map(event).collect())
@@ -765,6 +802,16 @@ pub fn ready(value: &Value) -> Model {
             model.direct.push(channel.id);
             model.channels.insert(channel.id, channel);
         }
+    }
+
+    let settings = if value["user_guild_settings"].is_array() {
+        &value["user_guild_settings"]
+    } else {
+        &value["user_guild_settings"]["entries"]
+    };
+    for entry in settings.as_array().into_iter().flatten() {
+        let (guild, notify) = notify(entry);
+        model.notify.insert(guild, notify);
     }
 
     let read_state = if value["read_state"].is_array() {

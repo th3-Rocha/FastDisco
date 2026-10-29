@@ -73,6 +73,12 @@ pub fn menu(app: &mut App, ui: &mut Ui, header: Rect) {
         ));
     }
     items.push(("", Icon::Close, None, palette.text));
+    items.push((
+        "Configurações de notificação",
+        Icon::Bell,
+        Some(AdminAction::Open(Modal::Notify { guild })),
+        palette.text,
+    ));
     if can(permission::CHANGE_NICKNAME) {
         let me = app.model.me;
         let text = app
@@ -194,6 +200,7 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
         Modal::Nick { .. } => ("Alterar apelido", "Salvar", false),
         Modal::VoiceStatus { .. } => ("Definir status do canal", "Salvar", false),
         Modal::StartStage { .. } => ("Iniciar palco", "Iniciar palco", false),
+        Modal::Notify { .. } => ("Configurações de notificação", "Concluído", false),
         Modal::Sessions => ("Dispositivos conectados", "Fechar", false),
         Modal::CloseAccount { delete: false, .. } => ("Desativar conta", "Desativar conta", true),
         Modal::CloseAccount { delete: true, .. } => ("Excluir conta", "Excluir conta", true),
@@ -308,6 +315,11 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
                             edited = Some(Modal::VoiceStatus { channel, text });
                         }
                         ui.label(RichText::new("Todos no canal de voz veem este status. Deixe vazio para apagá-lo.").font(font(Weight::Regular, 12.0)).color(palette.muted));
+                    }
+                    Modal::Notify { guild } => {
+                        let mut out = Vec::new();
+                        super::manage::notify_menu(app, ui, Some(guild), None, &mut out);
+                        app.actions.extend(out);
                     }
                     Modal::StartStage { channel, mut topic } => {
                         if field(ui, "TEMA", &mut topic, "Do que vamos falar?") {

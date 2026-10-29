@@ -486,3 +486,81 @@ pub fn channel(app: &mut App, ui: &mut Ui, guild: Id) {
     });
     app.actions.extend(out.into_iter().map(Action::Manage));
 }
+
+/// Discord's notification menu for a channel, or for a server when
+/// `channel` is none: muting for a while, and what notifies.
+pub fn notify_menu(app: &App, ui: &mut Ui, guild: Option<Id>, channel: Option<Id>, out: &mut Vec<Action>) {
+    use crate::manage::NotifyChange;
+    let palette = app.palette;
+    let notify = app.model.notify.get(&guild).cloned().unwrap_or_default();
+    let (muted, level) = match channel {
+        Some(c) => {
+            let own = notify.channels.get(&c).copied().unwrap_or_default();
+            (own.muted, own.level)
+        }
+        None => (notify.muted, notify.level),
+    };
+    let change = |f: &dyn Fn(&mut NotifyChange)| {
+        let mut change = NotifyChange {
+            guild,
+            channel,
+            ..NotifyChange::default()
+        };
+        f(&mut change);
+        Action::Manage(ManageAction::Notify(change))
+    };
+    let what = if channel.is_some() { "canal" } else { "servidor" };
+    if muted {
+        if ui.button(format!("Reativar {what}")).clicked() {
+            out.push(change(&|c| c.mute = Some(None)));
+            ui.close();
+        }
+    } else {
+        ui.menu_button(format!("Silenciar {what}"), |ui| {
+            for (minutes, label) in [
+                (Some(15), "Por 15 minutos"),
+                (Some(60), "Por 1 hora"),
+                (Some(180), "Por 3 horas"),
+                (Some(480), "Por 8 horas"),
+                (Some(1_440), "Por 24 horas"),
+                (None, "Até eu reativar"),
+            ] {
+                if ui.button(label).clicked() {
+                    out.push(change(&|c| c.mute = Some(Some(minutes))));
+                    ui.close();
+                }
+            }
+        });
+    }
+    if guild.is_none() {
+        return;
+    }
+    ui.separator();
+    let default = if channel.is_some() {
+        "Usar padrão do servidor"
+    } else {
+        "Usar padrão do servidor (definido pelos administradores)"
+    };
+    for (value, label) in [
+        (3u8, default),
+        (0, "Todas as mensagens"),
+        (1, "Somente @menções"),
+        (2, "Nada"),
+    ] {
+        let text = RichText::new(label).color(palette.text);
+        if ui.radio(level == value, text).clicked() {
+            out.push(change(&|c| c.level = Some(value)));
+        }
+    }
+    if channel.is_none() {
+        ui.separator();
+        let mut everyone = notify.suppress_everyone;
+        if ui.checkbox(&mut everyone, "Suprimir @everyone e @here").changed() {
+            out.push(change(&|c| c.suppress_everyone = Some(everyone)));
+        }
+        let mut roles = notify.suppress_roles;
+        if ui.checkbox(&mut roles, "Suprimir todas as @menções de cargos").changed() {
+            out.push(change(&|c| c.suppress_roles = Some(roles)));
+        }
+    }
+}
