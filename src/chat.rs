@@ -938,6 +938,11 @@ impl App {
         self.send_with(channel, text, uploads, None, shown);
     }
 
+    /// Sends plain text to a channel, shown at once.
+    pub fn send_text(&mut self, channel: Id, text: String) {
+        self.send_message(channel, text, Vec::new(), None);
+    }
+
     fn send_message(
         &mut self,
         channel: Id,

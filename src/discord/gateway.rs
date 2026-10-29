@@ -145,7 +145,7 @@ async fn connect(
                                 "guild_id": guild.to_string(),
                                 "typing": true,
                                 "activities": true,
-                                "threads": false,
+                                "threads": true,
                                 "channels": { channel.to_string(): [[0, 99]] },
                             }
                         });

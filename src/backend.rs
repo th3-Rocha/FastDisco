@@ -20,6 +20,7 @@ pub enum Tag {
     Nav(crate::nav::Tag),
     Folders(crate::folders::Tag),
     Interact(crate::interact::Tag),
+    Threads(crate::threads::Tag),
 }
 
 #[derive(Debug)]

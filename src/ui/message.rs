@@ -101,6 +101,7 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
             media(row, ui, message);
             super::bots::poll(row, ui, message);
             super::bots::components(row, ui, message);
+            super::threads::card(app, ui, message, row.out);
             if !message.reactions.is_empty() {
                 ui.add_space(4.0);
                 reactions(row, ui, message);
@@ -184,6 +185,13 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
     if row.found {
         return;
     }
+    // "started a thread" opens the thread.
+    if row_response.clicked()
+        && message.kind == 18
+        && let Some(link) = &message.thread
+    {
+        row.out.push(Action::Threads(crate::threads::ThreadAction::Open(link.id)));
+    }
     // Alt+click marks the message unread, as Discord.
     if row_response.clicked() && ui.input(|i| i.modifiers.alt) && !message.pending {
         row.out.push(Action::Nav(crate::nav::NavAction::MarkUnread {
@@ -219,6 +227,13 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
                 .collect()
         })
         .unwrap_or_default();
+    // Threads start from a message of a text channel, not of a thread.
+    let thread_from = app
+        .model
+        .channel(channel)
+        .filter(|c| c.kind == crate::model::ChannelKind::Text && message.thread.is_none())
+        .map(|_| id);
+    let mut thread_start = None;
     row_response.context_menu(|ui| {
         ui.set_min_width(180.0);
         if ui.button("Adicionar reação").clicked() {
@@ -247,6 +262,10 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
         }
         if !text.is_empty() && ui.button("Copiar texto").clicked() {
             chosen = Some(ChatAction::Copy(text.clone()));
+            ui.close();
+        }
+        if thread_from.is_some() && ui.button("Criar tópico").clicked() {
+            thread_start = thread_from;
             ui.close();
         }
         if ui.button("Encaminhar").clicked() {
@@ -337,6 +356,12 @@ pub fn show(row: &mut Row<'_>, ui: &mut Ui, message: &Message, continues: bool) 
     if let Some(action) = extra {
         row.out.push(Action::Interact(action));
     }
+    if let Some(message) = thread_start {
+        row.out.push(Action::Threads(crate::threads::ThreadAction::Start {
+            parent: channel,
+            message: Some(message),
+        }));
+    }
 }
 
 /// "Pular" at the top right of a message shown away from its channel.
@@ -377,7 +402,10 @@ fn system_text(app: &App, guild: Option<Id>, message: &Message) -> Option<String
         2 => format!("{name} removeu alguém do grupo."),
         4 => format!("{name} mudou o nome do canal."),
         5 => format!("{name} mudou o ícone do grupo."),
-        18 => format!("{name} começou um tópico."),
+        18 => match &message.thread {
+            Some(link) => format!("{name} começou um tópico: {}. Clique para ver.", link.name),
+            None => format!("{name} começou um tópico."),
+        },
         _ => return None,
     })
 }

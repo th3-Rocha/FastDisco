@@ -8,9 +8,9 @@ use serde_json::Value;
 use super::{CDN, avatar_url};
 use crate::model::{
     Activity, ActivityKind, Attachment, Badge, Button, Channel, ChannelKind, Component,
-    CustomEmoji, Embed, EmbedField, EmbedMedia, Forward, Guild, Id, ListItem, Member, Message,
+    CustomEmoji, Embed, EmbedField, EmbedMedia, ForumTag, Forward, Guild, Id, ListItem, Member, Message,
     Model, Overwrite, Poll, PollAnswer, Presence, Profile, Reaction, ReactionEmoji, Reply, Role,
-    Select, SelectOption, Status, Sticker, User,
+    Select, SelectOption, Status, Sticker, ThreadLink, ThreadMeta, User,
 };
 
 pub fn id(value: &Value) -> Option<Id> {
@@ -180,7 +180,40 @@ pub fn channel(value: &Value, guild: Option<Id>) -> Option<Channel> {
         icon: value["icon"]
             .as_str()
             .map(|hash| format!("{CDN}/channel-icons/{id}/{hash}.png?size=96")),
+        thread: (kind == ChannelKind::Thread).then(|| thread_meta(value)),
+        tags: value["available_tags"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|t| {
+                        Some(ForumTag {
+                            id: self::id(&t["id"])?,
+                            name: label(&t["name"]).unwrap_or_default(),
+                            emoji: label(&t["emoji_name"]),
+                            moderated: t["moderated"].as_bool().unwrap_or(false),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
+}
+
+/// A thread's state; `member` is there when the user follows it.
+fn thread_meta(value: &Value) -> ThreadMeta {
+    let meta = &value["thread_metadata"];
+    ThreadMeta {
+        archived: meta["archived"].as_bool().unwrap_or(false),
+        locked: meta["locked"].as_bool().unwrap_or(false),
+        messages: value["message_count"].as_u64().unwrap_or(0) as u32,
+        members: value["member_count"].as_u64().unwrap_or(0) as u32,
+        owner: id(&value["owner_id"]),
+        joined: value["member"].is_object(),
+        tags: value["applied_tags"]
+            .as_array()
+            .map(|list| list.iter().filter_map(id).collect())
+            .unwrap_or_default(),
+    }
 }
 
 /// A voice call's start, in Unix seconds; Discord sends a number or a
@@ -359,6 +392,28 @@ pub fn message(value: &Value, me: Id) -> Option<Message> {
         poll: poll(&value["poll"]),
         components: components(&value["components"]),
         pinned: value["pinned"].as_bool().unwrap_or(false),
+        thread: thread_link(value),
+    })
+}
+
+/// The thread a message started, or the one a "started a thread" line
+/// (type 18) names.
+fn thread_link(value: &Value) -> Option<ThreadLink> {
+    let thread = &value["thread"];
+    if thread.is_object() {
+        return Some(ThreadLink {
+            id: id(&thread["id"])?,
+            name: label(&thread["name"]).unwrap_or_default(),
+            messages: thread["message_count"].as_u64().unwrap_or(0) as u32,
+        });
+    }
+    if value["type"].as_i64() != Some(18) {
+        return None;
+    }
+    Some(ThreadLink {
+        id: id(&value["message_reference"]["channel_id"])?,
+        name: value["content"].as_str().unwrap_or_default().to_owned(),
+        messages: 0,
     })
 }
 

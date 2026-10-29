@@ -28,6 +28,7 @@ mod spell;
 mod stats;
 mod text;
 mod theme;
+mod threads;
 mod ui;
 mod updates;
 mod voice;

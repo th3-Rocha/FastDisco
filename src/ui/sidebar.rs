@@ -206,6 +206,7 @@ fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
         let rect = channel_row(app, ui, id, movable);
         rows.push((rect, None, Some(id), false));
         super::call::members(app, ui, id);
+        super::threads::rows(app, ui, id, false);
     }
     for (category, list) in categories {
         ui.add_space(16.0);
@@ -266,6 +267,7 @@ fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
             let rect = channel_row(app, ui, id, movable);
             rows.push((rect, Some(category), Some(id), false));
             super::call::members(app, ui, id);
+            super::threads::rows(app, ui, id, collapsed);
         }
     }
     ui.add_space(8.0);
@@ -458,11 +460,7 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     } else {
         palette.muted
     };
-    let icon = match channel.kind {
-        ChannelKind::Voice => Icon::Speaker,
-        ChannelKind::Other => Icon::Threads,
-        _ => Icon::Hash,
-    };
+    let icon = super::widgets::channel_icon(channel.kind);
     paint_icon(
         ui,
         icon,
@@ -479,7 +477,7 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     } else {
         Weight::Medium
     };
-    let voice = channel.kind == ChannelKind::Voice;
+    let voice = channel.kind.is_voice();
     let buttons = hovered || selected;
     let reserve = if buttons {
         if voice { 72.0 } else { 52.0 }
@@ -595,7 +593,7 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
             app.actions
                 .push(Action::Admin(crate::admin::AdminAction::OpenSettings(guild)));
         }
-        if matches!(channel.kind, ChannelKind::Text | ChannelKind::Voice)
+        if !matches!(channel.kind, ChannelKind::Thread | ChannelKind::Category)
             && button(Icon::UserPlus, "Criar convite")
         {
             app.actions
@@ -608,11 +606,11 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     let unread = channel.unread() || channel.mentions > 0;
     let guild = channel.guild;
     let textual = channel.kind.is_textual();
-    if response.clicked() && textual {
+    if response.clicked() && (textual || channel.kind.is_forum()) {
         app.actions.push(Action::OpenChannel(id));
     }
     // A click on a voice channel joins it, as Discord.
-    if response.clicked() && channel.kind == ChannelKind::Voice {
+    if response.clicked() && channel.kind.is_voice() {
         app.actions.push(Action::JoinVoice(id));
     }
     let mut chosen = None;

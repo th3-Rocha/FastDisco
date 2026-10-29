@@ -247,14 +247,14 @@ pub fn switcher(app: &mut App, ui: &mut Ui) {
                                             18.0,
                                             palette.muted,
                                         ),
-                                        Some(ChannelKind::Voice) => paint_icon(
+                                        Some(kind) => paint_icon(
                                             ui,
-                                            Icon::Speaker,
+                                            super::widgets::channel_icon(kind),
                                             icon_at,
                                             18.0,
                                             palette.muted,
                                         ),
-                                        _ => {
+                                        None => {
                                             paint_icon(ui, Icon::Hash, icon_at, 18.0, palette.muted)
                                         }
                                     }
@@ -468,6 +468,7 @@ pub fn popout(app: &mut App, ui: &mut Ui) {
                     match popout {
                         Popout::Pins => pins(app, ui, &mut out),
                         Popout::Inbox => inbox(app, ui, &mut out),
+                        Popout::Threads => super::threads::popout(app, ui, &mut out),
                     }
                 });
         });
@@ -893,6 +894,7 @@ pub fn popout_button(app: &mut App, ui: &mut Ui, popout: Popout) {
     let (icon, hint) = match popout {
         Popout::Inbox => (Icon::Inbox, "Caixa de entrada"),
         Popout::Pins => (Icon::Pin, "Mensagens fixadas"),
+        Popout::Threads => (Icon::Threads, "Tópicos"),
     };
     let open = app.nav.popout == Some(popout);
     let response = icon_button(ui, &palette, icon, 24.0, open, hint);

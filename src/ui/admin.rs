@@ -1007,7 +1007,7 @@ fn invite(app: &mut App, ui: &mut Ui, link: Option<String>) {
         None => "Convidar amigos".to_owned(),
     };
     let place = channel.map(|c| {
-        let mark = if c.kind == crate::model::ChannelKind::Voice { "🔊" } else { "#" };
+        let mark = if c.kind.is_voice() { "🔊" } else { "#" };
         format!("{mark}{}", c.name)
     });
     let state = egui::Id::new("invite-dialog");

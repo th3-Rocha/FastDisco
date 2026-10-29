@@ -152,8 +152,8 @@ everything Discord's desktop app does.
 ### Channels
 
 - [x] Text channels and announcement channels
-- [ ] Threads: list, open, create, reply
-- [ ] Forum and media channels
+- [x] Threads: list, open, create, reply, follow and leave, close and lock; followed threads under their channel
+- [x] Forum and media channels: posts as cards or a picture grid, tags to filter by, new posts with tags
 - [ ] Stage channels
 - [x] Voice channels: joining, speaking and hearing, mute and deafen, who is talking, with Discord's DAVE end-to-end encryption
 - [x] Voice filter: DeepFilterNet3 neural noise suppression (or WebRTC's), echo cancellation, automatic gain and input sensitivity

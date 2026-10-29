@@ -259,3 +259,17 @@ pub fn group_icon(ui: &Ui, app: &App, channel: &crate::model::Channel, center: P
     ui.painter().circle_filled(center, radius, color);
     paint_icon(ui, Icon::Users, center, radius * 1.1, Color32::WHITE);
 }
+
+/// The icon Discord draws before a channel of each kind.
+pub fn channel_icon(kind: crate::model::ChannelKind) -> Icon {
+    use crate::model::ChannelKind;
+    match kind {
+        ChannelKind::Voice => Icon::Speaker,
+        ChannelKind::Stage => Icon::Stage,
+        ChannelKind::Forum => Icon::Forum,
+        ChannelKind::Media => Icon::Image,
+        ChannelKind::Thread | ChannelKind::Other => Icon::Threads,
+        ChannelKind::Group => Icon::Users,
+        _ => Icon::Hash,
+    }
+}

@@ -60,12 +60,19 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 app.load_profile(user);
                 profile::panel(app, ui, user);
             }
+            if app.model.channel(channel).is_some_and(|c| c.kind.is_forum()) {
+                egui::CentralPanel::default()
+                    .frame(Frame::new().inner_margin(Margin::ZERO))
+                    .show(ui, |ui| super::threads::forum(app, ui, channel));
+                return;
+            }
             let field = composer::show(app, ui, channel);
             egui::CentralPanel::default()
                 .frame(Frame::new().inner_margin(Margin::ZERO))
                 .show(ui, |ui| messages(app, ui, channel));
             composer::picker(app, ui, field);
         });
+    super::threads::draft(app, ui);
     composer::dialogs(app, ui);
     composer::viewer(app, ui);
     composer::drop_zone(app, ui);
@@ -121,13 +128,44 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                     x += 32.0;
                     app.model.direct_name(channel)
                 }
-                ChannelKind::Voice => {
-                    paint_icon(ui, Icon::Speaker, pos2(x + 12.0, y), 22.0, palette.muted);
+                ChannelKind::Thread => {
+                    // "# channel > thread", as Discord.
+                    let parent = channel.parent.and_then(|p| app.model.channel(p));
+                    if let Some(parent) = parent {
+                        paint_icon(ui, Icon::Hash, pos2(x + 12.0, y), 24.0, palette.muted);
+                        x += 28.0;
+                        let galley = ui.painter().layout_no_wrap(
+                            parent.name.clone(),
+                            font(Weight::SemiBold, 16.0),
+                            palette.muted,
+                        );
+                        let width = galley.size().x;
+                        let hit = Rect::from_min_size(pos2(x, y - 12.0), vec2(width, 24.0));
+                        if ui
+                            .interact(hit, ui.id().with("thread-parent"), Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            app.actions.push(Action::OpenChannel(parent.id));
+                        }
+                        ui.painter()
+                            .galley(pos2(x, y - galley.size().y / 2.0), galley, palette.muted);
+                        x += width + 4.0;
+                        paint_icon(ui, Icon::ChevronRight, pos2(x + 8.0, y), 16.0, palette.muted);
+                        x += 18.0;
+                    }
+                    paint_icon(ui, Icon::Threads, pos2(x + 12.0, y), 22.0, palette.muted);
                     x += 30.0;
                     channel.name.clone()
                 }
-                _ => {
-                    paint_icon(ui, Icon::Hash, pos2(x + 12.0, y), 24.0, palette.muted);
+                kind => {
+                    paint_icon(
+                        ui,
+                        super::widgets::channel_icon(kind),
+                        pos2(x + 12.0, y),
+                        if kind.is_voice() { 22.0 } else { 24.0 },
+                        palette.muted,
+                    );
                     x += 30.0;
                     channel.name.clone()
                 }
@@ -182,6 +220,8 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
             let right = Rect::from_min_max(pos2(buttons_left, rect.top()), rect.right_bottom());
             let show_members = app.settings.show_members;
             let in_server = app.server().is_some();
+            let kind = channel.kind;
+            let thread_joined = channel.thread.as_ref().map(|t| t.joined);
             ui.scope_builder(
                 UiBuilder::new()
                     .max_rect(right)
@@ -209,7 +249,26 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                             false,
                             "Configurações de notificação",
                         );
-                        icon_button(ui, &palette, Icon::Threads, 24.0, false, "Tópicos");
+                        if !matches!(kind, ChannelKind::Voice | ChannelKind::Stage)
+                            && !kind.is_forum()
+                        {
+                            super::nav::popout_button(app, ui, crate::nav::Popout::Threads);
+                        }
+                        if let Some(joined) = thread_joined {
+                            let label = if joined { "Sair do tópico" } else { "Participar" };
+                            let button = egui::Button::new(
+                                egui::RichText::new(label)
+                                    .font(font(Weight::Medium, 13.0))
+                                    .color(if joined { palette.text } else { Color32::WHITE }),
+                            )
+                            .fill(if joined { palette.selected } else { palette.accent })
+                            .corner_radius(CornerRadius::same(4));
+                            if ui.add(button).clicked() {
+                                app.actions.push(Action::Threads(
+                                    crate::threads::ThreadAction::Join(id, !joined),
+                                ));
+                            }
+                        }
                     } else {
                         let shown = app.settings.dm_profile;
                         let hint = if shown {

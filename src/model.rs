@@ -176,7 +176,15 @@ pub enum ChannelKind {
     Category,
     Direct,
     Group,
-    /// Forums, stages, threads and anything newer: listed, not opened.
+    /// A thread of a text channel, or a post in a forum.
+    Thread,
+    /// A forum: posts, each a thread, with tags.
+    Forum,
+    /// A media channel: a forum shown as a grid of pictures.
+    Media,
+    /// A stage: speakers on the stage and an audience.
+    Stage,
+    /// Anything newer: listed, not opened.
     Other,
 }
 
@@ -184,10 +192,14 @@ impl ChannelKind {
     pub fn from_type(kind: i64) -> Self {
         match kind {
             0 | 5 => ChannelKind::Text,
-            2 | 13 => ChannelKind::Voice,
+            2 => ChannelKind::Voice,
+            13 => ChannelKind::Stage,
             4 => ChannelKind::Category,
             1 => ChannelKind::Direct,
             3 => ChannelKind::Group,
+            10..=12 => ChannelKind::Thread,
+            15 => ChannelKind::Forum,
+            16 => ChannelKind::Media,
             _ => ChannelKind::Other,
         }
     }
@@ -196,9 +208,43 @@ impl ChannelKind {
     pub fn is_textual(self) -> bool {
         matches!(
             self,
-            ChannelKind::Text | ChannelKind::Direct | ChannelKind::Group
+            ChannelKind::Text | ChannelKind::Direct | ChannelKind::Group | ChannelKind::Thread
         )
     }
+
+    /// Joined to talk: voice channels and stages.
+    pub fn is_voice(self) -> bool {
+        matches!(self, ChannelKind::Voice | ChannelKind::Stage)
+    }
+
+    /// Holds posts rather than messages.
+    pub fn is_forum(self) -> bool {
+        matches!(self, ChannelKind::Forum | ChannelKind::Media)
+    }
+}
+
+/// What a thread or a forum post adds to a channel.
+#[derive(Clone, Debug, Default)]
+pub struct ThreadMeta {
+    pub archived: bool,
+    pub locked: bool,
+    pub messages: u32,
+    pub members: u32,
+    pub owner: Option<Id>,
+    /// The user follows it: it shows under its channel in the list.
+    pub joined: bool,
+    /// A forum post's tags.
+    pub tags: Vec<Id>,
+}
+
+/// A forum's tag, which posts carry.
+#[derive(Clone, Debug)]
+pub struct ForumTag {
+    pub id: Id,
+    pub name: String,
+    pub emoji: Option<String>,
+    /// Only moderators may put it on a post.
+    pub moderated: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -244,6 +290,10 @@ pub struct Channel {
     pub voice_start: Option<u64>,
     /// A group's own picture.
     pub icon: Option<String>,
+    /// A thread's or a forum post's details.
+    pub thread: Option<ThreadMeta>,
+    /// A forum's tags.
+    pub tags: Vec<ForumTag>,
 }
 
 impl Channel {
@@ -291,6 +341,17 @@ pub struct Message {
     /// Bots' buttons, menus and layout.
     pub components: Vec<Component>,
     pub pinned: bool,
+    /// The thread this message started, or that a "started a thread"
+    /// line points to.
+    pub thread: Option<ThreadLink>,
+}
+
+/// A thread named from a message.
+#[derive(Clone, Debug)]
+pub struct ThreadLink {
+    pub id: Id,
+    pub name: String,
+    pub messages: u32,
 }
 
 /// What a forwarded message carried, and where it came from.
@@ -420,6 +481,7 @@ impl Message {
             poll: None,
             components: Vec::new(),
             pinned: false,
+            thread: None,
         }
     }
 }
@@ -755,6 +817,7 @@ pub mod permission {
     pub const CHANGE_NICKNAME: u64 = 1 << 26;
     pub const MANAGE_ROLES: u64 = 1 << 28;
     pub const MANAGE_EMOJIS: u64 = 1 << 30;
+    pub const MANAGE_THREADS: u64 = 1 << 34;
 }
 
 impl Model {
@@ -951,14 +1014,14 @@ impl Model {
     /// A guild's visible channels in Discord's order: channels outside a
     /// category, then each category with its channels; text before voice.
     pub fn layout(&self, guild: &Guild) -> (Vec<Id>, Vec<(Id, Vec<Id>)>) {
-        let rank = |c: &Channel| (c.kind == ChannelKind::Voice, c.position, c.id);
+        let rank = |c: &Channel| (c.kind.is_voice(), c.position, c.id);
         let mut loose: Vec<&Channel> = Vec::new();
         let mut categories: Vec<&Channel> = Vec::new();
         let mut children: HashMap<Id, Vec<&Channel>> = HashMap::new();
         for channel in guild.channels.iter().filter_map(|id| self.channel(*id)) {
             if channel.kind == ChannelKind::Category {
                 categories.push(channel);
-            } else if !self.can_view(channel) {
+            } else if channel.kind == ChannelKind::Thread || !self.can_view(channel) {
             } else if let Some(parent) = channel.parent {
                 children.entry(parent).or_default().push(channel);
             } else {
@@ -999,6 +1062,27 @@ impl Model {
             .fold((false, 0), |(unread, mentions), c| {
                 (unread || c.unread(), mentions + c.mentions)
             })
+    }
+
+    /// The threads the user follows under a channel, newest first, as
+    /// the channel list shows them.
+    pub fn joined_threads(&self, parent: Id) -> Vec<Id> {
+        let Some(guild) = self.channel(parent).and_then(|c| c.guild).and_then(|g| self.guild(g))
+        else {
+            return Vec::new();
+        };
+        let mut list: Vec<Id> = guild
+            .channels
+            .iter()
+            .filter_map(|id| self.channel(*id))
+            .filter(|c| {
+                c.parent == Some(parent)
+                    && c.thread.as_ref().is_some_and(|t| t.joined && !t.archived)
+            })
+            .map(|c| c.id)
+            .collect();
+        list.sort_by_key(|id| std::cmp::Reverse(*id));
+        list
     }
 
     /// Direct messages, the most recent conversation first.

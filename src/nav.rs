@@ -36,6 +36,7 @@ pub enum Tag {
 pub enum Popout {
     Pins,
     Inbox,
+    Threads,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -236,8 +237,8 @@ pub fn candidates(app: &App, query: &str) -> Vec<Candidate> {
                     continue;
                 };
                 let wanted = match filter {
-                    Some('!') => c.kind == ChannelKind::Voice,
-                    _ => c.kind == ChannelKind::Text,
+                    Some('!') => c.kind.is_voice(),
+                    _ => matches!(c.kind, ChannelKind::Text | ChannelKind::Forum | ChannelKind::Media),
                 };
                 if !wanted || !model.can_view(c) {
                     continue;
@@ -414,6 +415,14 @@ impl App {
                                 format!("/channels/{channel}/pins"),
                                 None,
                             );
+                        }
+                    }
+                    Popout::Threads => {
+                        self.threads.show_archived = false;
+                        if let Some(channel) = self.channel {
+                            let parent = self.thread_parent(channel);
+                            self.threads.lists.remove(&parent);
+                            self.apply_threads(crate::threads::ThreadAction::Load(parent));
                         }
                     }
                     Popout::Inbox => {

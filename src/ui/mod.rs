@@ -17,6 +17,7 @@ mod profile;
 mod rail;
 mod settings;
 mod sidebar;
+mod threads;
 mod titlebar;
 mod widgets;
 
@@ -111,6 +112,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 /// Widgets that sense clicks but are not buttons: a message's background
 /// (for its context menu) and text with links, which sets its own hand.
 const NO_HAND: &str = "no-pointing-hand";
+
+/// Discord's link blue.
+pub const LINK: egui::Color32 = egui::Color32::from_rgb(0x00, 0xa8, 0xfc);
 
 pub fn no_hand(ui: &egui::Ui, id: egui::Id) {
     ui.data_mut(|d| {

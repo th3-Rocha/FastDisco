@@ -235,7 +235,7 @@ fn member_menu(
                 .iter()
                 .filter_map(|id| app.model.channel(*id))
                 .filter(|c| {
-                    c.kind == crate::model::ChannelKind::Voice
+                    c.kind.is_voice()
                         && c.id != channel
                         && app.model.can_view(c)
                 })

@@ -153,6 +153,8 @@ pub enum Action {
     Nav(crate::nav::NavAction),
     /// Forwarding, pins, polls, bots' components and commands.
     Interact(crate::interact::InteractAction),
+    /// Threads and forum posts.
+    Threads(crate::threads::ThreadAction),
     /// Looks for a newer Discofast now.
     CheckUpdate,
     /// Restarts into the downloaded update.
@@ -227,6 +229,7 @@ pub struct App {
     pub admin: crate::admin::Admin,
     pub nav: crate::nav::Nav,
     pub interact: crate::interact::Interact,
+    pub threads: crate::threads::Threads,
     /// The spell checker, once its dictionaries are loaded.
     pub speller: Option<std::sync::Arc<crate::spell::Speller>>,
     /// The voice call the user is in.
@@ -309,6 +312,7 @@ impl App {
             admin: crate::admin::Admin::default(),
             nav: crate::nav::Nav::default(),
             interact: crate::interact::Interact::default(),
+            threads: crate::threads::Threads::default(),
             speller: None,
             call: None,
             mic_test: None,
@@ -695,6 +699,7 @@ impl App {
                     crate::backend::Tag::Nav(tag) => self.nav_result(tag, result),
                     crate::backend::Tag::Folders(tag) => self.folders_result(tag, result),
                     crate::backend::Tag::Interact(tag) => self.interact_result(tag, result),
+                    crate::backend::Tag::Threads(tag) => self.threads_result(tag, result),
                 },
                 Event::Profile { user, profile } => {
                     self.chat.profiles.insert(
@@ -957,6 +962,7 @@ impl App {
                 Action::Send => self.send_draft(),
                 Action::Chat(action) => self.apply_chat(action),
                 Action::Admin(action) => self.apply_admin(action),
+                Action::Threads(action) => self.apply_threads(action),
                 Action::Nav(action) => self.apply_nav(action),
                 Action::Interact(action) => self.apply_interact(action),
                 Action::SetNoiseSuppression(level) => {
@@ -1296,7 +1302,7 @@ impl App {
             return;
         };
         // A voice channel has a text chat of its own.
-        if !channel.kind.is_textual() && channel.kind != ChannelKind::Voice {
+        if !channel.kind.is_textual() && !channel.kind.is_voice() && !channel.kind.is_forum() {
             return;
         }
         // A channel opened from a mention may be on another server.
@@ -1322,6 +1328,15 @@ impl App {
         }
         self.channel = Some(id);
         self.chat.focus_composer = true;
+        let forum = channel.kind.is_forum();
+        if forum {
+            channel.requested = true;
+            self.threads.filter.clear();
+            self.apply_threads(crate::threads::ThreadAction::Load(id));
+        }
+        let Some(channel) = self.model.channels.get_mut(&id) else {
+            return;
+        };
         if !channel.requested {
             channel.requested = true;
             self.backend.send(Command::LoadMessages {
@@ -1490,9 +1505,14 @@ impl App {
                     return;
                 };
                 channel.last_message = Some(message.id);
+                if let Some(meta) = &mut channel.thread {
+                    meta.messages += 1;
+                }
                 if message.author == me || open {
                     channel.read = Some(message.id);
-                } else if message.mentions_me || channel.kind != ChannelKind::Text {
+                } else if message.mentions_me
+                    || !matches!(channel.kind, ChannelKind::Text | ChannelKind::Thread)
+                {
                     channel.mentions += 1;
                 }
                 if open && message.author != me {
@@ -1687,6 +1707,8 @@ impl App {
             | "MESSAGE_REACTION_REMOVE"
             | "MESSAGE_REACTION_REMOVE_ALL"
             | "TYPING_START" => self.chat_dispatch(kind, &data),
+            "THREAD_CREATE" | "THREAD_UPDATE" | "THREAD_DELETE" | "THREAD_LIST_SYNC"
+            | "THREAD_MEMBER_UPDATE" | "THREAD_MEMBERS_UPDATE" => self.thread_dispatch(kind, &data),
             "SESSIONS_REPLACE" => {
                 if let Some(me) = self.model.users.get_mut(&me)
                     && let Some(first) = data.as_array().and_then(|l| l.first())

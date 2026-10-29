@@ -83,5 +83,13 @@ fastframe_icons::icons! {
         Sliders => "sliders-horizontal",
         Shield => "shield-check",
         LogOut => "log-out",
+        Forum => "message-square-text",
+        Stage => "radio",
+        Hand => "hand",
+        Tag => "tag",
+        Upload => "upload",
+        Phone => "phone",
+        ShieldPlain => "shield",
+        Clock => "clock",
     }
 }
