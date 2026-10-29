@@ -165,6 +165,7 @@ everything Discord's desktop app does.
 - [x] "Criar seu servidor": make your own or start from Discord's templates, the audience question, the name and icon
 - [x] "Entrar em um servidor" with an invite (the browser takes over when Discord asks for a captcha)
 - [x] The rail's grey add-server tile
+- [x] The microphone's and headphones' arrow menus: device, input profile, volume, voice settings
 - [ ] Video calls and screen sharing
 - [ ] Direct message calls
 - [ ] Scheduled events

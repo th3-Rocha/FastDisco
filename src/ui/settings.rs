@@ -900,21 +900,7 @@ fn keybinds(app: &mut App, ui: &mut Ui) {
 fn voice(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
     title(ui, &palette, "Voz e vídeo");
-    // The devices, listed once in the background.
-    let devices = {
-        let mut slot = app.devices.lock().unwrap_or_else(|e| e.into_inner());
-        if slot.is_none() {
-            *slot = Some(Default::default());
-            let shared = std::sync::Arc::clone(&app.devices);
-            let ctx = ui.ctx().clone();
-            std::thread::spawn(move || {
-                let list = crate::devices::list();
-                *shared.lock().unwrap_or_else(|e| e.into_inner()) = Some(list);
-                ctx.request_repaint();
-            });
-        }
-        slot.clone().unwrap_or_default()
-    };
+    let devices = devices(app, ui.ctx());
     // The live level, from the call or the microphone test.
     let level = app
         .mic_test
@@ -1193,6 +1179,22 @@ fn picker_box(
     );
 }
 
+/// The microphones and speakers, listed once in the background.
+pub(super) fn devices(app: &App, ctx: &egui::Context) -> crate::devices::Devices {
+    let mut slot = app.devices.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.is_none() {
+        *slot = Some(Default::default());
+        let shared = std::sync::Arc::clone(&app.devices);
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let list = crate::devices::list();
+            *shared.lock().unwrap_or_else(|e| e.into_inner()) = Some(list);
+            ctx.request_repaint();
+        });
+    }
+    slot.clone().unwrap_or_default()
+}
+
 /// A device select; Some(choice) when one is picked, None inside for the
 /// system's default.
 fn device_picker(
@@ -1249,7 +1251,7 @@ fn device_picker(
 
 /// Discord's slider, blue up to a white knob, for 0–200%; the new value
 /// while it is dragged.
-fn percent_slider(ui: &mut Ui, palette: &Palette, value: u16, width: f32) -> Option<u16> {
+pub(super) fn percent_slider(ui: &mut Ui, palette: &Palette, value: u16, width: f32) -> Option<u16> {
     let (rect, response) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click_and_drag());
     let track = Rect::from_min_max(
         pos2(rect.left() + 2.0, rect.center().y - 2.0),

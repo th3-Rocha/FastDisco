@@ -928,6 +928,132 @@ fn split_button(
     (main.on_hover_text(hint), more)
 }
 
+/// The menu on the microphone's or the headphones' arrow, as Discord's:
+/// the device (another one to choose under it), the input profile for the
+/// microphone, the volume, and the voice settings.
+fn sound_menu(app: &mut App, more: &egui::Response, input: bool) {
+    let palette = app.palette;
+    let mut chosen: Vec<Action> = Vec::new();
+    egui::Popup::menu(more)
+        .align(egui::RectAlign::TOP_START)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_width(240.0);
+            ui.spacing_mut().item_spacing.y = 4.0;
+            let devices = super::settings::devices(app, ui.ctx());
+            let (list, default, current) = if input {
+                (&devices.inputs, devices.default_input.as_deref(), app.settings.input_device.as_deref())
+            } else {
+                (&devices.outputs, devices.default_output.as_deref(), app.settings.output_device.as_deref())
+            };
+            let label = |name: Option<&str>| {
+                name.and_then(|n| crate::devices::Devices::label(list, n))
+                    .or_else(|| name.map(str::to_owned))
+            };
+            let shown = label(current)
+                .or_else(|| label(default).map(|d| format!("Padrão do sistema: {d}")))
+                .unwrap_or_else(|| "Padrão do sistema".to_owned());
+            let title = if input { "Dispositivo de entrada" } else { "Dispositivo de saída" };
+            submenu(ui, &palette, title, &shown, |ui| {
+                ui.set_min_width(240.0);
+                let default_label = label(default)
+                    .map_or_else(|| "Padrão do sistema".to_owned(), |d| format!("Padrão do sistema: {d}"));
+                if super::call::menu_item(ui, &palette, &default_label, palette.text).clicked() {
+                    chosen.push(if input { Action::SetInputDevice(None) } else { Action::SetOutputDevice(None) });
+                    ui.close();
+                }
+                for device in list {
+                    let color = if current == Some(device.name.as_str()) { palette.strong } else { palette.text };
+                    if super::call::menu_item(ui, &palette, &device.label, color).clicked() {
+                        let name = Some(device.name.clone());
+                        chosen.push(if input { Action::SetInputDevice(name) } else { Action::SetOutputDevice(name) });
+                        ui.close();
+                    }
+                }
+            });
+            if input {
+                let profile = app.settings.input_profile;
+                let name = match profile {
+                    0 => "Isolamento de Voz",
+                    1 => "Estúdio",
+                    _ => "Personalizado",
+                };
+                submenu(ui, &palette, "Perfil de entrada", name, |ui| {
+                    ui.set_min_width(200.0);
+                    for (value, label) in [(0, "Isolamento de Voz"), (1, "Estúdio"), (2, "Personalizado")] {
+                        let color = if profile == value { palette.strong } else { palette.text };
+                        if super::call::menu_item(ui, &palette, label, color).clicked() {
+                            chosen.push(Action::SetInputProfile(value));
+                            ui.close();
+                        }
+                    }
+                });
+            }
+            ui.separator();
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(if input { "Volume de entrada" } else { "Volume de saída" })
+                    .font(font(Weight::Medium, 15.0))
+                    .color(palette.strong),
+            );
+            let volume = if input { app.settings.input_volume } else { app.settings.output_volume };
+            if let Some(v) = super::settings::percent_slider(ui, &palette, volume, 228.0) {
+                chosen.push(if input { Action::SetInputVolume(v) } else { Action::SetOutputVolume(v) });
+            }
+            ui.separator();
+            let (row, response) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
+            if response.hovered() {
+                ui.painter().rect_filled(row, CornerRadius::same(4), palette.hover);
+            }
+            paint_icon(ui, Icon::Settings, pos2(row.left() + 14.0, row.center().y), 20.0, palette.icon);
+            ui.painter().text(
+                pos2(row.left() + 34.0, row.center().y),
+                Align2::LEFT_CENTER,
+                "Configurações de voz",
+                font(Weight::Medium, 15.0),
+                palette.strong,
+            );
+            if response.clicked() {
+                chosen.push(Action::OpenSettings(crate::app::SettingsPage::Voice));
+                ui.close();
+            }
+        });
+    app.actions.extend(chosen);
+}
+
+/// A row with a title and its current value under it, and a chevron; the
+/// choices open beside it.
+fn submenu(
+    ui: &mut Ui,
+    palette: &crate::theme::Palette,
+    title: &str,
+    value: &str,
+    add: impl FnOnce(&mut Ui),
+) {
+    let (row, response) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(row, CornerRadius::same(4), palette.hover);
+    }
+    ui.painter().text(
+        pos2(row.left() + 6.0, row.top() + 13.0),
+        Align2::LEFT_CENTER,
+        title,
+        font(Weight::Medium, 15.0),
+        palette.strong,
+    );
+    Elide::new(ui, row.right() - 28.0).text(
+        pos2(row.left() + 6.0, row.top() + 31.0),
+        Align2::LEFT_CENTER,
+        value,
+        font(Weight::Regular, 12.0),
+        palette.muted,
+    );
+    paint_icon(ui, Icon::ChevronRight, pos2(row.right() - 12.0, row.center().y), 16.0, palette.icon);
+    egui::Popup::menu(&response)
+        .align(egui::RectAlign::RIGHT_START)
+        .show(add);
+}
+
 /// The user: picture, name and status (or "Em voz"), then microphone,
 /// headphones and settings.
 fn user_row(app: &mut App, ui: &mut Ui, rect: Rect) {
@@ -1052,19 +1178,8 @@ fn user_row(app: &mut App, ui: &mut Ui, rect: Rect) {
     if ears.clicked() {
         app.actions.push(Action::ToggleDeafen);
     }
-    for more in [mic_more, ears_more] {
-        let mut chosen = None;
-        egui::Popup::menu(&more).show(|ui| {
-            ui.set_min_width(200.0);
-            if ui.button("Configurações de voz").clicked() {
-                chosen = Some(Action::OpenSettings(crate::app::SettingsPage::Voice));
-                ui.close();
-            }
-        });
-        if let Some(action) = chosen {
-            app.actions.push(action);
-        }
-    }
+    sound_menu(app, &mic_more, true);
+    sound_menu(app, &ears_more, false);
     let gear = Rect::from_center_size(pos2(rect.right() - 18.0, y), Vec2::splat(32.0));
     let gear = ui.interact(gear, ui.id().with("settings"), Sense::click());
     if gear.hovered() {
