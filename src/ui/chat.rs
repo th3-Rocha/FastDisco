@@ -291,6 +291,16 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                             app.actions
                                 .push(Action::Chat(crate::chat::ChatAction::ToggleDmProfile));
                         }
+                        // The call buttons, as Discord's direct messages.
+                        let in_call = app.call.as_ref().is_some_and(|c| c.channel == id);
+                        let hint = if in_call { "Mostrar chamada" } else { "Iniciar chamada de voz" };
+                        if icon_button(ui, &palette, Icon::Phone, 22.0, in_call, hint).clicked() {
+                            app.actions.push(if in_call {
+                                Action::ShowCall(true)
+                            } else {
+                                Action::StartCall(id)
+                            });
+                        }
                         icon_button(
                             ui,
                             &palette,

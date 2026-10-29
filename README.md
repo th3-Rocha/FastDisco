@@ -184,7 +184,7 @@ everything Discord's desktop app does.
 - [ ] Watching a screen share: written behind the `video` feature (`cargo run --features video`), not yet tried against Discord
 - [x] Camera and screen sharing between friends on your own LiveKit server, beside the Discord call (the `selfhosted` feature, in the released builds; see `contrib/livekit`)
 - [ ] Video calls and screen sharing through Discord itself: cameras in the call and sending your own camera or screen
-- [ ] Direct message calls
+- [x] Direct message calls: calling from the header, the ring, answering or turning it down
 - [x] Scheduled events: the list with when and where, "Tenho interesse", creating them in a voice channel or elsewhere, starting, ending and cancelling
 
 ### Servers

@@ -164,6 +164,10 @@ pub enum Action {
     /// Restarts into the downloaded update.
     InstallUpdate,
     JoinVoice(Id),
+    /// Calls a direct message or group: joins its call and rings them.
+    StartCall(Id),
+    /// Answers the ringing call, or turns it down.
+    AnswerCall(bool),
     /// Closes the bar saying another device took the call.
     DismissVoiceTaken,
     LeaveVoice,
@@ -251,6 +255,8 @@ pub struct App {
     pub call_view: bool,
     /// The call another device took over, for Discord's "Reconectar" bar.
     pub voice_taken: Option<Id>,
+    /// A direct message call ringing for the user, and when it last rang.
+    pub ringing: Option<(Id, std::time::Instant)>,
     sounds: crate::sounds::Sounds,
     /// Where updating Discofast stands.
     pub update: crate::updates::Status,
@@ -328,6 +334,7 @@ impl App {
             devices: Default::default(),
             call_view: false,
             voice_taken: None,
+            ringing: None,
             sounds: crate::sounds::Sounds::default(),
             update: crate::updates::Status::Idle,
             update_receipt: None,
@@ -1054,6 +1061,8 @@ impl App {
                     self.voice_taken = None;
                     self.join_voice(channel);
                 }
+                Action::StartCall(channel) => self.start_call(channel),
+                Action::AnswerCall(accept) => self.answer_call(accept),
                 Action::DismissVoiceTaken => self.voice_taken = None,
                 Action::LeaveVoice => self.leave_voice(),
                 Action::ShowCall(shown) => self.call_view = shown && self.call.is_some(),
@@ -1743,6 +1752,7 @@ impl App {
             | "MESSAGE_REACTION_REMOVE"
             | "MESSAGE_REACTION_REMOVE_ALL"
             | "TYPING_START" => self.chat_dispatch(kind, &data),
+            "CALL_CREATE" | "CALL_UPDATE" | "CALL_DELETE" => self.call_event(kind, &data),
             "USER_GUILD_SETTINGS_UPDATE" => {
                 let (guild, notify) = parse::notify(&data);
                 self.model.notify.insert(guild, notify);

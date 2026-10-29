@@ -99,6 +99,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             bots::modal(app, ui);
             bots::forward_dialog(app, ui);
             bots::poll_dialog(app, ui);
+            call::incoming(app, ui);
             let wanted: Vec<crate::model::Id> =
                 ui.data_mut(|d| {
                     std::mem::take(d.get_temp_mut_or_default::<Vec<crate::model::Id>>(

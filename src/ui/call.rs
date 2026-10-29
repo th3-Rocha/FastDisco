@@ -715,7 +715,7 @@ pub fn view(app: &mut App, ui: &mut Ui) {
     let name = app
         .model
         .channel(channel)
-        .map(|c| c.name.clone())
+        .map(|c| if c.guild.is_some() { c.name.clone() } else { app.model.direct_name(c) })
         .unwrap_or_default();
     if app
         .model
@@ -1641,4 +1641,88 @@ fn stage(app: &mut App, ui: &mut Ui, channel: Id, guild: Option<Id>) {
     controls(app, ui, pos2(rect.center().x, rect.bottom() - 48.0));
     ui.ctx()
         .request_repaint_after(std::time::Duration::from_millis(100));
+}
+
+/// A direct message call ringing: who calls, and answering or turning it
+/// down, in a card at the top of the window as Discord's.
+pub fn incoming(app: &mut App, ui: &mut Ui) {
+    app.keep_ringing();
+    let Some((channel, _)) = app.ringing else {
+        return;
+    };
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(500));
+    let palette = app.palette;
+    let Some(c) = app.model.channel(channel).cloned() else {
+        return;
+    };
+    let name = app.model.direct_name(&c);
+    let caller = c.recipients.first().and_then(|u| app.model.user(*u)).cloned();
+    let screen = ui.ctx().content_rect();
+    let mut answer = None;
+    egui::Area::new(egui::Id::new("incoming-call"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos2(screen.center().x - 130.0, screen.top() + 60.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(Color32::from_rgb(0x11, 0x12, 0x14))
+                .corner_radius(CornerRadius::same(12))
+                .inner_margin(egui::Margin::same(16))
+                .shadow(egui::Shadow {
+                    offset: [0, 8],
+                    blur: 24,
+                    spread: 0,
+                    color: Color32::from_black_alpha(140),
+                })
+                .show(ui, |ui| {
+                    ui.set_width(228.0);
+                    ui.vertical_centered(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(80.0), Sense::hover());
+                        match &caller {
+                            Some(user) if c.kind == crate::model::ChannelKind::Direct => {
+                                avatar(ui, app, user, rect.center(), 40.0, None);
+                            }
+                            _ => super::widgets::group_icon(ui, app, &c, rect.center(), 40.0),
+                        }
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(name)
+                                .font(font(Weight::Bold, 16.0))
+                                .color(Color32::WHITE),
+                        );
+                        ui.label(
+                            egui::RichText::new("Chamada recebida…")
+                                .font(font(Weight::Regular, 13.0))
+                                .color(Color32::from_gray(180)),
+                        );
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(52.0);
+                            for (accept, icon, fill, hint) in [
+                                (false, Icon::HangUp, palette.danger, "Recusar"),
+                                (true, Icon::Phone, palette.online, "Aceitar"),
+                            ] {
+                                let (rect, response) =
+                                    ui.allocate_exact_size(Vec2::splat(48.0), Sense::click());
+                                let response = response
+                                    .on_hover_text(hint)
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                ui.painter().circle_filled(
+                                    rect.center(),
+                                    24.0,
+                                    if response.hovered() { fill.gamma_multiply(0.85) } else { fill },
+                                );
+                                paint_icon(ui, icon, rect.center(), 22.0, Color32::WHITE);
+                                if response.clicked() {
+                                    answer = Some(accept);
+                                }
+                                ui.add_space(24.0);
+                            }
+                        });
+                    });
+                });
+        });
+    if let Some(accept) = answer {
+        app.actions.push(Action::AnswerCall(accept));
+    }
 }

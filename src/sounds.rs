@@ -29,6 +29,8 @@ pub enum Sound {
     Message,
     /// The call could not connect, or dropped.
     Lost,
+    /// Someone calls: repeated while it rings.
+    Ring,
 }
 
 /// Notes as (frequency in Hz, start in seconds, length in seconds), and
@@ -55,6 +57,17 @@ fn notes(sound: Sound) -> (&'static [(f32, f32, f32)], f32) {
         Sound::Undeafen => (&[(E3, 0.0, 0.20), (G3, 0.06, 0.20), (C4, 0.12, 0.26)], 0.18),
         Sound::Message => (&[(E4, 0.0, 0.28), (A4, 0.09, 0.36)], 0.18),
         Sound::Lost => (&[(A3, 0.0, 0.26), (F3, 0.12, 0.26), (D3, 0.24, 0.32)], 0.20),
+        Sound::Ring => (
+            &[
+                (C4, 0.0, 0.30),
+                (E4, 0.12, 0.30),
+                (G4, 0.24, 0.40),
+                (C4, 0.60, 0.30),
+                (E4, 0.72, 0.30),
+                (G4, 0.84, 0.50),
+            ],
+            0.18,
+        ),
     }
 }
 

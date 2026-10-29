@@ -1728,6 +1728,74 @@ impl crate::app::App {
         self.send_voice_state();
     }
 
+    /// Calls a direct message or a group, as the phone in its header: the
+    /// call starts with the user in it, and the others' apps ring.
+    pub fn start_call(&mut self, channel: Id) {
+        self.voice_taken = None;
+        self.join_voice(channel);
+        self.backend().send(crate::backend::Command::Api {
+            tag: crate::backend::Tag::Admin(crate::admin::Tag::VoiceMember),
+            method: reqwest::Method::POST,
+            path: format!("/channels/{channel}/call/ring"),
+            body: Some(serde_json::json!({ "recipients": null })),
+        });
+    }
+
+    /// Picks up the ringing call, or stops it ringing for the user.
+    pub fn answer_call(&mut self, accept: bool) {
+        let Some((channel, _)) = self.ringing.take() else {
+            return;
+        };
+        if accept {
+            self.voice_taken = None;
+            self.join_voice(channel);
+            self.actions.push(crate::app::Action::OpenChannel(channel));
+        } else {
+            let me = self.model.me;
+            self.backend().send(crate::backend::Command::Api {
+                tag: crate::backend::Tag::Admin(crate::admin::Tag::VoiceMember),
+                method: reqwest::Method::POST,
+                path: format!("/channels/{channel}/call/stop-ringing"),
+                body: Some(serde_json::json!({ "recipients": [me.to_string()] })),
+            });
+        }
+    }
+
+    /// CALL_CREATE, CALL_UPDATE and CALL_DELETE: whether a direct message
+    /// call rings for the user.
+    pub fn call_event(&mut self, kind: &str, data: &serde_json::Value) {
+        let Some(channel) = crate::discord::parse::id(&data["channel_id"]) else {
+            return;
+        };
+        for state in data["voice_states"].as_array().into_iter().flatten() {
+            crate::discord::parse::voice_state(state, None, &mut self.model);
+        }
+        let me = self.model.me;
+        let rings = kind != "CALL_DELETE"
+            && data["ringing"]
+                .as_array()
+                .is_some_and(|l| l.iter().any(|u| crate::discord::parse::id(u) == Some(me)))
+            && self.call.as_ref().is_none_or(|c| c.channel != channel);
+        match (&self.ringing, rings) {
+            (None, true) => {
+                self.ringing = Some((channel, Instant::now()));
+                self.sound(crate::sounds::Sound::Ring);
+            }
+            (Some((ringing, _)), false) if *ringing == channel => self.ringing = None,
+            _ => {}
+        }
+    }
+
+    /// While a call rings: the ring again every few seconds.
+    pub fn keep_ringing(&mut self) {
+        if let Some((channel, last)) = self.ringing
+            && last.elapsed() >= Duration::from_millis(2_600)
+        {
+            self.ringing = Some((channel, Instant::now()));
+            self.sound(crate::sounds::Sound::Ring);
+        }
+    }
+
     pub fn leave_voice(&mut self) {
         let Some(call) = self.call.take() else {
             return;
