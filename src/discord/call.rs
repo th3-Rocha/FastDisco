@@ -147,9 +147,13 @@ struct Tick {
 struct Stats {
     ticks: u32,
     packets: u32,
-    /// Missing when their turn came: lost or later than the playout
-    /// buffer; the decoder made up the sound.
+    /// Missing when their turn came, with the stream going on after:
+    /// lost or later than the playout buffer; the decoder made up the
+    /// sound. The ticks songbird reports empty after someone stops talking
+    /// are not losses.
     lost: u32,
+    /// Empty ticks per stream not yet followed by a packet.
+    gaps: HashMap<u32, u32>,
     errors: u32,
     /// The most people heard in one tick.
     streams: usize,
@@ -177,6 +181,9 @@ impl EventHandler for Tick {
         let mut decoders = self.decoders.lock().unwrap_or_else(|e| e.into_inner());
         let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
         stats.ticks += 1;
+        for ssrc in &tick.silent {
+            stats.gaps.remove(ssrc);
+        }
         stats.streams = stats.streams.max(tick.speaking.len());
         decoders.retain(|ssrc, _| tick.speaking.contains_key(ssrc) || tick.silent.contains(ssrc));
         for (ssrc, data) in &tick.speaking {
@@ -194,8 +201,9 @@ impl EventHandler for Tick {
             };
             if data.packet.is_some() {
                 stats.packets += 1;
+                stats.lost += stats.gaps.remove(ssrc).unwrap_or(0);
             } else {
-                stats.lost += 1;
+                *stats.gaps.entry(*ssrc).or_default() += 1;
             }
             let Some(pcm) = decode(decoder, data.packet.as_ref()) else {
                 stats.errors += 1;
@@ -240,7 +248,10 @@ impl EventHandler for Tick {
                 stats.streams,
                 self.shared.report(),
             );
-            *stats = Stats::default();
+            *stats = Stats {
+                gaps: std::mem::take(&mut stats.gaps),
+                ..Stats::default()
+            };
         }
         drop(stats);
         heard.retain(|_, at| now.duration_since(*at) < HOLD);

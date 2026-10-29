@@ -1,6 +1,6 @@
 [package]
 name = "discofast"
-version = "0.31.0"
+version = "0.31.1"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -145,6 +145,9 @@ opt-level = 3
 opt-level = 3
 
 [patch.crates-io]
+# songbird with Opus in voice mode with forward error correction, as
+# Discord's apps send, and a log line on late packets; see vendor/songbird.
+songbird = { path = "vendor/songbird" }
 # crmne/egui apps-0.36.2, shared with Spotifast and ZapFast. Every egui crate
 # comes from the same revision so they share one emath and epaint.
 ecolor = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
