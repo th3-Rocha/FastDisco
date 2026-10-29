@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -210,7 +210,7 @@ fn rgba(buffer: &dyn VideoBuffer) -> Option<Frame> {
 struct Sending {
     sid: TrackSid,
     stop: Arc<AtomicBool>,
-    camera: Option<Child>,
+    camera: Arc<Mutex<Option<Child>>>,
 }
 
 impl Sending {
@@ -228,13 +228,18 @@ impl Sending {
         };
         let source = NativeVideoSource::new(resolution, kind == Kind::Screen);
         let stop = Arc::new(AtomicBool::new(false));
-        let camera = match kind {
-            Kind::Camera => Some(camera(source.clone(), me, videos, wake, Arc::clone(&stop))?),
-            Kind::Screen => {
-                screen(source.clone(), me, videos, wake, Arc::clone(&stop))?;
-                None
-            }
-        };
+        let ffmpeg: Arc<Mutex<Option<Child>>> = Arc::default();
+        match kind {
+            Kind::Camera => camera(
+                source.clone(),
+                me,
+                videos,
+                wake,
+                Arc::clone(&stop),
+                Arc::clone(&ffmpeg),
+            )?,
+            Kind::Screen => screen(source.clone(), me, videos, wake, Arc::clone(&stop))?,
+        }
         let track = LocalVideoTrack::create_video_track(
             match kind {
                 Kind::Camera => "camera",
@@ -257,54 +262,107 @@ impl Sending {
             Ok(publication) => Ok(Self {
                 sid: publication.sid(),
                 stop,
-                camera,
+                camera: ffmpeg,
             }),
             Err(e) => {
-                halt(&stop, camera);
+                halt(&stop, &ffmpeg);
                 Err(e.to_string())
             }
         }
     }
 
     async fn stop(self, room: &Room) {
-        halt(&self.stop, self.camera);
+        halt(&self.stop, &self.camera);
         let _ = room.local_participant().unpublish_track(&self.sid).await;
     }
 }
 
 /// Stops the capture: the screen's thread at its next picture, the
 /// camera's ffmpeg at once.
-fn halt(stop: &AtomicBool, camera: Option<Child>) {
+fn halt(stop: &AtomicBool, camera: &Mutex<Option<Child>>) {
     stop.store(true, Ordering::Relaxed);
-    if let Some(mut child) = camera {
+    if let Some(mut child) = camera.lock().unwrap_or_else(|e| e.into_inner()).take() {
         let _ = child.kill();
         let _ = child.wait();
     }
 }
 
 /// The camera through ffmpeg, as RGBA pictures of a fixed size, into the
-/// track and into the user's own tile.
+/// track and into the user's own tile. Webcams give 720p at 30 fps only
+/// compressed, so MJPEG is asked for first and the camera's own format
+/// after, if it has no MJPEG.
 fn camera(
     source: NativeVideoSource,
     me: u64,
     videos: Arc<Videos>,
     wake: Arc<dyn Fn() + Send + Sync>,
     stop: Arc<AtomicBool>,
-) -> Result<Child, String> {
-    let (w, h) = CAMERA;
-    let input: &[&str] = if cfg!(target_os = "linux") {
-        &["-f", "v4l2", "-framerate", "30", "-i", "/dev/video0"]
-    } else if cfg!(target_os = "macos") {
-        &["-f", "avfoundation", "-framerate", "30", "-i", "0"]
-    } else {
+    slot: Arc<Mutex<Option<Child>>>,
+) -> Result<(), String> {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
         return Err("a câmera ainda só funciona no Linux e no macOS".to_owned());
-    };
+    }
+    let (w, h) = CAMERA;
+    std::thread::Builder::new()
+        .name("own-camera".into())
+        .spawn(move || {
+            let mut picture = vec![0u8; w as usize * h as usize * 4];
+            for compressed in [true, false] {
+                let Some(mut out) = open_camera(compressed, &slot) else {
+                    continue;
+                };
+                let mut count = 0u64;
+                while !stop.load(Ordering::Relaxed) && out.read_exact(&mut picture).is_ok() {
+                    send(&source, &picture, w, h);
+                    // The user's own tile needs half the pictures.
+                    if count.is_multiple_of(2) {
+                        videos.show(
+                            me,
+                            Kind::Camera,
+                            Frame {
+                                width: w as usize,
+                                height: h as usize,
+                                rgba: picture.clone(),
+                            },
+                        );
+                        wake();
+                    }
+                    count += 1;
+                }
+                if count > 0 || stop.load(Ordering::Relaxed) {
+                    return;
+                }
+                log::info!("own camera: no picture with compressed={compressed}");
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Starts ffmpeg on the camera and keeps it in `slot` to be stopped.
+fn open_camera(compressed: bool, slot: &Mutex<Option<Child>>) -> Option<std::process::ChildStdout> {
+    let (w, h) = CAMERA;
+    let size = format!("{w}x{h}");
+    let mut input: Vec<&str> = Vec::new();
+    if cfg!(target_os = "linux") {
+        input.extend(["-f", "v4l2"]);
+        if compressed {
+            input.extend(["-input_format", "mjpeg", "-video_size", &size]);
+        }
+        input.extend(["-framerate", "30", "-i", "/dev/video0"]);
+    } else {
+        input.extend(["-f", "avfoundation", "-framerate", "30"]);
+        if compressed {
+            input.extend(["-video_size", &size]);
+        }
+        input.extend(["-i", "0"]);
+    }
     let filter = format!(
         "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
     );
     let mut child = Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "error"])
-        .args(input)
+        .args(["-hide_banner", "-loglevel", "error", "-fflags", "nobuffer"])
+        .args(&input)
         .args([
             "-vf", &filter, "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
         ])
@@ -312,28 +370,18 @@ fn camera(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|_| "ffmpeg não está instalado.".to_owned())?;
-    let mut out = child.stdout.take().expect("piped stdout");
-    std::thread::Builder::new()
-        .name("own-camera".into())
-        .spawn(move || {
-            let mut picture = vec![0u8; w as usize * h as usize * 4];
-            while !stop.load(Ordering::Relaxed) && out.read_exact(&mut picture).is_ok() {
-                send(&source, &picture, w, h);
-                videos.show(
-                    me,
-                    Kind::Camera,
-                    Frame {
-                        width: w as usize,
-                        height: h as usize,
-                        rgba: picture.clone(),
-                    },
-                );
-                wake();
-            }
-        })
-        .map_err(|e| e.to_string())?;
-    Ok(child)
+        .inspect_err(|e| log::warn!("own camera: ffmpeg: {e}"))
+        .ok()?;
+    let out = child.stdout.take();
+    let old = slot
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .replace(child);
+    if let Some(mut old) = old {
+        let _ = old.kill();
+        let _ = old.wait();
+    }
+    out
 }
 
 /// The screen through WebRTC's capturer; on Wayland the desktop asks the

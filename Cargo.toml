@@ -115,7 +115,8 @@ chacha20poly1305 = { version = "0.10.1", optional = true }
 # Camera and screen on the user's own LiveKit server (the `selfhosted`
 # feature). libwebrtc comes prebuilt at build time; the access token is
 # made here from the server's key, so no service of ours is involved.
-livekit = { version = "0.10", default-features = false, features = ["native", "rustls-tls-native-roots"], optional = true }
+# "glib-main-loop" runs the GLib loop the Wayland screen portal answers on.
+livekit = { version = "0.10", default-features = false, features = ["native", "rustls-tls-native-roots", "glib-main-loop"], optional = true }
 livekit-api = { version = "0.10", default-features = false, features = ["access-token"], optional = true }
 
 [features]
