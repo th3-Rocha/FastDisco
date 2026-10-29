@@ -21,6 +21,7 @@ pub enum Tag {
     Folders(crate::folders::Tag),
     Interact(crate::interact::Tag),
     Threads(crate::threads::Tag),
+    Events(crate::events::Tag),
 }
 
 #[derive(Debug)]

@@ -7,6 +7,7 @@ mod call;
 mod chat;
 mod composer;
 mod customizer;
+mod events;
 mod friends;
 mod login;
 mod message;
@@ -90,6 +91,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             profile::popout(app, ui);
             sidebar::logout_dialog(app, ui);
             admin::modal(app, ui);
+            events::dialog(app, ui);
             nav::popout(app, ui);
             nav::switcher(app, ui);
             nav::shortcuts(app, ui);

@@ -7,6 +7,7 @@ mod backend;
 mod call;
 mod chat;
 mod devices;
+mod events;
 mod discord;
 mod folders;
 mod icons;

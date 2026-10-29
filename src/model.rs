@@ -823,6 +823,7 @@ pub mod permission {
     pub const CHANGE_NICKNAME: u64 = 1 << 26;
     pub const MANAGE_ROLES: u64 = 1 << 28;
     pub const MANAGE_EMOJIS: u64 = 1 << 30;
+    pub const MANAGE_EVENTS: u64 = 1 << 33;
     pub const MANAGE_THREADS: u64 = 1 << 34;
 }
 

@@ -344,7 +344,7 @@ fn drag_channel(app: &mut App, ui: &mut Ui, rows: &[Row]) {
 }
 
 /// "Eventos" at the top of the channel list, with a line under it, as
-/// Discord; the count when there are some, and a click opens the next.
+/// Discord; the count when there are some, and a click opens the list.
 fn events_row(app: &mut App, ui: &mut Ui, guild: Id) {
     let palette = app.palette;
     let Some(g) = app.model.guild(guild) else {
@@ -353,7 +353,6 @@ fn events_row(app: &mut App, ui: &mut Ui, guild: Id) {
     let count = g.events.len();
     let first = g.events.iter().find(|e| e.live).or(g.events.first());
     let hint = first.map(|e| e.name.clone());
-    let first = first.map(|e| e.id);
     let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
     let rect = Rect::from_min_max(
         pos2(slot.left() + 8.0, slot.top() + 1.0),
@@ -393,12 +392,8 @@ fn events_row(app: &mut App, ui: &mut Ui, guild: Id) {
         None => response,
     };
     if response.clicked() {
-        let url = match first {
-            Some(event) => format!("https://discord.com/events/{guild}/{event}"),
-            None => format!("https://discord.com/channels/{guild}"),
-        };
         app.actions
-            .push(Action::Chat(crate::chat::ChatAction::OpenUrl(url)));
+            .push(Action::Events(crate::events::EventAction::Open(guild)));
     }
 }
 

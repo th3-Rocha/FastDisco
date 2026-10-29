@@ -155,6 +155,8 @@ pub enum Action {
     Interact(crate::interact::InteractAction),
     /// Threads and forum posts.
     Threads(crate::threads::ThreadAction),
+    /// A server's scheduled events.
+    Events(crate::events::EventAction),
     /// Looks for a newer Discofast now.
     CheckUpdate,
     /// Restarts into the downloaded update.
@@ -230,6 +232,7 @@ pub struct App {
     pub nav: crate::nav::Nav,
     pub interact: crate::interact::Interact,
     pub threads: crate::threads::Threads,
+    pub events: crate::events::Events,
     /// The spell checker, once its dictionaries are loaded.
     pub speller: Option<std::sync::Arc<crate::spell::Speller>>,
     /// The voice call the user is in.
@@ -313,6 +316,7 @@ impl App {
             nav: crate::nav::Nav::default(),
             interact: crate::interact::Interact::default(),
             threads: crate::threads::Threads::default(),
+            events: crate::events::Events::default(),
             speller: None,
             call: None,
             mic_test: None,
@@ -700,6 +704,7 @@ impl App {
                     crate::backend::Tag::Folders(tag) => self.folders_result(tag, result),
                     crate::backend::Tag::Interact(tag) => self.interact_result(tag, result),
                     crate::backend::Tag::Threads(tag) => self.threads_result(tag, result),
+                    crate::backend::Tag::Events(tag) => self.events_result(tag, result),
                 },
                 Event::Profile { user, profile } => {
                     self.chat.profiles.insert(
@@ -963,6 +968,7 @@ impl App {
                 Action::Chat(action) => self.apply_chat(action),
                 Action::Admin(action) => self.apply_admin(action),
                 Action::Threads(action) => self.apply_threads(action),
+                Action::Events(action) => self.apply_events(action),
                 Action::Nav(action) => self.apply_nav(action),
                 Action::Interact(action) => self.apply_interact(action),
                 Action::SetNoiseSuppression(level) => {
@@ -1431,6 +1437,12 @@ impl App {
                     }
                     (None, Some(fresh)) => guild.events.push(fresh),
                     (None, None) => {}
+                }
+                if let Some(open) = self.events.guild
+                    && parse::id(&data["guild_id"]) == Some(open)
+                    && self.events.draft.is_none()
+                {
+                    self.apply_events(crate::events::EventAction::Open(open));
                 }
             }
             "STAGE_INSTANCE_CREATE" | "STAGE_INSTANCE_UPDATE" | "STAGE_INSTANCE_DELETE" => {
