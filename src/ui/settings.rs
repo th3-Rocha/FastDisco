@@ -598,11 +598,12 @@ fn account(app: &mut App, ui: &mut Ui) {
             "Adulto",
             "Você está no grupo de idade adulto (18+) e tem acesso a conteúdo, espaços e configurações com restrição de idade.",
         ),
-        Some(false) => (
-            "Adolescente",
-            "Sua conta não está no grupo de idade adulto: conteúdo com restrição de idade fica bloqueado.",
+        // Discord tells a client it does not know "no" here whatever the
+        // account's age, so "no" says nothing about the age group.
+        _ => (
+            "Indisponível",
+            "O Discord não informa o grupo etário da sua conta ao Discofast. Ele aparece no app oficial do Discord, em Configurações › Status da conta.",
         ),
-        None => ("Não confirmado", "O Discord ainda não confirmou a sua faixa etária."),
     };
     account_row(ui, &palette, Some((Icon::User, palette.icon, palette.rail)), "Grupo etário", Some(note), RowEnd::Text(group));
     if account_row(

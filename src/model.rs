@@ -726,8 +726,9 @@ pub struct Account {
     pub phone: Option<String>,
     pub mfa: bool,
     pub verified: bool,
-    /// Discord counts the account as an adult (18+); none when it does
-    /// not say.
+    /// Discord says the account sees age-restricted content. Only "yes"
+    /// means anything: Discord answers "no" to clients it does not know,
+    /// adult accounts included.
     pub adult: Option<bool>,
 }
 
