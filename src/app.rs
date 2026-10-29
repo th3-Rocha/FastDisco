@@ -515,7 +515,7 @@ impl App {
     /// One of the app's sounds, unless the user turned them off.
     pub fn sound(&mut self, sound: crate::sounds::Sound) {
         if self.settings.sounds {
-            self.sounds.play(sound);
+            self.sounds.play(&self.ctx, sound);
         }
     }
 
@@ -600,6 +600,7 @@ impl App {
     /// Takes what the backend has sent since the last frame.
     pub fn poll(&mut self, ctx: &egui::Context) {
         self.poll_themes();
+        self.sounds.close_if_lost();
         if let Some(channel) = self.notifier.clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));

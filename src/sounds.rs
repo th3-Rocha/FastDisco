@@ -3,6 +3,8 @@
 //! call. Made here from soft, low mallet tones (Discord's own are its own), played
 //! through rodio on the default output.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use rodio::Source;
@@ -92,16 +94,33 @@ pub fn render(sound: Sound) -> Vec<f32> {
     out
 }
 
-/// Plays the sounds; the output opens with the first one.
+/// Plays the sounds; the output opens with the first one. A device that
+/// goes away (leaving a call can take the output with it) is closed and
+/// opened again with the next sound, as the dead one reports its error
+/// over and over until dropped.
 #[derive(Default)]
 pub struct Sounds {
     stream: Option<rodio::OutputStream>,
+    lost: Arc<AtomicBool>,
 }
 
 impl Sounds {
-    pub fn play(&mut self, sound: Sound) {
+    pub fn play(&mut self, ctx: &egui::Context, sound: Sound) {
+        self.close_if_lost();
         if self.stream.is_none() {
-            match rodio::OutputStreamBuilder::open_default_stream() {
+            let lost = Arc::clone(&self.lost);
+            let ctx = ctx.clone();
+            let opened = rodio::OutputStreamBuilder::from_default_device()
+                .map(|b| {
+                    b.with_error_callback(move |error| {
+                        if !lost.swap(true, Ordering::Relaxed) {
+                            log::warn!("sounds: {error}");
+                            ctx.request_repaint();
+                        }
+                    })
+                })
+                .and_then(|b| b.open_stream_or_fallback());
+            match opened {
                 Ok(mut stream) => {
                     stream.log_on_drop(false);
                     self.stream = Some(stream);
@@ -117,6 +136,16 @@ impl Sounds {
             stream
                 .mixer()
                 .add(samples.fade_in(Duration::from_millis(2)));
+        }
+    }
+
+    /// Closes the output once it has failed.
+    pub fn close_if_lost(&mut self) {
+        if self.lost.load(Ordering::Relaxed) {
+            // Dropped first: its thread stops, so it cannot mark the next
+            // one as lost.
+            self.stream = None;
+            self.lost.store(false, Ordering::Relaxed);
         }
     }
 }
