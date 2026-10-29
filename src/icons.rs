@@ -65,6 +65,7 @@ fastframe_icons::icons! {
         Signal => "signal",
         Connection => "rss",
         NoiseSuppression => "audio-lines",
+        NoiseSuppressionOff => "audio-lines-off",
         Video => "video",
         ScreenShare => "screen-share",
         Activities => "shapes",

@@ -2023,7 +2023,7 @@ pub(super) fn percent_slider(ui: &mut Ui, palette: &Palette, value: u16, width: 
 }
 
 /// The microphone's level as Discord's row of bars.
-fn meter(ui: &Ui, palette: &Palette, rect: Rect, level: Option<f32>) {
+pub(super) fn meter(ui: &Ui, palette: &Palette, rect: Rect, level: Option<f32>) {
     let bars = ((rect.width() + 4.0) / 8.0).floor().max(1.0) as usize;
     // -80 dB to 0 dB across the row.
     let lit = level.map_or(0.0, |db| ((db + 80.0) / 80.0).clamp(0.0, 1.0));
