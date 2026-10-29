@@ -630,6 +630,7 @@ pub fn ready(value: &Value) -> Model {
             phone: text(&account["phone"]),
             mfa: account["mfa_enabled"].as_bool().unwrap_or(false),
             verified: account["verified"].as_bool().unwrap_or(false),
+            adult: account["nsfw_allowed"].as_bool(),
         };
         model.users.insert(me.id, me);
     }

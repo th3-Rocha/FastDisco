@@ -250,6 +250,19 @@ fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
         }
         for (target, icon, text) in pages {
             item(app, ui, *target, *icon, text);
+            // Under "Conta", its parts, as Discord's side menu.
+            if *target == SettingsPage::Account && page == SettingsPage::Account {
+                for (i, part) in ACCOUNT_PARTS.iter().enumerate() {
+                    let (rect, response) = ui.allocate_exact_size(vec2(NAV_WIDTH, 30.0), Sense::click());
+                    let x = rect.left() + 22.0;
+                    ui.painter().vline(x, rect.y_range(), Stroke::new(1.0, palette.selected));
+                    let tint = if response.hovered() { palette.strong } else { palette.muted };
+                    ui.painter().text(pos2(x + 14.0, rect.center().y), Align2::LEFT_CENTER, *part, font(Weight::Medium, 15.0), tint);
+                    if response.clicked() {
+                        ui.data_mut(|d| d.insert_temp(account_jump(), i));
+                    }
+                }
+            }
         }
     }
     if !shown("Sair") {
@@ -402,7 +415,8 @@ fn switch_row(app: &mut App, ui: &mut Ui, flag: Flag, label: &str, note: &str, o
 
 fn account(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
-    title(ui, &palette, "Minha conta");
+    account_anchor(ui, 0);
+    big_heading(ui, &palette, "Informações da conta");
     let Some(me) = app.model.user(app.model.me).cloned() else {
         return;
     };
@@ -503,41 +517,264 @@ fn account(app: &mut App, ui: &mut Ui) {
                     field(ui, "TELEFONE", phone);
                 });
         });
+
+    // Senha e segurança.
     divider(ui, &palette);
-    heading(ui, &palette, "SENHA E AUTENTICAÇÃO");
-    let mfa = if app.model.account.mfa {
-        "Autenticação multifator ativada"
-    } else {
-        "Autenticação multifator desativada"
-    };
-    ui.label(
-        RichText::new(mfa)
-            .font(font(Weight::Medium, 16.0))
-            .color(if app.model.account.mfa {
-                palette.online
-            } else {
-                palette.text
-            }),
-    );
-    ui.label(
-        RichText::new(
-            "Senha, e-mail e autenticação mudam no site do Discord, que pede a sua senha.",
-        )
-        .font(font(Weight::Regular, 14.0))
-        .color(palette.muted),
-    );
-    if ui
-        .link(
-            RichText::new("Abrir configurações da conta no navegador")
-                .color(Color32::from_rgb(0x00, 0xa8, 0xfc)),
-        )
-        .clicked()
-    {
+    account_anchor(ui, 1);
+    big_heading(ui, &palette, "Senha e segurança");
+    let web = |app: &mut App| {
         app.actions
             .push(Action::Chat(crate::chat::ChatAction::OpenUrl(
                 "https://discord.com/channels/@me".into(),
             )));
+    };
+    if account_row(ui, &palette, None, "Senha", None, RowEnd::Button("Editar")).clicked() {
+        web(app);
     }
+    let mfa = if app.model.account.mfa { "Ativada" } else { "Desativada" };
+    if account_row(ui, &palette, None, "Autenticação Multifatorial", None, RowEnd::Value(mfa)).clicked() {
+        web(app);
+    }
+    if !app.admin.sessions_asked {
+        app.actions
+            .push(Action::Admin(crate::admin::AdminAction::LoadSessions));
+    }
+    let devices = app
+        .admin
+        .sessions
+        .as_ref()
+        .map_or_else(|| "…".to_owned(), |l| match l.len() {
+            1 => "1 dispositivo".to_owned(),
+            n => format!("{n} dispositivos"),
+        });
+    if account_row(ui, &palette, None, "Dispositivos conectados", None, RowEnd::Value(&devices)).clicked() {
+        app.actions
+            .push(Action::Admin(crate::admin::AdminAction::Open(crate::admin::Modal::Sessions)));
+    }
+
+    // Status da conta.
+    divider(ui, &palette);
+    account_anchor(ui, 2);
+    big_heading(ui, &palette, "Status da conta");
+    let adult = app.model.account.adult;
+    let notice_id = ui.id().with("age-notice-closed");
+    if adult == Some(true) && !ui.data(|d| d.get_temp::<bool>(notice_id).unwrap_or(false)) {
+        let link = Color32::from_rgb(0x00, 0xa8, 0xfc);
+        let closed = Frame::new()
+            .fill(crate::theme::mix(palette.rail, palette.accent, 0.12))
+            .stroke(Stroke::new(1.0, crate::theme::mix(palette.rail, palette.accent, 0.6)))
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(Margin::same(12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let (dot, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                    ui.painter().circle_filled(dot.center(), 8.0, link);
+                    ui.painter().text(dot.center(), Align2::CENTER_CENTER, "i", font(Weight::Bold, 11.0), Color32::WHITE);
+                    ui.add_sized(
+                        vec2(ui.available_width() - 30.0, 0.0),
+                        egui::Label::new(
+                            RichText::new("Os grupos de idade determinam se você pode acessar conteúdo e configurações destinados a adultos. Você está no grupo de idade adulto (18+), então nada muda para você.")
+                                .font(font(Weight::Regular, 14.0))
+                                .color(palette.text),
+                        )
+                        .wrap(),
+                    );
+                    let (x, response) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
+                    paint_icon(ui, Icon::Close, x.center(), 16.0, palette.icon);
+                    response.clicked()
+                })
+                .inner
+            })
+            .inner;
+        if closed {
+            ui.data_mut(|d| d.insert_temp(notice_id, true));
+        }
+        ui.add_space(8.0);
+    }
+    let (group, note) = match adult {
+        Some(true) => (
+            "Adulto",
+            "Você está no grupo de idade adulto (18+) e tem acesso a conteúdo, espaços e configurações com restrição de idade.",
+        ),
+        Some(false) => (
+            "Adolescente",
+            "Sua conta não está no grupo de idade adulto: conteúdo com restrição de idade fica bloqueado.",
+        ),
+        None => ("Não confirmado", "O Discord ainda não confirmou a sua faixa etária."),
+    };
+    account_row(ui, &palette, Some((Icon::User, palette.icon, palette.rail)), "Grupo etário", Some(note), RowEnd::Text(group));
+    if account_row(
+        ui,
+        &palette,
+        Some((Icon::Check, palette.online, crate::theme::mix(palette.rail, palette.online, 0.15))),
+        "Status da Conta",
+        Some("Agradecemos por respeitar os termos de serviço do Discord e as Diretrizes da Comunidade. Se você tiver uma violação, ela aparecerá aqui."),
+        RowEnd::Value("Tudo certo!"),
+    )
+    .clicked()
+    {
+        web(app);
+    }
+
+    // Central da Família.
+    divider(ui, &palette);
+    account_anchor(ui, 3);
+    big_heading(ui, &palette, "Central da Família");
+    let (card, response) = ui.allocate_exact_size(vec2(ui.available_width(), 76.0), Sense::click());
+    ui.painter().rect_filled(
+        card,
+        CornerRadius::same(12),
+        if response.hovered() { palette.hover } else { palette.sidebar },
+    );
+    ui.painter().text(
+        pos2(card.left() + 14.0, card.top() + 20.0),
+        Align2::LEFT_CENTER,
+        "Configurar Central da Família",
+        font(Weight::SemiBold, 16.0),
+        palette.strong,
+    );
+    let mut job = egui::text::LayoutJob::single_section(
+        "Fique por dentro da experiência do seu adolescente no Discord. Veja atividades, gerencie as principais configurações de segurança e tenham boas conversas juntos.".into(),
+        egui::TextFormat { font_id: font(Weight::Regular, 13.0), color: palette.muted, ..Default::default() },
+    );
+    job.wrap.max_width = card.width() - 60.0;
+    job.wrap.max_rows = 2;
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(pos2(card.left() + 14.0, card.top() + 32.0), galley, palette.muted);
+    paint_icon(ui, Icon::ChevronRight, pos2(card.right() - 20.0, card.center().y), 20.0, palette.icon);
+    if response.clicked() {
+        app.actions
+            .push(Action::Chat(crate::chat::ChatAction::OpenUrl(
+                "https://discord.com/family-center".into(),
+            )));
+    }
+
+    // Disabling and deleting.
+    divider(ui, &palette);
+    for (title, note, button, delete) in [
+        ("Desative sua conta", "Desative temporariamente sua conta.", "Desativar conta", false),
+        ("Encerrar sua conta", "Encerre sua conta permanentemente.", "Excluir conta", true),
+    ] {
+        let fill = if delete { palette.danger } else { palette.sidebar };
+        let text = if delete { Color32::WHITE } else { palette.danger };
+        if account_row(ui, &palette, None, title, Some(note), RowEnd::Danger(button, fill, text)).clicked() {
+            app.actions
+                .push(Action::Admin(crate::admin::AdminAction::Open(
+                    crate::admin::Modal::CloseAccount { delete, password: String::new() },
+                )));
+        }
+    }
+}
+
+/// The account page's parts, which "Conta"'s sub-items in the side menu
+/// scroll to.
+pub const ACCOUNT_PARTS: [&str; 4] = [
+    "Informações da conta",
+    "Senha e segurança",
+    "Status da conta",
+    "Central da Família",
+];
+
+fn account_jump() -> egui::Id {
+    egui::Id::new("account-jump")
+}
+
+/// Scrolls here when the side menu asked for part `index`.
+fn account_anchor(ui: &mut Ui, index: usize) {
+    if ui.data(|d| d.get_temp::<usize>(account_jump())) == Some(index) {
+        ui.data_mut(|d| d.remove::<usize>(account_jump()));
+        ui.scroll_to_cursor(Some(egui::Align::TOP));
+    }
+}
+
+fn big_heading(ui: &mut Ui, palette: &Palette, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .font(font(Weight::SemiBold, 22.0))
+            .color(palette.strong),
+    );
+    ui.add_space(8.0);
+}
+
+/// What sits at the right of an account row.
+enum RowEnd<'a> {
+    Button(&'a str),
+    /// A value with a chevron: the row opens more.
+    Value(&'a str),
+    Text(&'a str),
+    Danger(&'a str, Color32, Color32),
+}
+
+/// One row of the account page, as Discord's: an optional icon tile, the
+/// title and its note, and the value or button at the right.
+fn account_row(
+    ui: &mut Ui,
+    palette: &Palette,
+    icon: Option<(Icon, Color32, Color32)>,
+    title: &str,
+    note: Option<&str>,
+    end: RowEnd,
+) -> egui::Response {
+    let width = ui.available_width();
+    let left = if icon.is_some() { 66.0 } else { 0.0 };
+    let right = 150.0;
+    let note_galley = note.map(|n| {
+        let mut job = egui::text::LayoutJob::single_section(
+            n.into(),
+            egui::TextFormat { font_id: font(Weight::Regular, 14.0), color: palette.muted, ..Default::default() },
+        );
+        job.wrap.max_width = width - left - right;
+        ui.painter().layout_job(job)
+    });
+    let height = 24.0 + note_galley.as_ref().map_or(0.0, |g| g.size().y + 4.0) + 24.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height.max(56.0)), Sense::click());
+    let y = rect.center().y;
+    if let Some((icon, tint, fill)) = icon {
+        let tile = Rect::from_min_size(pos2(rect.left(), y - 26.0), Vec2::splat(52.0));
+        ui.painter().rect_filled(tile, CornerRadius::same(8), fill);
+        paint_icon(ui, icon, tile.center(), 24.0, tint);
+    }
+    let top = match &note_galley {
+        Some(g) => y - (20.0 + 4.0 + g.size().y) / 2.0,
+        None => y - 10.0,
+    };
+    ui.painter().text(
+        pos2(rect.left() + left, top + 10.0),
+        Align2::LEFT_CENTER,
+        title,
+        font(Weight::Medium, 17.0),
+        palette.strong,
+    );
+    if let Some(g) = note_galley {
+        ui.painter().galley(pos2(rect.left() + left, top + 24.0), g, palette.muted);
+    }
+    let hovered = response.hovered();
+    match end {
+        RowEnd::Button(label) | RowEnd::Danger(label, ..) => {
+            let (fill, text) = match end {
+                RowEnd::Danger(_, fill, text) => (fill, text),
+                _ => (palette.sidebar, palette.strong),
+            };
+            let galley = ui.painter().layout_no_wrap(label.into(), font(Weight::Medium, 15.0), text);
+            let button = Rect::from_min_size(
+                pos2(rect.right() - galley.size().x - 36.0, y - 20.0),
+                vec2(galley.size().x + 36.0, 40.0),
+            );
+            let fill = if hovered { crate::theme::mix(fill, Color32::WHITE, 0.06) } else { fill };
+            ui.painter().rect(button, CornerRadius::same(8), fill, Stroke::new(1.0, palette.selected), egui::StrokeKind::Inside);
+            ui.painter().galley(button.center() - galley.size() / 2.0, galley, text);
+        }
+        RowEnd::Value(value) => {
+            paint_icon(ui, Icon::ChevronRight, pos2(rect.right() - 10.0, y), 20.0, if hovered { palette.strong } else { palette.icon });
+            ui.painter().text(pos2(rect.right() - 30.0, y), Align2::RIGHT_CENTER, value, font(Weight::Medium, 16.0), palette.strong);
+        }
+        RowEnd::Text(value) => {
+            ui.painter().text(pos2(rect.right(), y), Align2::RIGHT_CENTER, value, font(Weight::Medium, 16.0), palette.strong);
+        }
+    }
+    response
 }
 
 /// "m********@gmail.com", as Discord hides it.

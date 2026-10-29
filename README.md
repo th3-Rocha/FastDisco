@@ -166,6 +166,7 @@ everything Discord's desktop app does.
 - [x] "Entrar em um servidor" with an invite (the browser takes over when Discord asks for a captcha)
 - [x] The rail's grey add-server tile
 - [x] The microphone's and headphones' arrow menus: device, input profile, volume, voice settings
+- [x] Account settings as Discord's: account info, password and security (multi-factor, connected devices with sign-out), account status (age group), Family Center, disable and delete the account
 - [ ] Video calls and screen sharing
 - [ ] Direct message calls
 - [ ] Scheduled events

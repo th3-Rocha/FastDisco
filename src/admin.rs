@@ -27,6 +27,14 @@ pub enum Tag {
     Presence,
     /// A new server, opened once the gateway brings it.
     GuildCreated,
+    /// The devices signed in to the account.
+    Sessions,
+    /// A device signed out.
+    SessionOut {
+        hash: String,
+    },
+    /// The account disabled or deleted: signing out follows.
+    AccountGone,
     /// Joined a server from an invite.
     Joined {
         code: String,
@@ -96,6 +104,14 @@ pub enum Modal {
         name: String,
         /// The icon as a data URI, once picked.
         icon: Option<String>,
+    },
+    /// The devices signed in to the account, each with "Sair".
+    Sessions,
+    /// Disabling ("Desativar conta") or deleting ("Excluir conta") the
+    /// account; Discord asks for the password.
+    CloseAccount {
+        delete: bool,
+        password: String,
     },
     /// "Entrar em um servidor" with an invite.
     JoinGuild {
@@ -268,6 +284,21 @@ pub struct Admin {
     pub invite_channel: Option<Id>,
     /// A server just created or joined, to open when it arrives.
     pub open_when_ready: Option<Id>,
+    /// The devices signed in, once asked for.
+    pub sessions: Option<Vec<Session>>,
+    pub sessions_asked: bool,
+}
+
+/// A device signed in to the account.
+#[derive(Clone, Debug)]
+pub struct Session {
+    /// What signing it out names it by.
+    pub hash: String,
+    /// "Linux · Discord Client", as Discord lists it.
+    pub name: String,
+    pub location: String,
+    /// "2026-10-28T20:58:23Z".
+    pub last_used: String,
 }
 
 #[derive(Clone, Debug)]
@@ -279,6 +310,10 @@ pub enum AdminAction {
     InviteTo(Id),
     /// Choosing the new server's icon.
     PickIcon,
+    /// The signed-in devices, for the account page.
+    LoadSessions,
+    /// Signs one device out.
+    SignOutSession(String),
     /// Online, idle, do not disturb or invisible, from the profile card.
     SetStatus(crate::model::Status),
     /// The open dialog's main button.
@@ -335,6 +370,18 @@ impl App {
                 self.admin.modal = Some(modal);
             }
             AdminAction::PickIcon => self.backend().send(Command::PickIcon),
+            AdminAction::LoadSessions => {
+                self.admin.sessions_asked = true;
+                self.api(Tag::Sessions, Method::GET, "/auth/sessions".into(), None);
+            }
+            AdminAction::SignOutSession(hash) => {
+                self.api(
+                    Tag::SessionOut { hash: hash.clone() },
+                    Method::POST,
+                    "/auth/sessions/logout".into(),
+                    Some(json!({ "session_id_hashes": [hash] })),
+                );
+            }
             AdminAction::SetStatus(status) => {
                 let me = self.model.me;
                 if let Some(user) = self.model.users.get_mut(&me) {
@@ -564,6 +611,19 @@ impl App {
                     Some(json!({ "nick": nick })),
                 );
             }
+            Modal::Sessions => {
+                self.admin.busy = false;
+                self.admin.modal = None;
+            }
+            Modal::CloseAccount { delete, password } => {
+                let path = if delete { "/users/@me/delete" } else { "/users/@me/disable" };
+                self.api(
+                    Tag::AccountGone,
+                    Method::POST,
+                    path.into(),
+                    Some(json!({ "password": password })),
+                );
+            }
             Modal::CreateGuild {
                 template,
                 name,
@@ -745,6 +805,37 @@ impl App {
                 }
             }
             Tag::Presence => self.admin.modal = None,
+            Tag::Sessions => {
+                let list = value["user_sessions"].as_array().cloned().unwrap_or_default();
+                self.admin.sessions = Some(
+                    list.iter()
+                        .map(|s| {
+                            let info = &s["client_info"];
+                            let part = |k: &str| info[k].as_str().unwrap_or_default().to_owned();
+                            let name = [part("os"), part("platform")]
+                                .into_iter()
+                                .filter(|p| !p.is_empty())
+                                .collect::<Vec<_>>()
+                                .join(" · ");
+                            Session {
+                                hash: s["id_hash"].as_str().unwrap_or_default().to_owned(),
+                                name: if name.is_empty() { "Dispositivo".into() } else { name },
+                                location: part("location"),
+                                last_used: s["approx_last_used_time"].as_str().unwrap_or_default().to_owned(),
+                            }
+                        })
+                        .collect(),
+                );
+            }
+            Tag::SessionOut { hash } => {
+                if let Some(list) = &mut self.admin.sessions {
+                    list.retain(|s| s.hash != hash);
+                }
+            }
+            Tag::AccountGone => {
+                self.admin.modal = None;
+                self.actions.push(crate::app::Action::Logout);
+            }
             Tag::GuildCreated => {
                 self.admin.modal = None;
                 if let Some(id) = crate::discord::parse::id(&value["id"]) {

@@ -726,6 +726,9 @@ pub struct Account {
     pub phone: Option<String>,
     pub mfa: bool,
     pub verified: bool,
+    /// Discord counts the account as an adult (18+); none when it does
+    /// not say.
+    pub adult: Option<bool>,
 }
 
 const VIEW_CHANNEL: u64 = 1 << 10;

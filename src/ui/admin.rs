@@ -193,6 +193,9 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
         }
         Modal::Nick { .. } => ("Alterar apelido", "Salvar", false),
         Modal::VoiceStatus { .. } => ("Definir status do canal", "Salvar", false),
+        Modal::Sessions => ("Dispositivos conectados", "Fechar", false),
+        Modal::CloseAccount { delete: false, .. } => ("Desativar conta", "Desativar conta", true),
+        Modal::CloseAccount { delete: true, .. } => ("Excluir conta", "Excluir conta", true),
         Modal::CustomStatus { .. } => ("Definir um status personalizado", "Salvar", false),
         Modal::CreateChannel { .. } => ("Criar canal", "Criar canal", false),
         Modal::CreateCategory { .. } => ("Criar categoria", "Criar categoria", false),
@@ -237,6 +240,60 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
                             ui.set_width(ui.available_width());
                             ui.label(RichText::new(text).font(font(Weight::Medium, 15.0)).color(palette.strong));
                         });
+                    }
+                    Modal::Sessions => {
+                        ui.label(RichText::new("Estes são os dispositivos conectados à sua conta. Saia de qualquer um que você não reconheça.").color(palette.muted));
+                        match app.admin.sessions.clone() {
+                            None => {
+                                ui.spinner();
+                            }
+                            Some(list) => {
+                                egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                                    for session in list {
+                                        Frame::new().fill(palette.sidebar).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(12)).show(ui, |ui| {
+                                            ui.set_width(ui.available_width());
+                                            ui.horizontal(|ui| {
+                                                ui.vertical(|ui| {
+                                                    ui.label(RichText::new(&session.name).font(font(Weight::SemiBold, 15.0)).color(palette.strong));
+                                                    let when = session.last_used.get(..10).unwrap_or_default();
+                                                    let note = [session.location.as_str(), when].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" · ");
+                                                    ui.label(RichText::new(note).font(font(Weight::Regular, 13.0)).color(palette.muted));
+                                                });
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    let out = egui::Button::new(RichText::new("Sair").color(palette.danger)).corner_radius(CornerRadius::same(6));
+                                                    if ui.add(out).clicked() {
+                                                        act(app, AdminAction::SignOutSession(session.hash.clone()));
+                                                    }
+                                                });
+                                            });
+                                        });
+                                        ui.add_space(6.0);
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    Modal::CloseAccount { delete, mut password } => {
+                        let note = if delete {
+                            "Excluir a conta é permanente: suas mensagens ficam, mas a conta não pode ser recuperada depois do prazo do Discord."
+                        } else {
+                            "Desativar a conta a esconde até você entrar de novo. Você será desconectado."
+                        };
+                        ui.label(RichText::new(note).color(palette.text));
+                        ui.label(RichText::new("SENHA").font(font(Weight::Bold, 12.0)).color(palette.muted));
+                        let inner = Frame::new().fill(palette.rail).corner_radius(CornerRadius::same(4)).inner_margin(Margin::same(10)).show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut password)
+                                    .password(true)
+                                    .frame(Frame::NONE)
+                                    .font(font(Weight::Regular, 15.0))
+                                    .text_color(palette.text)
+                                    .desired_width(f32::INFINITY),
+                            )
+                        });
+                        if inner.inner.changed() {
+                            edited = Some(Modal::CloseAccount { delete, password });
+                        }
                     }
                     Modal::CustomStatus { mut text } => {
                         if field(ui, "NO QUE VOCÊ ESTÁ PENSANDO?", &mut text, "Defina um status personalizado") {
