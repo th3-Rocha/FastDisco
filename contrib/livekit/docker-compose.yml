@@ -1,0 +1,21 @@
+# Discofast's own video server: LiveKit behind Caddy, which gets the TLS
+# certificate. See README.md in this folder.
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13.11
+    command: --config /etc/livekit.yaml
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  caddy:
+    image: caddy:2.8
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+volumes:
+  caddy-data:

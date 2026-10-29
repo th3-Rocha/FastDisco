@@ -20,6 +20,7 @@ mod nav;
 mod notify;
 mod paste;
 mod resident;
+mod room;
 mod session;
 mod settings;
 mod sounds;

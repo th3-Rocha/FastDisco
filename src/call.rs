@@ -783,11 +783,105 @@ pub struct Session {
     pub sent: bool,
     /// When the call started, for the time beside the channel.
     pub since: Instant,
+    /// The screen share being watched, if any.
+    pub watching: Option<Watch>,
+    /// The room on the user's own video server, when one is set.
+    pub room: Option<OwnRoom>,
+}
+
+/// The call's room on the user's own video server: everyone's camera and
+/// screen there, and what the user sends.
+pub struct OwnRoom {
+    pub state: State,
+    pub videos: Arc<crate::room::Videos>,
+    pub camera: bool,
+    pub screen: bool,
+    /// Whose screen is on the stage.
+    pub focus: Option<Id>,
+    /// Who sends what, each with its newest picture on the graphics card
+    /// once one came.
+    pub textures: HashMap<(Id, crate::room::Kind), Option<egui::TextureHandle>>,
+}
+
+impl OwnRoom {
+    /// The videos as they are now: new pictures uploaded, ended ones gone.
+    pub fn refresh(&mut self, ctx: &egui::Context) {
+        let live = self.videos.take();
+        self.textures
+            .retain(|key, _| live.iter().any(|(k, _)| k == key));
+        for (key, frame) in live {
+            let slot = self.textures.entry(key).or_default();
+            let Some(frame) = frame else {
+                continue;
+            };
+            let image =
+                egui::ColorImage::from_rgba_unmultiplied([frame.width, frame.height], &frame.rgba);
+            match slot {
+                Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
+                None => {
+                    *slot = Some(ctx.load_texture(
+                        format!("video-{}-{:?}", key.0, key.1),
+                        image,
+                        egui::TextureOptions::LINEAR,
+                    ));
+                }
+            }
+        }
+        if self
+            .focus
+            .is_some_and(|u| !self.textures.contains_key(&(u, crate::room::Kind::Screen)))
+        {
+            self.focus = None;
+        }
+    }
+
+    pub fn video(&self, user: Id, kind: crate::room::Kind) -> Option<&egui::TextureHandle> {
+        self.textures.get(&(user, kind)).and_then(Option::as_ref)
+    }
+
+    pub fn sends(&self, user: Id, kind: crate::room::Kind) -> bool {
+        self.textures.contains_key(&(user, kind))
+    }
+}
+
+/// Someone's screen share, watched in the call. Discord gives it its own
+/// voice server: STREAM_CREATE names it and STREAM_SERVER_UPDATE says
+/// where it is.
+pub struct Watch {
+    pub user: Id,
+    pub key: String,
+    pub state: State,
+    pub rtc_server_id: Option<u64>,
+    pub server: Option<(String, String)>,
+    /// The connection info has gone to the backend.
+    pub sent: bool,
+    /// The newest picture, written by the decoder.
+    pub screen: Arc<crate::discord::stream::Screen>,
+    /// The newest picture on the graphics card.
+    pub texture: Option<egui::TextureHandle>,
+}
+
+/// Whether this build can show a screen share at all.
+pub const CAN_WATCH: bool = cfg!(feature = "video");
+
+/// How Discord names a screen share: by server, channel and person, or by
+/// the direct message call and person.
+pub fn stream_key(guild: Option<Id>, channel: Id, user: Id) -> String {
+    match guild {
+        Some(guild) => format!("guild:{guild}:{channel}:{user}"),
+        None => format!("call:{channel}:{user}"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_keys_name_the_server_or_the_call() {
+        assert_eq!(stream_key(Some(1), 2, 3), "guild:1:2:3");
+        assert_eq!(stream_key(None, 2, 3), "call:2:3");
+    }
 
     #[test]
     fn any_rate_comes_out_at_48k_stereo() {
@@ -946,6 +1040,8 @@ impl crate::app::App {
             _audio: audio,
             sent: false,
             since: Instant::now(),
+            watching: None,
+            room: None,
         });
         self.send_voice_state();
     }
@@ -954,6 +1050,9 @@ impl crate::app::App {
         let Some(call) = self.call.take() else {
             return;
         };
+        if call.room.is_some() {
+            self.backend().send(crate::backend::Command::LeaveRoom);
+        }
         self.sound(crate::sounds::Sound::Leave);
         self.call_view = false;
         self.backend().send(crate::backend::Command::VoiceState {
@@ -1087,6 +1186,7 @@ impl crate::app::App {
                 call.state = State::Connected;
                 self.send_voice_state();
                 self.sound(crate::sounds::Sound::Join);
+                self.join_room();
             }
             Err(error) => {
                 log::warn!("voice: {error}");
@@ -1094,6 +1194,224 @@ impl crate::app::App {
                 self.sound(crate::sounds::Sound::Lost);
             }
         }
+    }
+
+    /// Starts watching someone's screen share: the gateway is asked, and
+    /// answers with where the share's own voice server is.
+    pub fn watch_stream(&mut self, user: Id) {
+        if !CAN_WATCH {
+            return;
+        }
+        let Some(call) = &mut self.call else {
+            return;
+        };
+        let key = stream_key(call.guild, call.channel, user);
+        self.call_view = true;
+        if call.watching.as_ref().is_some_and(|w| w.key == key) {
+            return;
+        }
+        let old = call.watching.replace(Watch {
+            user,
+            key: key.clone(),
+            state: State::Joining,
+            rtc_server_id: None,
+            server: None,
+            sent: false,
+            screen: Arc::default(),
+            texture: None,
+        });
+        if let Some(old) = old {
+            self.backend()
+                .send(crate::backend::Command::StopStream { key: old.key });
+        }
+        self.backend()
+            .send(crate::backend::Command::WatchStream { key });
+    }
+
+    pub fn stop_watching(&mut self) {
+        let Some(watch) = self.call.as_mut().and_then(|c| c.watching.take()) else {
+            return;
+        };
+        self.backend()
+            .send(crate::backend::Command::StopStream { key: watch.key });
+    }
+
+    /// The watched share, if `data` is about it.
+    fn watched(&mut self, data: &serde_json::Value) -> Option<&mut Watch> {
+        let key = data["stream_key"].as_str()?;
+        self.call
+            .as_mut()?
+            .watching
+            .as_mut()
+            .filter(|w| w.key == key)
+    }
+
+    /// STREAM_CREATE and STREAM_UPDATE: the share's voice server id.
+    pub fn stream_create_event(&mut self, data: &serde_json::Value) {
+        let Some(watch) = self.watched(data) else {
+            return;
+        };
+        let Some(id) = crate::discord::parse::id(&data["rtc_server_id"]) else {
+            return;
+        };
+        if watch.rtc_server_id != Some(id) {
+            watch.rtc_server_id = Some(id);
+            watch.sent = false;
+        }
+        self.connect_stream();
+    }
+
+    /// STREAM_SERVER_UPDATE: where the share's voice server is.
+    pub fn stream_server_event(&mut self, data: &serde_json::Value) {
+        let Some(watch) = self.watched(data) else {
+            return;
+        };
+        let (Some(endpoint), Some(token)) = (data["endpoint"].as_str(), data["token"].as_str())
+        else {
+            return;
+        };
+        watch.server = Some((endpoint.to_owned(), token.to_owned()));
+        watch.sent = false;
+        self.connect_stream();
+    }
+
+    /// STREAM_DELETE: the share ended, or the user may not watch it.
+    pub fn stream_delete_event(&mut self, data: &serde_json::Value) {
+        if self.watched(data).is_some() {
+            self.stop_watching();
+        }
+    }
+
+    fn connect_stream(&mut self) {
+        let me = self.model.me;
+        let Some(call) = &mut self.call else {
+            return;
+        };
+        let Some(session_id) = call.session_id.clone() else {
+            return;
+        };
+        let Some(watch) = &mut call.watching else {
+            return;
+        };
+        let (Some(rtc_server_id), Some((endpoint, token))) = (watch.rtc_server_id, &watch.server)
+        else {
+            return;
+        };
+        if watch.sent {
+            return;
+        }
+        watch.sent = true;
+        watch.state = State::Connecting;
+        let server = crate::discord::stream::Server {
+            rtc_server_id,
+            user: me,
+            streamer: watch.user,
+            session_id,
+            endpoint: endpoint.clone(),
+            token: token.clone(),
+        };
+        let screen = Arc::clone(&watch.screen);
+        self.backend()
+            .send(crate::backend::Command::ConnectStream { server, screen });
+    }
+
+    pub fn stream_connected(&mut self, result: Result<(), String>) {
+        let Some(watch) = self.call.as_mut().and_then(|c| c.watching.as_mut()) else {
+            return;
+        };
+        match result {
+            Ok(()) => watch.state = State::Connected,
+            Err(error) => {
+                log::warn!("screen share: {error}");
+                watch.state = State::Failed(error);
+            }
+        }
+    }
+
+    /// Whether a video server of the user's own is set, and this build can
+    /// use it.
+    pub fn has_video_server(&self) -> bool {
+        crate::room::AVAILABLE
+            && !self.settings.video_server.trim().is_empty()
+            && !self.settings.video_key.trim().is_empty()
+    }
+
+    /// Joins the call's room on the user's own video server, once the
+    /// voice is connected.
+    pub fn join_room(&mut self) {
+        if !self.has_video_server() {
+            return;
+        }
+        let me = self.model.me;
+        let name = self
+            .model
+            .user(me)
+            .map(|u| u.name.clone())
+            .unwrap_or_default();
+        let server = crate::room::Server {
+            url: self.settings.video_server.trim().to_owned(),
+            key: self.settings.video_key.trim().to_owned(),
+        };
+        let Some(call) = &mut self.call else {
+            return;
+        };
+        if call.room.is_some() {
+            return;
+        }
+        let videos = Arc::new(crate::room::Videos::default());
+        call.room = Some(OwnRoom {
+            state: State::Connecting,
+            videos: Arc::clone(&videos),
+            camera: false,
+            screen: false,
+            focus: None,
+            textures: HashMap::new(),
+        });
+        let room = crate::room::room_name(call.channel);
+        self.backend().send(crate::backend::Command::JoinRoom {
+            server,
+            room,
+            me,
+            name,
+            videos,
+        });
+    }
+
+    pub fn room_connected(&mut self, result: Result<(), String>) {
+        let Some(room) = self.call.as_mut().and_then(|c| c.room.as_mut()) else {
+            return;
+        };
+        match result {
+            Ok(()) => room.state = State::Connected,
+            Err(error) => {
+                log::warn!("video server: {error}");
+                room.state = State::Failed(error);
+                room.camera = false;
+                room.screen = false;
+            }
+        }
+    }
+
+    /// The camera or screen on or off in the room.
+    pub fn toggle_video(&mut self, kind: crate::room::Kind) {
+        let Some(room) = self.call.as_mut().and_then(|c| c.room.as_mut()) else {
+            return;
+        };
+        if room.state != State::Connected {
+            return;
+        }
+        let control = match kind {
+            crate::room::Kind::Camera => {
+                room.camera = !room.camera;
+                crate::room::Control::Camera(room.camera)
+            }
+            crate::room::Kind::Screen => {
+                room.screen = !room.screen;
+                crate::room::Control::Screen(room.screen)
+            }
+        };
+        self.backend()
+            .send(crate::backend::Command::RoomControl(control));
     }
 
     /// Whether someone in the call is talking now; the user by their

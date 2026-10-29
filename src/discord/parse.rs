@@ -734,6 +734,7 @@ pub fn voice_state(value: &Value, guild: Option<Id>, model: &mut Model) -> Optio
                     mute: flag("mute"),
                     deaf: flag("deaf"),
                     stream: flag("self_stream"),
+                    video: flag("self_video"),
                 },
             );
         }
@@ -955,5 +956,22 @@ pub fn profile(value: &Value) -> Profile {
             })
             .collect(),
         note: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn voice_states_read_the_camera_and_the_share() {
+        let mut model = Model::default();
+        let state = serde_json::json!({
+            "user_id": "5", "guild_id": "1", "channel_id": "2",
+            "self_video": true, "self_stream": true,
+        });
+        assert_eq!(voice_state(&state, None, &mut model), Some(5));
+        let member = &model.voice[&(Some(1), 5)];
+        assert!(member.video && member.stream && !member.self_mute);
     }
 }

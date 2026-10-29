@@ -678,6 +678,8 @@ pub struct VoiceMember {
     pub deaf: bool,
     /// Sharing their screen: "AO VIVO" beside the name.
     pub stream: bool,
+    /// Their camera is on.
+    pub video: bool,
 }
 
 impl Model {

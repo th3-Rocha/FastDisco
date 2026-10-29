@@ -67,6 +67,15 @@ pub struct ProfileForm {
     pub message: Option<String>,
 }
 
+/// The own video server's fields while they are edited. The secret is
+/// typed only when it changes; the saved one stays in the keyring.
+pub struct VideoForm {
+    pub url: String,
+    pub key: String,
+    pub secret: String,
+    pub saved: bool,
+}
+
 /// Where the user is: the home screen with direct messages, or a server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
@@ -150,6 +159,19 @@ pub enum Action {
     LeaveVoice,
     /// The call's tiles, or back to the text channel.
     ShowCall(bool),
+    /// Watches someone's screen share in the call.
+    WatchStream(Id),
+    StopWatching,
+    /// The camera or the screen on or off, on the user's own video server.
+    ToggleVideo(crate::room::Kind),
+    /// Someone's screen from the own video server on the stage, or none.
+    FocusScreen(Option<Id>),
+    /// The own video server's address and key, and its secret when typed.
+    SaveVideoServer {
+        url: String,
+        key: String,
+        secret: Option<String>,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -221,6 +243,7 @@ pub struct App {
     pub update_receipt: Option<fastframe_update::Receipt>,
     last_update_check: std::time::Instant,
     pub profile_form: Option<ProfileForm>,
+    pub video_form: Option<VideoForm>,
     /// Whether Discofast starts at login; `None` where it cannot.
     pub autostart: Option<bool>,
     pub autostart_asked: bool,
@@ -291,6 +314,7 @@ impl App {
             update_receipt: None,
             last_update_check: std::time::Instant::now(),
             profile_form: None,
+            video_form: None,
             autostart: None,
             autostart_asked: false,
             show_stats: false,
@@ -638,6 +662,10 @@ impl App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 Event::VoiceFailed(error) => self.voice_connected(Err(error)),
+                Event::StreamConnected => self.stream_connected(Ok(())),
+                Event::StreamFailed(error) => self.stream_connected(Err(error)),
+                Event::RoomConnected => self.room_connected(Ok(())),
+                Event::RoomFailed(error) => self.room_connected(Err(error)),
                 Event::Speller(result) => match result {
                     Ok(speller) => self.speller = Some(speller),
                     Err(error) => log::warn!("spell checking off: {error}"),
@@ -981,6 +1009,23 @@ impl App {
                 Action::DismissVoiceTaken => self.voice_taken = None,
                 Action::LeaveVoice => self.leave_voice(),
                 Action::ShowCall(shown) => self.call_view = shown && self.call.is_some(),
+                Action::WatchStream(user) => self.watch_stream(user),
+                Action::StopWatching => self.stop_watching(),
+                Action::ToggleVideo(kind) => self.toggle_video(kind),
+                Action::FocusScreen(user) => {
+                    if let Some(room) = self.call.as_mut().and_then(|c| c.room.as_mut()) {
+                        room.focus = user;
+                    }
+                }
+                Action::SaveVideoServer { url, key, secret } => {
+                    self.settings.video_server = url;
+                    self.settings.video_key = key;
+                    self.save_settings();
+                    if let Some(secret) = secret {
+                        self.backend.send(Command::SaveVideoSecret(secret));
+                    }
+                    self.join_room();
+                }
                 Action::OpenSettings(page) => {
                     self.chat.popout = None;
                     if page != SettingsPage::Voice {
@@ -1371,6 +1416,9 @@ impl App {
                 }
             }
             "VOICE_SERVER_UPDATE" => self.voice_server_event(&data),
+            "STREAM_CREATE" | "STREAM_UPDATE" => self.stream_create_event(&data),
+            "STREAM_SERVER_UPDATE" => self.stream_server_event(&data),
+            "STREAM_DELETE" => self.stream_delete_event(&data),
             "MESSAGE_POLL_VOTE_ADD" => self.poll_vote(&data, true),
             "MESSAGE_POLL_VOTE_REMOVE" => self.poll_vote(&data, false),
             "INTERACTION_SUCCESS" => self.interaction_done(&data, true),

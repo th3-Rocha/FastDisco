@@ -74,6 +74,10 @@ pub struct Settings {
     pub user_volumes: BTreeMap<crate::model::Id, u16>,
     /// People silenced on this machine only.
     pub local_mutes: BTreeSet<crate::model::Id>,
+    /// The user's own LiveKit server for camera and screen, and its API
+    /// key; its secret is in the OS keyring. Empty is none.
+    pub video_server: String,
+    pub video_key: String,
 }
 
 impl Default for Settings {
@@ -107,6 +111,8 @@ impl Default for Settings {
             sensitivity: -60.0,
             user_volumes: BTreeMap::new(),
             local_mutes: BTreeSet::new(),
+            video_server: String::new(),
+            video_key: String::new(),
         }
     }
 }
