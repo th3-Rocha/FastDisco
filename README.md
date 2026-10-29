@@ -53,7 +53,8 @@ cargo run
 Two optional features: `video` watches Discord screen shares (not yet
 tried against Discord), and `selfhosted` sends camera and screen between
 friends through a LiveKit server of your own; `contrib/livekit` has the
-server and how to set it up.
+server and how to set it up. The released builds have `selfhosted`;
+`cargo run --features selfhosted` builds it from source.
 
 `scripts/install.sh` builds a release and installs it for the current
 user, with the launcher entry and icons.
@@ -181,7 +182,7 @@ everything Discord's desktop app does.
 - [ ] Video calls and screen sharing
 - [x] Who has their camera on and who is live, in the channel list and the call
 - [ ] Watching a screen share: written behind the `video` feature (`cargo run --features video`), not yet tried against Discord
-- [ ] Camera and screen sharing between friends on your own LiveKit server, beside the Discord call: written behind the `selfhosted` feature (see `contrib/livekit`), not yet tested
+- [x] Camera and screen sharing between friends on your own LiveKit server, beside the Discord call (the `selfhosted` feature, in the released builds; see `contrib/livekit`)
 - [ ] Video calls and screen sharing through Discord itself: cameras in the call and sending your own camera or screen
 - [ ] Direct message calls
 - [ ] Scheduled events
