@@ -290,6 +290,8 @@ pub struct Channel {
     pub voice_start: Option<u64>,
     /// A group's own picture.
     pub icon: Option<String>,
+    /// A stage's topic while it is live.
+    pub stage_topic: Option<String>,
     /// A thread's or a forum post's details.
     pub thread: Option<ThreadMeta>,
     /// A forum's tags.
@@ -742,6 +744,10 @@ pub struct VoiceMember {
     pub stream: bool,
     /// Their camera is on.
     pub video: bool,
+    /// On a stage: in the audience rather than speaking.
+    pub suppress: bool,
+    /// In a stage's audience with a hand raised.
+    pub hand: bool,
 }
 
 impl Model {

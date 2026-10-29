@@ -1485,7 +1485,21 @@ impl crate::app::App {
             deaf,
         });
         self.backend()
-            .send(crate::backend::Command::VoiceMute(mute || deaf));
+            .send(crate::backend::Command::VoiceMute(mute || deaf || self.in_audience()));
+    }
+
+    /// In a stage's audience: the microphone stays off whatever the
+    /// mute button says.
+    pub fn in_audience(&self) -> bool {
+        let Some(call) = &self.call else { return false };
+        self.model
+            .channel(call.channel)
+            .is_some_and(|c| c.kind == crate::model::ChannelKind::Stage)
+            && self
+                .model
+                .voice
+                .get(&(call.guild, self.model.me))
+                .is_none_or(|v| v.suppress)
     }
 
     /// VOICE_STATE_UPDATE: someone moved; for the user, the session the
@@ -1511,6 +1525,13 @@ impl crate::app::App {
             return;
         }
         let channel = crate::discord::parse::id(&data["channel_id"]);
+        // Brought up to or down from a stage: the microphone follows.
+        if self.call.as_ref().is_some_and(|c| Some(c.channel) == channel) {
+            let audience = self.in_audience();
+            self.backend().send(crate::backend::Command::VoiceMute(
+                self.settings.muted || self.settings.deafened || audience,
+            ));
+        }
         let Some(call) = &mut self.call else {
             return;
         };

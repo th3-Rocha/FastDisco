@@ -160,6 +160,11 @@ pub enum Modal {
         guild: Id,
         typed: String,
     },
+    /// "Iniciar palco": the stage's topic.
+    StartStage {
+        channel: Id,
+        topic: String,
+    },
 }
 
 #[derive(Default)]
@@ -404,6 +409,16 @@ pub enum AdminAction {
     SaveRole,
     Revoke(String),
     Unban(Id),
+    /// Raises or lowers the user's hand in a stage's audience.
+    StageHand(bool),
+    /// Brings someone (the user when none) up to a stage or down to the
+    /// audience.
+    StageSpeaker {
+        user: Option<Id>,
+        speak: bool,
+    },
+    /// Ends the stage for everyone.
+    EndStage(Id),
     /// Changes someone's voice state in the server: `mute`, `deaf` or
     /// `channel_id` (null disconnects).
     VoiceMember {
@@ -437,6 +452,40 @@ impl App {
                 Some(change),
             ),
             AdminAction::CloseMenu => self.admin.menu = false,
+            AdminAction::StageHand(raise) => {
+                let Some((guild, channel)) = self.call.as_ref().and_then(|c| Some((c.guild?, c.channel))) else {
+                    return;
+                };
+                let when = raise.then(|| jiff::Timestamp::now().to_string());
+                self.api(
+                    Tag::VoiceMember,
+                    Method::PATCH,
+                    format!("/guilds/{guild}/voice-states/@me"),
+                    Some(json!({ "channel_id": channel.to_string(), "request_to_speak_timestamp": when })),
+                );
+            }
+            AdminAction::StageSpeaker { user, speak } => {
+                let Some((guild, channel)) = self.call.as_ref().and_then(|c| Some((c.guild?, c.channel))) else {
+                    return;
+                };
+                let who = user.map_or("@me".to_owned(), |u| u.to_string());
+                let mut body = json!({ "channel_id": channel.to_string(), "suppress": !speak });
+                if user.is_none() {
+                    body["request_to_speak_timestamp"] = Value::Null;
+                }
+                self.api(
+                    Tag::VoiceMember,
+                    Method::PATCH,
+                    format!("/guilds/{guild}/voice-states/{who}"),
+                    Some(body),
+                );
+            }
+            AdminAction::EndStage(channel) => self.api(
+                Tag::VoiceMember,
+                Method::DELETE,
+                format!("/stage-instances/{channel}"),
+                None,
+            ),
             AdminAction::ResolveInvite(code) => {
                 if self.admin.previews.contains_key(&code) {
                     return;
@@ -813,6 +862,20 @@ impl App {
                     Method::PATCH,
                     "/users/@me/settings".into(),
                     Some(json!({ "custom_status": custom })),
+                );
+            }
+            Modal::StartStage { channel, topic } => {
+                let topic = topic.trim().to_owned();
+                if topic.is_empty() {
+                    self.admin.busy = false;
+                    self.admin.error = Some("Dê um tema ao palco.".into());
+                    return;
+                }
+                self.api(
+                    Tag::Presence,
+                    Method::POST,
+                    "/stage-instances".into(),
+                    Some(json!({ "channel_id": channel.to_string(), "topic": topic, "privacy_level": 2 })),
                 );
             }
             Modal::VoiceStatus { channel, text } => {

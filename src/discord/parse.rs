@@ -180,6 +180,7 @@ pub fn channel(value: &Value, guild: Option<Id>) -> Option<Channel> {
         icon: value["icon"]
             .as_str()
             .map(|hash| format!("{CDN}/channel-icons/{id}/{hash}.png?size=96")),
+        stage_topic: None,
         thread: (kind == ChannelKind::Thread).then(|| thread_meta(value)),
         tags: value["available_tags"]
             .as_array()
@@ -298,6 +299,11 @@ pub fn guild(value: &Value, model: &mut Model) -> Option<Guild> {
             .unwrap_or_default(),
         ..Default::default()
     };
+    for stage in value["stage_instances"].as_array().into_iter().flatten() {
+        if let Some(c) = self::id(&stage["channel_id"]).and_then(|c| model.channels.get_mut(&c)) {
+            c.stage_topic = label(&stage["topic"]);
+        }
+    }
     for m in value["members"].as_array().into_iter().flatten() {
         if let Some(user) = user(&m["user"]) {
             guild.members.insert(user.id, member(m));
@@ -790,6 +796,8 @@ pub fn voice_state(value: &Value, guild: Option<Id>, model: &mut Model) -> Optio
                     deaf: flag("deaf"),
                     stream: flag("self_stream"),
                     video: flag("self_video"),
+                    suppress: flag("suppress"),
+                    hand: value["request_to_speak_timestamp"].is_string(),
                 },
             );
         }

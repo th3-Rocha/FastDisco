@@ -193,6 +193,7 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
         }
         Modal::Nick { .. } => ("Alterar apelido", "Salvar", false),
         Modal::VoiceStatus { .. } => ("Definir status do canal", "Salvar", false),
+        Modal::StartStage { .. } => ("Iniciar palco", "Iniciar palco", false),
         Modal::Sessions => ("Dispositivos conectados", "Fechar", false),
         Modal::CloseAccount { delete: false, .. } => ("Desativar conta", "Desativar conta", true),
         Modal::CloseAccount { delete: true, .. } => ("Excluir conta", "Excluir conta", true),
@@ -306,6 +307,12 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
                             edited = Some(Modal::VoiceStatus { channel, text });
                         }
                         ui.label(RichText::new("Todos no canal de voz veem este status. Deixe vazio para apagá-lo.").font(font(Weight::Regular, 12.0)).color(palette.muted));
+                    }
+                    Modal::StartStage { channel, mut topic } => {
+                        if field(ui, "TEMA", &mut topic, "Do que vamos falar?") {
+                            edited = Some(Modal::StartStage { channel, topic });
+                        }
+                        ui.label(RichText::new("Quem estiver no servidor vê o tema e pode entrar para ouvir.").font(font(Weight::Regular, 12.0)).color(palette.muted));
                     }
                     Modal::Nick { guild, mut text } => {
                         if field(ui, "APELIDO", &mut text, &app.model.user(app.model.me).map(|u| u.name.clone()).unwrap_or_default()) {

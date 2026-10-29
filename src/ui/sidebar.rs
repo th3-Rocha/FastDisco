@@ -422,7 +422,9 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
         .map(|c| c.since);
     // A voice channel's status under its name; the user's own channel
     // offers to set one, as Discord.
+    let stage = channel.kind == ChannelKind::Stage;
     let status = match (&channel.voice_status, joined) {
+        _ if stage => channel.stage_topic.clone().map(|t| (t, false)),
         (Some(status), _) => Some((status.clone(), false)),
         (None, Some(_)) => Some(("Definir um status do canal".to_owned(), true)),
         (None, None) => None,
@@ -543,6 +545,7 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
             paint_icon(ui, Icon::Pencil, pos2(shown.right() + 9.0, y), 12.0, tint);
         }
         if joined.is_some()
+            && !stage
             && edit
                 .on_hover_text("Definir um status do canal")
                 .clicked()

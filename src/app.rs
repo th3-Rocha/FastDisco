@@ -1433,6 +1433,14 @@ impl App {
                     (None, None) => {}
                 }
             }
+            "STAGE_INSTANCE_CREATE" | "STAGE_INSTANCE_UPDATE" | "STAGE_INSTANCE_DELETE" => {
+                if let Some(c) = parse::id(&data["channel_id"])
+                    .and_then(|c| self.model.channels.get_mut(&c))
+                {
+                    c.stage_topic = (kind != "STAGE_INSTANCE_DELETE")
+                        .then(|| data["topic"].as_str().unwrap_or_default().to_owned());
+                }
+            }
             "VOICE_CHANNEL_START_TIME_UPDATE" => {
                 if let Some(channel) = parse::id(&data["id"])
                     .and_then(|id| self.model.channels.get_mut(&id))

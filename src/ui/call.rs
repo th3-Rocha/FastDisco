@@ -713,6 +713,13 @@ pub fn view(app: &mut App, ui: &mut Ui) {
         .channel(channel)
         .map(|c| c.name.clone())
         .unwrap_or_default();
+    if app
+        .model
+        .channel(channel)
+        .is_some_and(|c| c.kind == crate::model::ChannelKind::Stage)
+    {
+        return stage(app, ui, channel, guild);
+    }
     let mut people: Vec<(Id, VoiceMember)> = app.model.in_voice(channel);
     let me = app.model.me;
     if !people.iter().any(|(u, _)| *u == me) {
@@ -1438,4 +1445,196 @@ fn own_stage(app: &mut App, ui: &mut Ui, stage: Rect, guild: Option<Id>, user: I
     if response.on_hover_text("Sair do destaque").clicked() {
         app.actions.push(Action::FocusScreen(None));
     }
+}
+
+/// A stage, as Discord's: the topic, the speakers' tiles, the audience
+/// below with raised hands first, and for the user the hand to raise or,
+/// for moderators, the buttons to bring people up and end the stage.
+fn stage(app: &mut App, ui: &mut Ui, channel: Id, guild: Option<Id>) {
+    use crate::admin::{AdminAction, Modal};
+    let palette = app.palette;
+    let me = app.model.me;
+    let rect = ui.max_rect();
+    ui.painter()
+        .rect_filled(rect, CornerRadius::ZERO, Color32::BLACK);
+    let (name, topic) = app
+        .model
+        .channel(channel)
+        .map(|c| (c.name.clone(), c.stage_topic.clone()))
+        .unwrap_or_default();
+    let moderator = guild.is_some_and(|g| {
+        let bits = app.model.guild_permissions(g);
+        bits & crate::model::permission::MUTE_MEMBERS != 0
+            && bits & crate::model::permission::MOVE_MEMBERS != 0
+    });
+    paint_icon(ui, Icon::Stage, pos2(rect.left() + 28.0, rect.top() + 24.0), 18.0, Color32::WHITE);
+    ui.painter().text(
+        pos2(rect.left() + 44.0, rect.top() + 24.0),
+        Align2::LEFT_CENTER,
+        topic.clone().unwrap_or_else(|| name.clone()),
+        font(Weight::SemiBold, 16.0),
+        Color32::WHITE,
+    );
+    let people = app.model.in_voice(channel);
+    let (speakers, mut audience): (Vec<_>, Vec<_>) =
+        people.into_iter().partition(|(_, v)| !v.suppress);
+    audience.sort_by_key(|(_, v)| !v.hand);
+    let mine = app.model.voice.get(&(guild, me)).cloned();
+    let speaking = mine.as_ref().is_some_and(|v| !v.suppress);
+    let hand = mine.as_ref().is_some_and(|v| v.hand);
+    let mut out: Vec<Action> = Vec::new();
+    // The top right: start or end the stage, for moderators.
+    if moderator {
+        let label = if topic.is_some() { "Encerrar palco" } else { "Iniciar palco" };
+        let at = Rect::from_min_size(pos2(rect.right() - 146.0, rect.top() + 10.0), vec2(130.0, 30.0));
+        let response = ui
+            .interact(at, ui.id().with("stage-toggle"), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let fill = if topic.is_some() { palette.danger } else { palette.online };
+        ui.painter().rect_filled(
+            at,
+            CornerRadius::same(4),
+            if response.hovered() { fill.gamma_multiply(0.85) } else { fill },
+        );
+        ui.painter().text(at.center(), Align2::CENTER_CENTER, label, font(Weight::Medium, 14.0), Color32::WHITE);
+        if response.clicked() {
+            out.push(Action::Admin(if topic.is_some() {
+                AdminAction::EndStage(channel)
+            } else {
+                AdminAction::Open(Modal::StartStage { channel, topic: String::new() })
+            }));
+        }
+    }
+    let area = Rect::from_min_max(
+        pos2(rect.left() + 16.0, rect.top() + 56.0),
+        pos2(rect.right() - 16.0, rect.bottom() - 96.0),
+    );
+    let audience_height = if audience.is_empty() { 0.0 } else { 120.0 };
+    let stage_area = Rect::from_min_max(area.min, pos2(area.right(), area.bottom() - audience_height));
+    if speakers.is_empty() {
+        ui.painter().text(
+            stage_area.center(),
+            Align2::CENTER_CENTER,
+            if topic.is_some() { "Ninguém no palco ainda" } else { "Este palco não está ao vivo" },
+            font(Weight::SemiBold, 18.0),
+            Color32::from_gray(180),
+        );
+    }
+    let tiles = grid(stage_area, speakers.len().max(1));
+    for ((user, state), tile) in speakers.iter().zip(tiles) {
+        let person = app.model.user(*user);
+        let fill = person.map_or(palette.sidebar, |p| {
+            app.picture_color(p.picture.as_deref())
+                .unwrap_or_else(|| p.color().gamma_multiply(0.55))
+        });
+        ui.painter().rect_filled(tile, CornerRadius::same(8), fill);
+        if let Some(person) = person {
+            avatar(ui, app, person, tile.center(), (tile.height() * 0.22).clamp(20.0, 60.0), None);
+        }
+        if app.talking(*user) {
+            ui.painter().rect_stroke(tile, CornerRadius::same(8), Stroke::new(3.0, TALKING), egui::StrokeKind::Inside);
+        }
+        let mut label = app.model.name_in(guild, *user);
+        if state.self_mute || state.mute {
+            label = format!("🔇 {label}");
+        }
+        let galley = ui.painter().layout_no_wrap(label, font(Weight::SemiBold, 14.0), Color32::WHITE);
+        let pill = Rect::from_min_size(pos2(tile.left() + 8.0, tile.bottom() - 32.0), galley.size() + vec2(16.0, 8.0));
+        ui.painter().rect_filled(pill, CornerRadius::same(4), Color32::from_black_alpha(150));
+        ui.painter().galley(pill.min + vec2(8.0, 4.0), galley, Color32::WHITE);
+        if moderator && *user != me {
+            let response = ui.interact(tile, ui.id().with(("stage-speaker", *user)), Sense::click());
+            response.context_menu(|ui| {
+                if ui.button("Mover para a plateia").clicked() {
+                    out.push(Action::Admin(AdminAction::StageSpeaker { user: Some(*user), speak: false }));
+                    ui.close();
+                }
+            });
+        }
+    }
+    // The audience: small avatars, hands first.
+    if !audience.is_empty() {
+        let top = stage_area.bottom() + 8.0;
+        ui.painter().text(
+            pos2(area.left(), top + 8.0),
+            Align2::LEFT_CENTER,
+            format!("NA PLATEIA — {}", audience.len()),
+            font(Weight::Bold, 12.0),
+            Color32::from_gray(170),
+        );
+        let mut x = area.left();
+        let y = top + 52.0;
+        for (user, state) in &audience {
+            if x + 64.0 > area.right() {
+                break;
+            }
+            let center = pos2(x + 28.0, y);
+            if let Some(person) = app.model.user(*user) {
+                avatar(ui, app, person, center, 22.0, None);
+            }
+            if state.hand {
+                paint_icon(ui, Icon::Hand, center + vec2(18.0, -18.0), 16.0, palette.idle);
+            }
+            let name = app.model.name_in(guild, *user);
+            Elide::new(ui, x + 60.0).text(
+                pos2(x + 2.0, y + 34.0),
+                Align2::LEFT_CENTER,
+                name,
+                font(Weight::Medium, 11.0),
+                Color32::from_gray(200),
+            );
+            let hit = Rect::from_center_size(center, Vec2::splat(48.0));
+            let response = ui.interact(hit, ui.id().with(("stage-audience", *user)), Sense::click());
+            if moderator && *user != me {
+                response.context_menu(|ui| {
+                    if ui.button("Convidar para o palco").clicked() {
+                        out.push(Action::Admin(AdminAction::StageSpeaker { user: Some(*user), speak: true }));
+                        ui.close();
+                    }
+                });
+            }
+            x += 64.0;
+        }
+    }
+    // The user's own place: raise a hand, come up (moderators), or go
+    // back to the audience.
+    let label = if speaking {
+        "Mover-se para a plateia"
+    } else if moderator {
+        "Subir ao palco"
+    } else if hand {
+        "Abaixar a mão"
+    } else {
+        "Pedir para falar"
+    };
+    let at = Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 100.0), vec2(200.0, 32.0));
+    let response = ui
+        .interact(at, ui.id().with("stage-self"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    ui.painter().rect_filled(
+        at,
+        CornerRadius::same(16),
+        if response.hovered() { Color32::from_rgb(0x2e, 0x2f, 0x35) } else { Color32::from_rgb(0x1a, 0x1a, 0x1e) },
+    );
+    paint_icon(ui, Icon::Hand, pos2(at.left() + 20.0, at.center().y), 16.0, if hand { palette.idle } else { Color32::WHITE });
+    ui.painter().text(
+        pos2(at.left() + 36.0, at.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        font(Weight::Medium, 14.0),
+        Color32::WHITE,
+    );
+    if response.clicked() {
+        out.push(Action::Admin(if speaking {
+            AdminAction::StageSpeaker { user: None, speak: false }
+        } else if moderator {
+            AdminAction::StageSpeaker { user: None, speak: true }
+        } else {
+            AdminAction::StageHand(!hand)
+        }));
+    }
+    app.actions.extend(out);
+    controls(app, ui, pos2(rect.center().x, rect.bottom() - 48.0));
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(100));
 }
