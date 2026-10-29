@@ -52,6 +52,14 @@ impl Videos {
         slots.insert((user, kind), Some(frame));
     }
 
+    /// Whether the interface took the last picture, so a new one is worth
+    /// making; until it does, pictures are skipped rather than queued.
+    #[cfg_attr(not(feature = "selfhosted"), allow(dead_code))]
+    pub fn wants(&self, user: u64, kind: Kind) -> bool {
+        let slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        !matches!(slots.get(&(user, kind)), Some(Some(_)))
+    }
+
     #[cfg_attr(not(feature = "selfhosted"), allow(dead_code))]
     pub fn remove(&self, user: u64, kind: Kind) {
         let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());

@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use livekit::options::TrackPublishOptions;
+use livekit::options::{TrackPublishOptions, VideoEncoding};
 use livekit::prelude::*;
 use livekit::webrtc::desktop_capturer::{
     DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions,
@@ -37,9 +37,14 @@ use crate::discord::stream::Frame;
 #[link(name = "glib-2.0")]
 unsafe extern "C" {}
 
-/// The camera's size and rate.
+/// The camera's size.
 const CAMERA: (u32, u32) = (1280, 720);
-const FPS: u64 = 30;
+/// The screen's rate and widest size, as Discord sends a screen by
+/// default.
+const SCREEN_FPS: u32 = 15;
+const SCREEN_WIDTH: u32 = 1920;
+/// The width of the user's own screen in their tile.
+const PREVIEW_WIDTH: i32 = 640;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
@@ -158,6 +163,11 @@ async fn read(
 ) {
     let mut stream = NativeVideoStream::new(track.rtc_track());
     while let Some(frame) = stream.next().await {
+        // The interface still has the last one: skip this rather than fall
+        // behind, which would delay every picture after it.
+        if !videos.wants(user, kind) {
+            continue;
+        }
         if let Some(frame) = rgba(frame.buffer.as_ref()) {
             videos.show(user, kind, frame);
             wake();
@@ -247,12 +257,26 @@ impl Sending {
             },
             RtcVideoSource::Native(source),
         );
-        let options = TrackPublishOptions {
-            source: match kind {
-                Kind::Camera => TrackSource::Camera,
-                Kind::Screen => TrackSource::Screenshare,
+        // A screen in one layer at its own rate: simulcast would encode it
+        // several times over.
+        let options = match kind {
+            Kind::Camera => TrackPublishOptions {
+                source: TrackSource::Camera,
+                video_encoding: Some(VideoEncoding {
+                    max_bitrate: 1_700_000,
+                    max_framerate: 30.0,
+                }),
+                ..Default::default()
             },
-            ..Default::default()
+            Kind::Screen => TrackPublishOptions {
+                source: TrackSource::Screenshare,
+                video_encoding: Some(VideoEncoding {
+                    max_bitrate: 2_500_000,
+                    max_framerate: f64::from(SCREEN_FPS),
+                }),
+                simulcast: false,
+                ..Default::default()
+            },
         };
         let publication = room
             .local_participant()
@@ -413,33 +437,42 @@ fn screen(
                 if w == 0 || h == 0 {
                     return;
                 }
-                let data = frame.data();
-                let stride = frame.stride();
-                send_bgra(&source, data, stride, w, h);
-                // The user's own tile needs far fewer pictures.
-                shown += 1;
-                if shown % 10 == 1 {
-                    let mut rgba = Vec::with_capacity(w as usize * h as usize * 4);
-                    for row in data.chunks(stride as usize).take(h as usize) {
-                        for px in row[..w as usize * 4].as_chunks::<4>().0 {
-                            rgba.extend_from_slice(&[px[2], px[1], px[0], 255]);
-                        }
-                    }
-                    videos.show(
-                        me,
-                        Kind::Screen,
-                        Frame {
-                            width: w as usize,
-                            height: h as usize,
-                            rgba,
-                        },
-                    );
-                    wake();
+                // The capturer's pictures are B, G, R, A in memory: libyuv's
+                // "ARGB".
+                let mut buffer = I420Buffer::new(w, h);
+                let (sy, su, sv) = buffer.strides();
+                let (y, u, v) = buffer.data_mut();
+                yuv_helper::argb_to_i420(
+                    frame.data(),
+                    frame.stride(),
+                    y,
+                    sy,
+                    u,
+                    su,
+                    v,
+                    sv,
+                    w as i32,
+                    h as i32,
+                );
+                if w > SCREEN_WIDTH {
+                    let height = (h * SCREEN_WIDTH / w) & !1;
+                    buffer = buffer.scale(SCREEN_WIDTH as i32, height as i32);
                 }
+                // The user's own tile: a small picture once a second.
+                if shown.is_multiple_of(SCREEN_FPS) {
+                    let (bw, bh) = (buffer.width() as i32, buffer.height() as i32);
+                    let small = buffer.scale(PREVIEW_WIDTH, (bh * PREVIEW_WIDTH / bw) & !1);
+                    if let Some(picture) = rgba(&small) {
+                        videos.show(me, Kind::Screen, picture);
+                        wake();
+                    }
+                }
+                shown = shown.wrapping_add(1);
+                source.capture_frame(&VideoFrame::new(VideoRotation::VideoRotation0, buffer));
             });
             while !stop.load(Ordering::Relaxed) {
                 capturer.capture_frame();
-                std::thread::sleep(Duration::from_millis(1000 / FPS));
+                std::thread::sleep(Duration::from_millis(1000 / u64::from(SCREEN_FPS)));
             }
         })
         .map_err(|e| e.to_string())?;
@@ -452,14 +485,5 @@ fn send(source: &NativeVideoSource, rgba: &[u8], w: u32, h: u32) {
     let (sy, su, sv) = buffer.strides();
     let (y, u, v) = buffer.data_mut();
     yuv_helper::abgr_to_i420(rgba, w * 4, y, sy, u, su, v, sv, w as i32, h as i32);
-    source.capture_frame(&VideoFrame::new(VideoRotation::VideoRotation0, buffer));
-}
-
-/// The capturer's pictures (B, G, R, A in memory: libyuv's "ARGB").
-fn send_bgra(source: &NativeVideoSource, bgra: &[u8], stride: u32, w: u32, h: u32) {
-    let mut buffer = I420Buffer::new(w, h);
-    let (sy, su, sv) = buffer.strides();
-    let (y, u, v) = buffer.data_mut();
-    yuv_helper::argb_to_i420(bgra, stride, y, sy, u, su, v, sv, w as i32, h as i32);
     source.capture_frame(&VideoFrame::new(VideoRotation::VideoRotation0, buffer));
 }
