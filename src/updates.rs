@@ -20,9 +20,6 @@ pub const CONFIG: UpdateConfig = UpdateConfig {
     publisher_key: Some(include_str!("../assets/update-public-key.hex")),
     // The AppImage replaces itself in place.
     appimage: true,
-    // The app was FastDisco up to 0.9: its markers, executables and
-    // `--version` answer still count as this app's.
-    legacy_names: &[LEGACY_SLUG],
     ..UpdateConfig::new(
         "th3-Rocha/FastDisco",
         "Discofast",

@@ -119,25 +119,6 @@ fn options() -> eframe::NativeOptions {
 
 const SLOT: &str = "io.github.th3_rocha.Discofast";
 
-/// The name `--version` answers with. A FastDisco 0.9 updater downloads
-/// this app under its old name and expects `fastdisco <version>`; that
-/// copy (a `fastdisco` executable, or a `fastdisco-*.AppImage`) answers
-/// with the old name, every other copy with the new one.
-fn version_name() -> &'static str {
-    let legacy = |path: std::path::PathBuf| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.to_ascii_lowercase().starts_with(updates::LEGACY_SLUG))
-    };
-    let appimage = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from);
-    let running = appimage.or_else(|| std::env::current_exe().ok());
-    if running.is_some_and(legacy) {
-        updates::LEGACY_SLUG
-    } else {
-        updates::CONFIG.slug
-    }
-}
-
 fn main() -> anyhow::Result<()> {
     // First of all: the update helper runs here when asked
     // (`--apply-update`) and exits, and the restarted copy learns how the
@@ -145,7 +126,7 @@ fn main() -> anyhow::Result<()> {
     let launch = fastframe_update::intercept(&updates::CONFIG);
     // The updater asks a downloaded copy for its version before trusting it.
     if launch.arguments.get(1).and_then(|a| a.to_str()) == Some("--version") {
-        println!("{} {}", version_name(), env!("CARGO_PKG_VERSION"));
+        println!("{} {}", updates::CONFIG.slug, env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     env_logger::Builder::from_env(

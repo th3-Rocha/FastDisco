@@ -121,26 +121,6 @@ jobs:
             tag="${{ needs.version.outputs.tag }}"
             scripts/appimage.sh "$binary" "dist/discofast-${tag#v}-x86_64.AppImage"
           fi
-          # Copies under FastDisco's old names, which installs from 0.9 and
-          # earlier look for: their updater takes the archive's `fastdisco`
-          # executable, or the `fastdisco-*.AppImage`, and the new version
-          # then moves itself onto the Discofast name.
-          legacy=""
-          if [ "${{ runner.os }}" != "macOS" ]; then
-            legacy="fastdisco-${{ needs.version.outputs.tag }}-${{ matrix.target }}"
-            mkdir -p "dist/$legacy"
-            if [ "${{ runner.os }}" = "Windows" ]; then
-              cp "dist/$name/discofast.exe" "dist/$legacy/fastdisco.exe"
-            else
-              cp "dist/$name/discofast" "dist/$legacy/fastdisco"
-            fi
-            cp README.md LICENSE "dist/$legacy/"
-            echo "fastdisco-portable-v1" > "dist/$legacy/fastdisco-portable.txt"
-          fi
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            tag="${{ needs.version.outputs.tag }}"
-            cp "dist/discofast-${tag#v}-x86_64.AppImage" "dist/fastdisco-${tag#v}-x86_64.AppImage"
-          fi
           tag="${{ needs.version.outputs.tag }}"
           # An installer for Windows, for the current user.
           if [ "${{ runner.os }}" = "Windows" ]; then
@@ -151,7 +131,7 @@ jobs:
             scripts/macos-app.sh "target/${{ matrix.target }}/release/discofast" "${tag#v}" "dist/discofast-${tag#v}-aarch64.dmg"
           fi
           cd dist
-          for dir in "$name" $legacy; do
+          for dir in "$name"; do
             if [ "${{ runner.os }}" = "Windows" ]; then
               7z a "$dir.zip" "$dir"
             else
@@ -266,8 +246,7 @@ jobs:
           files: dist/*
           make_latest: true
 
-  # Arch users install with `yay -S discofast-bin`; fastdisco-bin, from
-  # before the rename, is now an empty package that depends on it. Needs
+  # Arch users install with `yay -S discofast-bin`. Needs
   # the AUR_SSH_PRIVATE_KEY secret, a key added to the AUR account; without
   # it this step only says so.
   aur:
@@ -278,7 +257,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - uses: actions/checkout@v4
-      - name: Publish discofast-bin and fastdisco-bin
+      - name: Publish discofast-bin
         env:
           AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           TAG: ${{ needs.version.outputs.tag }}
@@ -298,7 +277,7 @@ jobs:
           export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur"
           # makepkg refuses to run as root.
           useradd -m builder
-          for pkg in discofast-bin fastdisco-bin; do
+          for pkg in discofast-bin; do
             dir="/tmp/aur/$pkg"
             # A package the AUR does not have yet clones empty; the push creates it.
             git clone "ssh://aur@aur.archlinux.org/$pkg.git" "$dir"
