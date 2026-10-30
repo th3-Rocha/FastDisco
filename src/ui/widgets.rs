@@ -54,9 +54,117 @@ impl<'a> Elide<'a> {
     }
 }
 
+/// An icon, moving as the rcord pack's do: each its own little motion
+/// while the pointer is over it, a press that sinks it, and a pop when it
+/// changes (a microphone muted or unmuted).
 pub fn paint_icon(ui: &Ui, icon: Icon, center: Pos2, size: f32, tint: Color32) {
-    let rect = Rect::from_center_size(center, Vec2::splat(size));
-    icon.image(tint, size).paint_at(ui, rect);
+    let area = Rect::from_center_size(center, Vec2::splat(size.max(20.0) + 10.0));
+    let hovered = ui.rect_contains_pointer(area);
+    paint_icon_state(ui, icon, center, size, tint, hovered);
+}
+
+/// As [`paint_icon`], with the hover of the whole row or button that holds
+/// the icon, as the pack's containers trigger their icon.
+pub fn paint_icon_state(ui: &Ui, icon: Icon, center: Pos2, size: f32, tint: Color32, hovered: bool) {
+    let ctx = ui.ctx();
+    // Keyed by where it sits, so each copy of an icon moves on its own.
+    let id = egui::Id::new(("icon-motion", (center.x / 2.0) as i32, (center.y / 2.0) as i32));
+    let (duration, _) = motion(icon, 0.0);
+    let t = ctx.animate_bool_with_time_and_easing(id, hovered, duration, ease_out);
+    let pressed = hovered && ctx.input(|i| i.pointer.primary_down());
+    let press = ctx.animate_bool_with_time(id.with("press"), pressed, 0.1);
+    // A different icon in the same place (muted, unmuted): pop in.
+    let last: Option<Icon> = ctx.data(|d| d.get_temp(id.with("icon")));
+    if last != Some(icon) {
+        ctx.data_mut(|d| {
+            d.insert_temp(id.with("icon"), icon);
+            if last.is_some() {
+                d.insert_temp(id.with("changed"), ctx.input(|i| i.time));
+            }
+        });
+    }
+    let pop = ctx
+        .data(|d| d.get_temp::<f64>(id.with("changed")))
+        .map_or(1.0, |at| {
+            let p = ((ctx.input(|i| i.time) - at) / 0.26).clamp(0.0, 1.0) as f32;
+            if p < 1.0 {
+                ctx.request_repaint();
+            }
+            0.8 + 0.2 * ease_spring(p)
+        });
+    let (_, shape) = motion(icon, t);
+    let scale = shape.scale * (1.0 - 0.08 * press) * pop;
+    let center = center + shape.offset * (size / 24.0) + vec2(0.0, press);
+    let side = size * scale;
+    let rect = Rect::from_center_size(center, Vec2::splat(side));
+    icon.image(tint, side)
+        .rotate(shape.angle.to_radians(), Vec2::splat(0.5))
+        .paint_at(ui, rect);
+}
+
+/// Where an icon is at `t` of its hover motion.
+struct Shape {
+    angle: f32,
+    scale: f32,
+    offset: Vec2,
+}
+
+/// The pack's hover motions, as far as a whole icon can move: how long it
+/// takes, and its shape at `t` from rest (0) to hovered (1).
+fn motion(icon: Icon, t: f32) -> (f32, Shape) {
+    use std::f32::consts::PI;
+    // A swing that ends where it began, as the pack's keyframes.
+    let swing = |degrees: f32, turns: f32| (t * turns * PI).sin() * (1.0 - t) * degrees;
+    let (fast, med, slow) = (0.1, 0.17, 0.32);
+    let still = Shape { angle: 0.0, scale: 1.0, offset: Vec2::ZERO };
+    let grow = |by: f32| Shape { scale: 1.0 + by * t, ..still };
+    let turn = |degrees: f32| Shape { angle: degrees * t, ..still };
+    let shift = |x: f32, y: f32| Shape { offset: vec2(x, y) * t, ..still };
+    match icon {
+        // Channels and the rail's corner badges stay still.
+        Icon::Hash | Icon::Stage | Icon::Forum => (med, still),
+        Icon::Settings => (slow, turn(90.0)),
+        Icon::Bell => (slow, Shape { angle: swing(16.0, 3.0), ..still }),
+        Icon::Users => (slow, Shape { angle: swing(10.0, 2.0), ..still }),
+        Icon::Plus | Icon::Close | Icon::PlusCircle => (med, turn(90.0)),
+        Icon::UserPlus | Icon::AddGroup => (med, grow(0.08)),
+        Icon::MessageCircle | Icon::Threads => {
+            (med, Shape { angle: -6.0 * t, scale: 1.0 + 0.08 * t, offset: Vec2::ZERO })
+        }
+        Icon::More => (med, grow(0.12)),
+        Icon::Pencil => (slow, Shape { angle: swing(12.0, 4.0), ..still }),
+        Icon::Palette => (med, turn(-14.0)),
+        Icon::Compass => (slow, turn(-20.0)),
+        Icon::Search => (med, grow(0.12)),
+        Icon::Shield | Icon::ShieldLock => (med, grow(0.08)),
+        Icon::Mic | Icon::MicOff | Icon::Headphones | Icon::HeadphonesOff => (fast, shift(0.0, -1.5)),
+        Icon::LogOut | Icon::Forward | Icon::Send | Icon::External => (med, shift(2.0, 0.0)),
+        Icon::Back | Icon::Reply | Icon::ReplyArrow => (med, shift(-2.0, 0.0)),
+        Icon::Download => (med, shift(0.0, 2.0)),
+        Icon::Speaker | Icon::Volume | Icon::VolumeOff | Icon::Soundboard => (med, grow(0.08)),
+        Icon::Accessibility => (slow, Shape { offset: vec2(0.0, -(t * PI).sin() * 3.0), ..still }),
+        Icon::Keyboard => (fast, shift(0.0, 1.0)),
+        Icon::Gift => (med, Shape { angle: -8.0 * t, scale: 1.0 + 0.06 * t, offset: Vec2::ZERO }),
+        Icon::Code => (med, grow(0.1)),
+        Icon::Trash | Icon::Phone | Icon::HangUp => (slow, Shape { angle: swing(12.0, 3.0), ..still }),
+        Icon::Star | Icon::StarFill | Icon::Sun => (slow, turn(45.0)),
+        Icon::Dice => (slow, turn(90.0)),
+        Icon::Moon => (med, turn(-15.0)),
+        Icon::Pin => (med, turn(15.0)),
+        Icon::Activities | Icon::Video | Icon::ScreenShare | Icon::Calendar => (med, grow(0.08)),
+        _ => (med, grow(0.06)),
+    }
+}
+
+/// The pack's `out` easing, cubic-bezier(.2,0,0,1), near enough.
+fn ease_out(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(4)
+}
+
+/// The pack's spring, cubic-bezier(.34,1.56,.64,1): past the end, then back.
+fn ease_spring(t: f32) -> f32 {
+    let c = 1.70158 * 1.2;
+    1.0 + (c + 1.0) * (t - 1.0).powi(3) + c * (t - 1.0).powi(2)
 }
 
 /// A square button that shows only an icon, brighter under the pointer.

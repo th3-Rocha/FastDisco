@@ -321,12 +321,13 @@ fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
         } else {
             palette.text
         };
-        paint_icon(
+        super::widgets::paint_icon_state(
             ui,
             icon,
             pos2(rect.left() + 22.0, rect.center().y),
             20.0,
             color,
+            response.hovered(),
         );
         ui.painter().text(
             pos2(rect.left() + 44.0, rect.center().y),
@@ -412,12 +413,13 @@ fn navigation(app: &mut App, ui: &mut Ui, page: SettingsPage) {
         ui.painter()
             .rect_filled(rect, CornerRadius::same(8), palette.hover);
     }
-    paint_icon(
+    super::widgets::paint_icon_state(
         ui,
         Icon::LogOut,
         pos2(rect.left() + 22.0, rect.center().y),
         20.0,
         palette.danger,
+        response.hovered(),
     );
     ui.painter().text(
         pos2(rect.left() + 44.0, rect.center().y),

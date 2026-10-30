@@ -88,12 +88,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                                 radius(lit),
                                 if lit { palette.accent } else { palette.chat },
                             );
-                            paint_icon(
+                            super::widgets::paint_icon_state(
                                 ui,
                                 icon,
                                 rect.center(),
                                 22.0,
                                 if lit { Color32::WHITE } else { palette.strong },
+                                lit,
                             );
                         });
                         if response.clicked() {
@@ -117,12 +118,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                                 radius(lit || open),
                                 if lit || open { palette.online } else { palette.chat },
                             );
-                            paint_icon(
+                            super::widgets::paint_icon_state(
                                 ui,
                                 Icon::Compass,
                                 rect.center(),
                                 22.0,
                                 if lit || open { Color32::WHITE } else { palette.online },
+                                lit,
                             );
                         });
                         if response.clicked() {
