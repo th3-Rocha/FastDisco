@@ -365,9 +365,12 @@ int32_t AdmProxy::Terminate() {
     if (synthetic_adm_) {
       result = synthetic_adm_->Terminate();
     }
+    // Discofast: the platform ADM lives until the proxy does, as
+    // ReleasePlatformAdm intends. Init is a no-op, so terminating it here
+    // left the next call without microphone or speakers.
     if (platform_adm_) {
-      int32_t platform_result = platform_adm_->Terminate();
-      if (result == 0) result = platform_result;
+      platform_adm_->StopRecording();
+      platform_adm_->StopPlayout();
     }
     return result;
   });

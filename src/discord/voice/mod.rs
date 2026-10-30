@@ -1370,4 +1370,35 @@ a=candidate:1 1 UDP 4261412862 127.0.0.1 50005 typ host\n";
         assert_eq!(backoff.fails, 0);
         assert!(backoff.fail() <= Duration::from_secs(3));
     }
+
+    /// A second call after the first closed still gets the devices.
+    #[tokio::test]
+    #[ignore = "uses the microphone and speakers"]
+    async fn the_devices_come_back_for_a_second_call() {
+        for round in 0..3 {
+            let shared = Arc::new(Shared::default());
+            let test = Loopback::start(Arc::clone(&shared)).await.unwrap();
+            for _ in 0..30 {
+                test.exchange().await;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            let count = |kind: &str| {
+                let pid = std::process::id().to_string();
+                std::process::Command::new("pactl")
+                    .args(["-f", "json", "list", kind])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).matches(&*pid).count())
+                    .unwrap_or(0)
+            };
+            let (recording, playing) = (count("source-outputs"), count("sink-inputs"));
+            println!(
+                "round {round}: microphone at {:.1} dB, {recording} recording, {playing} playing",
+                shared.level()
+            );
+            assert!(shared.level() > -100.0, "round {round}: no microphone");
+            assert!(recording > 0 && playing > 0, "round {round}: a device is closed");
+            drop(test);
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
 }
