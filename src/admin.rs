@@ -82,6 +82,10 @@ pub enum Tag {
     },
     /// A server mute, deafen, disconnect or move; the gateway shows it.
     VoiceMember,
+    /// An invite made to send someone in a direct message.
+    InviteFor {
+        user: Id,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,6 +179,11 @@ pub enum Modal {
     /// A server's notification settings.
     Notify {
         guild: Id,
+    },
+    /// "Adicionar apelido de amigo": a name only the user sees.
+    FriendNick {
+        user: Id,
+        text: String,
     },
     /// "Iniciar palco": the stage's topic.
     StartStage {
@@ -425,6 +434,11 @@ pub enum AdminAction {
     SaveRole,
     Revoke(String),
     Unban(Id),
+    /// "Convidar para o servidor": an invite to a server, sent to someone.
+    InviteUser {
+        guild: Id,
+        user: Id,
+    },
     /// Raises or lowers the user's hand in a stage's audience.
     StageHand(bool),
     /// Brings someone (the user when none) up to a stage or down to the
@@ -468,6 +482,18 @@ impl App {
                 Some(change),
             ),
             AdminAction::CloseMenu => self.admin.menu = false,
+            AdminAction::InviteUser { guild, user } => {
+                let Some(channel) = self.model.first_text_channel(guild) else {
+                    return;
+                };
+                let body = json!({ "max_age": 604800, "max_uses": 0, "temporary": false });
+                self.api(
+                    Tag::InviteFor { user },
+                    Method::POST,
+                    format!("/channels/{channel}/invites"),
+                    Some(body),
+                );
+            }
             AdminAction::StageHand(raise) => {
                 let Some((guild, channel)) = self.call.as_ref().and_then(|c| Some((c.guild?, c.channel))) else {
                     return;
@@ -875,6 +901,15 @@ impl App {
                     Some(json!({ "custom_status": custom })),
                 );
             }
+            Modal::FriendNick { user, text } => {
+                let nick = text.trim();
+                self.api(
+                    Tag::Presence,
+                    Method::PATCH,
+                    format!("/users/@me/relationships/{user}"),
+                    Some(json!({ "nickname": if nick.is_empty() { Value::Null } else { json!(nick) } })),
+                );
+            }
             Modal::Notify { .. } => {
                 self.admin.busy = false;
                 self.admin.modal = None;
@@ -1179,6 +1214,14 @@ impl App {
                 }
             }
             Tag::VoiceMember => {}
+            Tag::InviteFor { user } => {
+                if let Some(code) = value["code"].as_str() {
+                    self.apply_chat(crate::chat::ChatAction::MessageUser {
+                        user,
+                        text: format!("https://discord.gg/{code}"),
+                    });
+                }
+            }
             Tag::Audit { guild } => {
                 if let Some(settings) = self.admin.settings.as_mut().filter(|s| s.guild == guild) {
                     settings.audit = Some(value);

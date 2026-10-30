@@ -174,6 +174,8 @@ pub enum Action {
     JoinVoice(Id),
     /// Calls a direct message or group: joins its call and rings them.
     StartCall(Id),
+    /// Calls someone: their direct message, opened first if need be.
+    CallUser(Id),
     /// Answers the ringing call, or turns it down.
     AnswerCall(bool),
     /// Closes the bar saying another device took the call.
@@ -266,6 +268,8 @@ pub struct App {
     pub voice_taken: Option<Id>,
     /// A direct message call ringing for the user, and when it last rang.
     pub ringing: Option<(Id, std::time::Instant)>,
+    /// Someone to call once their direct message opens.
+    pub call_when_open: Option<Id>,
     sounds: crate::sounds::Sounds,
     /// Where updating Discofast stands.
     pub update: crate::updates::Status,
@@ -345,6 +349,7 @@ impl App {
             call_view: false,
             voice_taken: None,
             ringing: None,
+            call_when_open: None,
             sounds: crate::sounds::Sounds::default(),
             update: crate::updates::Status::Idle,
             update_receipt: None,
@@ -1155,6 +1160,7 @@ impl App {
                     self.join_voice(channel);
                 }
                 Action::StartCall(channel) => self.start_call(channel),
+                Action::CallUser(user) => self.call_user(user),
                 Action::AnswerCall(accept) => self.answer_call(accept),
                 Action::DismissVoiceTaken => self.voice_taken = None,
                 Action::LeaveVoice => self.leave_voice(),
@@ -1493,6 +1499,16 @@ impl App {
         }
         self.mark_read(id);
         self.want_commands(id);
+        // "Iniciar chamada" waited for this direct message.
+        if let Some(user) = self.call_when_open
+            && self
+                .model
+                .channel(id)
+                .is_some_and(|c| c.kind == ChannelKind::Direct && c.recipients == [user])
+        {
+            self.call_when_open = None;
+            self.start_call(id);
+        }
     }
 
     fn mark_read(&mut self, id: Id) {

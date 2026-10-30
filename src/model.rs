@@ -120,6 +120,8 @@ pub struct Activity {
     pub emoji_url: Option<String>,
     /// A stream's page.
     pub url: Option<String>,
+    /// Spotify's track id, for "Ouvir no Spotify".
+    pub sync_id: Option<String>,
 }
 
 impl Activity {

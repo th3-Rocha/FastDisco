@@ -243,28 +243,66 @@ fn member_menu(
                 .collect()
         })
         .unwrap_or_default();
+    // Everything the rows need, read before the menu borrows the app.
+    let relation = app.model.relationships.get(&user).copied();
+    let friend = relation == Some(crate::nav::relationship::FRIEND);
+    let blocked = relation == Some(crate::nav::relationship::BLOCKED);
+    let spotify = app
+        .model
+        .user(user)
+        .and_then(|u| u.activities.iter().find(|a| a.is_spotify()).cloned())
+        .and_then(|a| a.sync_id);
+    let roles: Vec<(Id, String, Option<Color32>, bool)> = guild
+        .filter(|_| can(permission::MANAGE_ROLES))
+        .and_then(|g| app.model.guild(g))
+        .map(|g| {
+            let mine = g.members.get(&user).map(|m| m.roles.clone()).unwrap_or_default();
+            g.roles
+                .iter()
+                .filter(|r| r.id != g.id)
+                .map(|r| (r.id, r.name.clone(), r.color, mine.contains(&r.id)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let invite_to: Vec<(Id, String)> = app
+        .model
+        .guilds
+        .iter()
+        .filter(|g| Some(g.id) != guild && app.model.can(g.id, permission::CREATE_INVITE))
+        .map(|g| (g.id, g.name.clone()))
+        .collect();
+    let moderate_members = !me && can(permission::MODERATE_MEMBERS);
     let mut chosen: Vec<Action> = Vec::new();
-    response.context_menu(|ui| {
+    // Discord's menu stays open while the volume is dragged and boxes are
+    // ticked; it closes on a click outside or on an item that acts.
+    egui::Popup::context_menu(response)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
         ui.set_width(MENU_WIDTH);
         ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
-        if menu_item(ui, &palette, "Perfil", palette.text).clicked() {
-            chosen.push(Action::Chat(ChatAction::ShowProfile {
-                user,
-                anchor,
-                side: Side::Right,
-            }));
+        fn act(ui: &mut Ui, chosen: &mut Vec<Action>, action: Action) {
+            chosen.push(action);
             ui.close();
+        }
+        if menu_item(ui, &palette, "Perfil", palette.text).clicked() {
+            act(ui, &mut chosen, Action::Chat(ChatAction::ShowProfile { user, anchor, side: Side::Right }));
         }
         if menu_item(ui, &palette, "Mencionar", palette.text).clicked() {
-            chosen.push(Action::Chat(ChatAction::Mention(user)));
-            ui.close();
+            act(ui, &mut chosen, Action::Chat(ChatAction::Mention(user)));
         }
-        if !me && menu_item(ui, &palette, "Mensagem", palette.text).clicked() {
-            chosen.push(Action::Chat(ChatAction::MessageUser {
-                user,
-                text: String::new(),
-            }));
-            ui.close();
+        if !me {
+            if menu_item(ui, &palette, "Mensagem", palette.text).clicked() {
+                act(ui, &mut chosen, Action::Chat(ChatAction::MessageUser { user, text: String::new() }));
+            }
+            if menu_item(ui, &palette, "Iniciar chamada", palette.text).clicked() {
+                act(ui, &mut chosen, Action::CallUser(user));
+            }
+            if menu_item_note(ui, &palette, "Adicionar nota", "Visível apenas para você").clicked() {
+                act(ui, &mut chosen, Action::Chat(ChatAction::ShowProfile { user, anchor, side: Side::Right }));
+            }
+            if friend && menu_item(ui, &palette, "Adicionar apelido de amigo", palette.text).clicked() {
+                act(ui, &mut chosen, Action::Admin(AdminAction::Open(Modal::FriendNick { user, text: String::new() })));
+            }
         }
         menu_line(ui, &palette);
         if me {
@@ -278,30 +316,84 @@ fn member_menu(
             if let Some(level) = volume_slider(ui, &palette, volume) {
                 chosen.push(Action::SetUserVolume(user, level));
             }
+            if let Some(track) = &spotify {
+                menu_line(ui, &palette);
+                if menu_item(ui, &palette, "Ouvir no Spotify", palette.text).clicked() {
+                    act(ui, &mut chosen, Action::Chat(ChatAction::OpenUrl(format!("https://open.spotify.com/track/{track}"))));
+                }
+            }
             menu_line(ui, &palette);
             if check_item(ui, &palette, "Silenciar", local, palette.text) {
                 chosen.push(Action::ToggleLocalMute(user));
             }
+            if !invite_to.is_empty() {
+                let item = submenu_item(ui, &palette, "Convidar para o servidor");
+                egui::containers::menu::SubMenu::new().show(ui, &item, |ui| {
+                    ui.set_width(MENU_WIDTH);
+                    ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                        for (target, label) in &invite_to {
+                            if menu_item(ui, &palette, label, palette.text).clicked() {
+                                chosen.push(Action::Admin(AdminAction::InviteUser { guild: *target, user }));
+                                ui.close();
+                            }
+                        }
+                    });
+                });
+            }
+            if friend {
+                if menu_item(ui, &palette, "Desfazer amizade", palette.text).clicked() {
+                    act(ui, &mut chosen, Action::Nav(crate::nav::NavAction::RemoveRelationship(user)));
+                }
+            } else if !blocked && menu_item(ui, &palette, "Adicionar amigo", palette.text).clicked() {
+                act(ui, &mut chosen, Action::Nav(crate::nav::NavAction::Accept(user)));
+            }
+            if menu_item(ui, &palette, "Ignorar", palette.text).clicked() {
+                act(ui, &mut chosen, Action::Nav(crate::nav::NavAction::Ignore(user)));
+            }
+            if blocked {
+                if menu_item(ui, &palette, "Desbloquear", palette.text).clicked() {
+                    act(ui, &mut chosen, Action::Nav(crate::nav::NavAction::RemoveRelationship(user)));
+                }
+            } else if menu_item(ui, &palette, "Bloquear", palette.danger).clicked() {
+                act(ui, &mut chosen, Action::Nav(crate::nav::NavAction::Block(user)));
+            }
         }
         if let Some(guild) = guild
-            && (kick || ban)
+            && !roles.is_empty()
         {
-            if kick
-                && menu_item(ui, &palette, &format!("Expulsar {name}"), palette.danger).clicked()
-            {
-                chosen.push(Action::Admin(AdminAction::Open(Modal::Kick {
-                    guild,
-                    user,
-                })));
-                ui.close();
+            menu_line(ui, &palette);
+            let item = submenu_item(ui, &palette, "Cargos");
+            egui::containers::menu::SubMenu::new()
+                .show(ui, &item, |ui| {
+                    ui.set_width(MENU_WIDTH);
+                    ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                        for (role, label, color, on) in &roles {
+                            if check_item(ui, &palette, label, *on, color.unwrap_or(palette.text)) {
+                                chosen.push(Action::Manage(crate::manage::ManageAction::MemberRole {
+                                    guild,
+                                    user,
+                                    role: *role,
+                                    on: !*on,
+                                }));
+                            }
+                        }
+                    });
+                });
+        }
+        if let Some(guild) = guild
+            && (kick || ban || moderate_members)
+        {
+            menu_line(ui, &palette);
+            if moderate_members && menu_item(ui, &palette, &format!("Castigar {name}"), palette.danger).clicked() {
+                act(ui, &mut chosen, Action::Admin(AdminAction::Open(Modal::Timeout { guild, user, minutes: 60 })));
+            }
+            if kick && menu_item(ui, &palette, &format!("Expulsar {name}"), palette.danger).clicked() {
+                act(ui, &mut chosen, Action::Admin(AdminAction::Open(Modal::Kick { guild, user })));
             }
             if ban && menu_item(ui, &palette, &format!("Banir {name}"), palette.danger).clicked() {
-                chosen.push(Action::Admin(AdminAction::Open(Modal::Ban {
-                    guild,
-                    user,
-                    history: 0,
-                })));
-                ui.close();
+                act(ui, &mut chosen, Action::Admin(AdminAction::Open(Modal::Ban { guild, user, history: 0 })));
             }
         }
         if let Some(guild) = guild
@@ -316,24 +408,12 @@ fn member_menu(
                 })
             };
             if mute
-                && check_item(
-                    ui,
-                    &palette,
-                    "Silenciar voz no servidor",
-                    state.mute,
-                    palette.danger,
-                )
+                && check_item(ui, &palette, "Silenciar voz no servidor", state.mute, palette.danger)
             {
                 chosen.push(moderate(json!({ "mute": !state.mute })));
             }
             if deafen
-                && check_item(
-                    ui,
-                    &palette,
-                    "Desativar áudio no servidor",
-                    state.deaf,
-                    palette.danger,
-                )
+                && check_item(ui, &palette, "Ensurdecer no servidor", state.deaf, palette.danger)
             {
                 chosen.push(moderate(json!({ "deaf": !state.deaf })));
             }
@@ -352,15 +432,13 @@ fn member_menu(
                     });
                 }
                 if menu_item(ui, &palette, "Desconectar", palette.danger).clicked() {
-                    chosen.push(moderate(json!({ "channel_id": null })));
-                    ui.close();
+                    act(ui, &mut chosen, moderate(json!({ "channel_id": null })));
                 }
             }
         }
         menu_line(ui, &palette);
         if menu_item(ui, &palette, "Copiar ID do usuário", palette.text).clicked() {
-            chosen.push(Action::Chat(ChatAction::Copy(user.to_string())));
-            ui.close();
+            act(ui, &mut chosen, Action::Chat(ChatAction::Copy(user.to_string())));
         }
     });
     app.actions.extend(chosen);
@@ -383,7 +461,7 @@ fn menu_row(
     let lit = response.hovered() || response.has_focus();
     if lit {
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(4), palette.hover);
+            .rect_filled(rect, CornerRadius::same(4), crate::theme::floating_edge(palette));
     }
     Elide::new(ui, rect.right() - 34.0).text(
         pos2(rect.left() + 8.0, rect.center().y),
@@ -430,8 +508,39 @@ fn menu_line(ui: &mut Ui, palette: &crate::theme::Palette) {
     ui.painter().hline(
         (rect.left() + 4.0)..=(rect.right() - 4.0),
         rect.center().y,
-        Stroke::new(1.0, palette.divider),
+        Stroke::new(1.0, crate::theme::floating_edge(palette)),
     );
+}
+
+/// A row with a grey line under its label, as "Adicionar nota".
+fn menu_item_note(
+    ui: &mut Ui,
+    palette: &crate::theme::Palette,
+    label: &str,
+    note: &str,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), MENU_ROW + 14.0), Sense::click());
+    let lit = response.hovered();
+    if lit {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), crate::theme::floating_edge(palette));
+    }
+    ui.painter().text(
+        pos2(rect.left() + 8.0, rect.center().y - 8.0),
+        Align2::LEFT_CENTER,
+        label,
+        font(Weight::Medium, 14.0),
+        if lit { palette.strong } else { palette.text },
+    );
+    ui.painter().text(
+        pos2(rect.left() + 8.0, rect.center().y + 9.0),
+        Align2::LEFT_CENTER,
+        note,
+        font(Weight::Regular, 12.0),
+        palette.muted,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// "Volume do usuário" and Discord's slider: blue up to a white knob,

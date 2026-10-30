@@ -206,6 +206,36 @@ pub fn current() -> Palette {
     *CURRENT.read().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Discord's floating surface, menus and popouts: a step lighter than
+/// the chat in the dark theme (#3C3D45 on Discord's grey), white in light.
+pub fn floating(palette: &Palette) -> Color32 {
+    if palette.is_dark() {
+        lift(palette.chat, [10, 10, 12])
+    } else {
+        Color32::WHITE
+    }
+}
+
+/// A colour made lighter by fixed steps, as Discord's surfaces step up
+/// from the chat's grey.
+fn lift(c: Color32, by: [u8; 3]) -> Color32 {
+    Color32::from_rgb(
+        c.r().saturating_add(by[0]),
+        c.g().saturating_add(by[1]),
+        c.b().saturating_add(by[2]),
+    )
+}
+
+/// The edge, separators and hovered rows of the floating surface
+/// (#46484F on Discord's grey).
+pub fn floating_edge(palette: &Palette) -> Color32 {
+    if palette.is_dark() {
+        lift(palette.chat, [20, 21, 22])
+    } else {
+        mix(Color32::WHITE, palette.text, 0.1)
+    }
+}
+
 /// egui's own widgets (menus, tooltips, text fields, selections) in the
 /// palette's colours.
 pub fn apply(ctx: &egui::Context, palette: &Palette) {
@@ -219,16 +249,11 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
         };
         visuals.selection.bg_fill = palette.accent;
         visuals.text_cursor.stroke.color = palette.text;
-        let floating = if dark {
-            mix(palette.rail, Color32::BLACK, 0.4)
-        } else {
-            Color32::WHITE
-        };
-        visuals.window_fill = floating;
+        visuals.window_fill = floating(palette);
         visuals.panel_fill = palette.chat;
         visuals.extreme_bg_color = palette.rail;
         // Discord's menus: rounder, with a faint edge.
-        visuals.window_stroke = egui::Stroke::new(1.0, palette.divider);
+        visuals.window_stroke = egui::Stroke::new(1.0, floating_edge(palette));
         visuals.window_corner_radius = egui::CornerRadius::same(6);
         visuals.menu_corner_radius = egui::CornerRadius::same(8);
         visuals.popup_shadow = egui::Shadow {

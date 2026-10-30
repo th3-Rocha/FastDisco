@@ -146,6 +146,8 @@ pub enum NavAction {
     /// Unfriends, declines, cancels or unblocks: Discord's one call.
     RemoveRelationship(Id),
     Block(Id),
+    /// Ignores someone: their messages and calls are hidden from the user.
+    Ignore(Id),
     MarkUnread {
         channel: Id,
         message: Id,
@@ -522,6 +524,12 @@ impl App {
                 Method::PUT,
                 format!("/users/@me/relationships/{user}"),
                 Some(json!({ "type": relationship::BLOCKED })),
+            ),
+            NavAction::Ignore(user) => self.nav_api(
+                Tag::Done,
+                Method::PUT,
+                format!("/users/@me/relationships/{user}/ignore"),
+                None,
             ),
             NavAction::MarkUnread { channel, message } => self.mark_unread(channel, message),
             NavAction::StepServer(step) => self.step_server(step),

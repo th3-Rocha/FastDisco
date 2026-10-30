@@ -91,6 +91,8 @@ pub enum ManageAction {
     /// Changes how a server (none: direct messages) or one of its
     /// channels notifies.
     Notify(NotifyChange),
+    /// Gives someone a role, or takes it away.
+    MemberRole { guild: Id, user: Id, role: Id, on: bool },
     /// The user's own picture taken away.
     RemoveAvatar,
     /// The colour of the user's banner when there is no picture.
@@ -347,6 +349,20 @@ impl App {
                 self.manage.rule_words.clear();
             }
             ManageAction::Notify(change) => self.change_notify(change),
+            ManageAction::MemberRole { guild, user, role, on } => {
+                if let Some(member) = self.model.guild_mut(guild).and_then(|g| g.members.get_mut(&user)) {
+                    member.roles.retain(|r| *r != role);
+                    if on {
+                        member.roles.push(role);
+                    }
+                }
+                self.manage_api(
+                    Tag::Done,
+                    if on { Method::PUT } else { Method::DELETE },
+                    format!("/guilds/{guild}/members/{user}/roles/{role}"),
+                    None,
+                );
+            }
             ManageAction::RemoveAvatar => self.manage_api(
                 Tag::Saved,
                 Method::PATCH,

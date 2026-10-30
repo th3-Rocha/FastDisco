@@ -105,6 +105,7 @@ fn activity(a: &Value) -> Option<Activity> {
             crate::model::CustomEmoji::url(e, emoji["animated"].as_bool().unwrap_or(false))
         }),
         url: text(&a["url"]),
+        sync_id: text(&a["sync_id"]),
     })
 }
 

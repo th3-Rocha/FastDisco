@@ -1894,6 +1894,29 @@ impl crate::app::App {
         });
     }
 
+    /// "Iniciar chamada" on someone: their direct message's call, opening
+    /// the conversation first when there is none yet.
+    pub fn call_user(&mut self, user: Id) {
+        let existing = self.model.direct.iter().copied().find(|c| {
+            self.model
+                .channel(*c)
+                .is_some_and(|c| c.kind == crate::model::ChannelKind::Direct && c.recipients == [user])
+        });
+        match existing {
+            Some(channel) => {
+                self.actions.push(crate::app::Action::OpenChannel(channel));
+                self.start_call(channel);
+            }
+            None => {
+                self.call_when_open = Some(user);
+                self.apply_chat(crate::chat::ChatAction::MessageUser {
+                    user,
+                    text: String::new(),
+                });
+            }
+        }
+    }
+
     /// Picks up the ringing call, or stops it ringing for the user.
     pub fn answer_call(&mut self, accept: bool) {
         let Some((channel, _)) = self.ringing.take() else {

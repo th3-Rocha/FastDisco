@@ -201,6 +201,7 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
         Modal::VoiceStatus { .. } => ("Definir status do canal", "Salvar", false),
         Modal::StartStage { .. } => ("Iniciar palco", "Iniciar palco", false),
         Modal::Notify { .. } => ("Configurações de notificação", "Concluído", false),
+        Modal::FriendNick { .. } => ("Adicionar apelido de amigo", "Salvar", false),
         Modal::Sessions => ("Dispositivos conectados", "Fechar", false),
         Modal::CloseAccount { delete: false, .. } => ("Desativar conta", "Desativar conta", true),
         Modal::CloseAccount { delete: true, .. } => ("Excluir conta", "Excluir conta", true),
@@ -315,6 +316,13 @@ pub fn modal(app: &mut App, ui: &mut Ui) {
                             edited = Some(Modal::VoiceStatus { channel, text });
                         }
                         ui.label(RichText::new("Todos no canal de voz veem este status. Deixe vazio para apagá-lo.").font(font(Weight::Regular, 12.0)).color(palette.muted));
+                    }
+                    Modal::FriendNick { user, mut text } => {
+                        let name = app.model.user(user).map(|u| u.name.clone()).unwrap_or_default();
+                        if field(ui, "APELIDO DE AMIGO", &mut text, &name) {
+                            edited = Some(Modal::FriendNick { user, text });
+                        }
+                        ui.label(RichText::new("Só você vê este apelido.").font(font(Weight::Regular, 12.0)).color(palette.muted));
                     }
                     Modal::Notify { guild } => {
                         let mut out = Vec::new();
