@@ -161,24 +161,87 @@ async fn run(
     install_transform();
     engine::engine();
     engine::attach(&shared);
-    let context = CALLS.fetch_add(1, Ordering::Relaxed);
-    let dave = Dave::new(server.user, server.channel);
-    DAVES
-        .write()
-        .unwrap_or_else(|e| e.into_inner())
-        .get_or_insert_default()
-        .insert(context, Arc::clone(&dave));
-    let result = call(&server, &shared, &mut controls, &wake, &ready, context, &dave).await;
-    DAVES
-        .write()
-        .unwrap_or_else(|e| e.into_inner())
-        .get_or_insert_default()
-        .remove(&context);
+    // `RTCConnection`: a call that drops after it connected is made again
+    // from the start (`_scheduleReconnect`), with a new identify, peer
+    // connection and DAVE group.
+    let mut backoff = Backoff::new(1_000, 10_000);
+    let result = loop {
+        let context = CALLS.fetch_add(1, Ordering::Relaxed);
+        let dave = Dave::new(server.user, server.channel);
+        DAVES
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert_default()
+            .insert(context, Arc::clone(&dave));
+        let result = call(&server, &shared, &mut controls, &wake, &ready, context, &dave).await;
+        DAVES
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert_default()
+            .remove(&context);
+        shared.talking.store(false, Ordering::Relaxed);
+        shared.speaking.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        wake();
+        let error = match result {
+            Ok(()) => break Ok(()),
+            Err(error) => error,
+        };
+        // Never connected: the call failed, nothing to go back to.
+        if ready.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+            break Err(error);
+        }
+        let wait = backoff.fail();
+        log::warn!("voice: {error}; reconnecting in {:.1} s", wait.as_secs_f32());
+        crate::call::report(&format!("disconnected: {error}; reconnecting"));
+        let sleep = tokio::time::sleep(wait);
+        tokio::pin!(sleep);
+        let left = loop {
+            tokio::select! {
+                () = &mut sleep => break false,
+                control = controls.recv() => match control {
+                    Some(Control::Mute(mute)) => shared.muted.store(mute, Ordering::Relaxed),
+                    Some(Control::Leave) | None => break true,
+                },
+            }
+        };
+        if left {
+            break Ok(());
+        }
+    };
     engine::detach(&shared);
-    shared.talking.store(false, Ordering::Relaxed);
-    shared.speaking.lock().unwrap_or_else(|e| e.into_inner()).clear();
-    wake();
     result
+}
+
+/// Discord's backoff: each failure waits up to three times longer, at
+/// random, up to a ceiling; a success starts over.
+struct Backoff {
+    min: f64,
+    max: f64,
+    current: f64,
+    fails: u32,
+}
+
+impl Backoff {
+    fn new(min_ms: u64, max_ms: u64) -> Self {
+        Self {
+            min: min_ms as f64,
+            max: max_ms as f64,
+            current: min_ms as f64,
+            fails: 0,
+        }
+    }
+
+    fn fail(&mut self) -> Duration {
+        self.fails += 1;
+        let grow = 2.0 * self.current * rand::random::<f64>();
+        self.current = (self.current + grow).min(self.max);
+        Duration::from_millis(self.current as u64)
+    }
+
+    fn succeed(&mut self) {
+        self.fails = 0;
+        self.current = self.min;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -300,18 +363,37 @@ async fn call(
             () = &mut deadline, if !connected => {
                 return Err("A chamada de voz não conectou a tempo.".to_owned());
             }
-            _ = beat => socket.heartbeat().await?,
+            _ = beat => {
+                // No answer to the last heartbeat: the socket is dead
+                // (`handleHeartbeatTimeout`).
+                if socket.awaiting_ack {
+                    socket.resume(4000, "Heartbeat timeout.", server).await?;
+                    heartbeat = None;
+                    continue;
+                }
+                socket.heartbeat().await?;
+            }
             incoming = socket.next() => {
-                let (op, d) = match incoming? {
+                let incoming = incoming.unwrap_or_else(|e| Incoming::Closed(1006, e));
+                let (op, d) = match incoming {
                     Incoming::Json(op, d) => (op, Some(d)),
                     Incoming::Binary(op, body) => {
                         for reply in dave.binary(op, &body) {
                             socket.reply(reply).await?;
                         }
+                        // `disconnectForRepeatedMLSInvalidMessages`
+                        if dave.failing() {
+                            socket.close_with(4803).await;
+                            return Err("Mensagens MLS inválidas em sequência.".to_owned());
+                        }
                         (u64::from(op), None)
                     }
+                    // `handleClose`: resumed when it can be, else the call
+                    // starts over.
                     Incoming::Closed(code, reason) => {
-                        return Err(closed(code, &reason));
+                        socket.resume(code, &reason, server).await?;
+                        heartbeat = None;
+                        continue;
                     }
                 };
                 let Some(d) = d else { continue };
@@ -327,6 +409,7 @@ async fn call(
                     }
                     // `handleReady`: SELECT_PROTOCOL with the offer.
                     2 => {
+                        socket.backoff.succeed();
                         if socket.version >= 6 {
                             socket.send(16, json!({})).await?;
                         }
@@ -357,6 +440,7 @@ async fn call(
                         if let Some(id) = d["media_session_id"].as_str() {
                             log::info!("voice: media session {id}");
                         }
+                        socket.resumable = true;
                         let version = d["dave_protocol_version"].as_u64().unwrap_or(0) as u16;
                         log::info!("voice: DAVE protocol {version}");
                         for reply in dave.init(version) {
@@ -413,8 +497,14 @@ async fn call(
                         }
                     }
                     // The heartbeat's answer.
-                    6 => {}
-                    9 => log::info!("voice: resumed"),
+                    6 => {
+                        socket.awaiting_ack = false;
+                        socket.last_ack = Some(std::time::Instant::now());
+                    }
+                    9 => {
+                        log::info!("voice: resumed");
+                        socket.backoff.succeed();
+                    }
                     op @ (21 | 22 | 24) => {
                         for reply in dave.json(op, &d) {
                             socket.reply(reply).await?;
@@ -805,6 +895,12 @@ struct Socket {
     version: u64,
     /// The last sequence number received, for heartbeats.
     seq: i64,
+    endpoint: String,
+    /// SELECT_PROTOCOL_ACK came: the session can be resumed.
+    resumable: bool,
+    awaiting_ack: bool,
+    last_ack: Option<std::time::Instant>,
+    backoff: Backoff,
 }
 
 enum Incoming {
@@ -815,6 +911,39 @@ enum Incoming {
 
 impl Socket {
     async fn open(endpoint: &str) -> Result<Self, String> {
+        let (sink, stream) = Self::dial(endpoint).await?;
+        Ok(Self {
+            sink,
+            stream,
+            version: 3,
+            seq: -1,
+            endpoint: endpoint.to_owned(),
+            resumable: false,
+            awaiting_ack: false,
+            last_ack: None,
+            backoff: Backoff::new(1_000, 5_000),
+        })
+    }
+
+    #[allow(clippy::type_complexity)]
+    async fn dial(
+        endpoint: &str,
+    ) -> Result<
+        (
+            futures_util::stream::SplitSink<
+                tokio_tungstenite::WebSocketStream<
+                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+                >,
+                Message,
+            >,
+            futures_util::stream::SplitStream<
+                tokio_tungstenite::WebSocketStream<
+                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+                >,
+            >,
+        ),
+        String,
+    > {
         let url = format!("wss://{}/?v={GATEWAY}", endpoint.trim_end_matches('/'));
         let (socket, _) = tokio::time::timeout(
             Duration::from_secs(20),
@@ -823,13 +952,53 @@ impl Socket {
         .await
         .map_err(|_| "O servidor de voz não respondeu.".to_owned())?
         .map_err(|e| e.to_string())?;
-        let (sink, stream) = socket.split();
-        Ok(Self {
-            sink,
-            stream,
-            version: 3,
-            seq: -1,
-        })
+        Ok(socket.split())
+    }
+
+    /// `handleClose` then `reconnect` and `doResumeOrClose`: a new socket
+    /// that takes the session up where it was, while the peer connection
+    /// carries on. An error means the call must start over.
+    async fn resume(&mut self, mut code: u16, reason: &str, server: &Server) -> Result<(), String> {
+        let mut reason = reason.to_owned();
+        loop {
+            log::warn!("voice socket closed ({code}: {reason})");
+            if matches!(code, 4004 | 4006 | 4011 | 4015) || self.backoff.fails > 3 {
+                return Err(closed(code, &reason));
+            }
+            tokio::time::sleep(self.backoff.fail()).await;
+            let fresh = self
+                .last_ack
+                .is_none_or(|at| at.elapsed() <= Duration::from_secs(60));
+            if !self.resumable || !fresh {
+                return Err(closed(4801, "Cannot resume connection."));
+            }
+            match Self::dial(&self.endpoint).await {
+                Ok((sink, stream)) => {
+                    self.sink = sink;
+                    self.stream = stream;
+                    self.awaiting_ack = false;
+                    self.last_ack = Some(std::time::Instant::now());
+                    log::info!("voice: resuming, seq_ack {}", self.seq);
+                    let seq = self.seq;
+                    self.send(
+                        7,
+                        json!({
+                            "token": server.token,
+                            "session_id": server.session_id,
+                            "server_id": server.place.to_string(),
+                            "channel_id": server.channel.to_string(),
+                            "seq_ack": seq,
+                        }),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    code = 1006;
+                    reason = e;
+                }
+            }
+        }
     }
 
     async fn send(&mut self, op: u8, d: Value) -> Result<(), String> {
@@ -863,6 +1032,7 @@ impl Socket {
 
     /// `sendHeartbeat`
     async fn heartbeat(&mut self) -> Result<(), String> {
+        self.awaiting_ack = true;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_millis() as u64);
@@ -912,6 +1082,15 @@ impl Socket {
 
     async fn close(&mut self) {
         let _ = self.sink.send(Message::Close(None)).await;
+    }
+
+    async fn close_with(&mut self, code: u16) {
+        use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+        let frame = CloseFrame {
+            code: code.into(),
+            reason: "".into(),
+        };
+        let _ = self.sink.send(Message::Close(Some(frame))).await;
     }
 }
 
@@ -1175,5 +1354,20 @@ a=candidate:1 1 UDP 4261412862 127.0.0.1 50005 typ host\n";
         println!("loopback {state:?}, microphone at {level:.1} dB");
         assert_eq!(state, PeerConnectionState::Connected);
         assert!(level > -100.0);
+    }
+
+    #[test]
+    fn backoff_grows_to_its_ceiling_and_starts_over() {
+        let mut backoff = Backoff::new(1_000, 5_000);
+        let mut last = Duration::ZERO;
+        for _ in 0..20 {
+            let wait = backoff.fail();
+            assert!(wait >= last && wait <= Duration::from_secs(5));
+            last = wait;
+        }
+        assert_eq!(backoff.fails, 20);
+        backoff.succeed();
+        assert_eq!(backoff.fails, 0);
+        assert!(backoff.fail() <= Duration::from_secs(3));
     }
 }

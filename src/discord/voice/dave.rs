@@ -37,6 +37,8 @@ pub struct Dave {
     pending: Mutex<HashMap<u16, u16>>,
     /// Who the server said is in the call, to check proposals against.
     pub known: Mutex<HashSet<u64>>,
+    /// Commits and welcomes that failed in a row (`_consecutiveMLSInvalidMessages`).
+    invalid: std::sync::atomic::AtomicU32,
 }
 
 impl Dave {
@@ -47,6 +49,7 @@ impl Dave {
             channel,
             pending: Mutex::default(),
             known: Mutex::default(),
+            invalid: std::sync::atomic::AtomicU32::new(0),
         })
     }
 
@@ -107,6 +110,12 @@ impl Dave {
                 false
             }
         }
+    }
+
+    /// Five invalid commits or welcomes in a row: Discord's client gives
+    /// up on the group and connects again.
+    pub fn failing(&self) -> bool {
+        self.invalid.load(std::sync::atomic::Ordering::Relaxed) >= 5
     }
 
     /// SELECT_PROTOCOL_ACK's dave_protocol_version (`_handleSecureFramesInit`):
@@ -269,6 +278,12 @@ impl Dave {
                         session.process_welcome(body).map_err(|e| format!("{e:?}"))
                     }
                 };
+                use std::sync::atomic::Ordering::Relaxed;
+                if result.is_ok() {
+                    self.invalid.store(0, Relaxed);
+                } else {
+                    self.invalid.fetch_add(1, Relaxed);
+                }
                 match result {
                     Ok(()) if id != 0 => {
                         let version = self.inner().version;

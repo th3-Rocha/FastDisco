@@ -163,6 +163,7 @@ everything Discord's desktop app does.
 - [x] Stage channels: speakers and audience, raising a hand, bringing people up and down, starting and ending the stage with its topic
 - [x] Voice channels: joining, speaking and hearing, mute and deafen, who is talking, with Discord's DAVE end-to-end encryption
 - [x] Voice engine as Discord's web client: libwebrtc (the browser's engine) connects to Discord's voice servers over WebRTC, with the client's own voice gateway messages and session descriptions, DAVE on the encoded frames, the platform audio device, WebRTC's echo cancellation and automatic gain, NetEq's jitter buffer and loss concealment, and Opus with FEC and DTX
+- [x] A dropped voice connection comes back as in Discord's client: the voice socket resumes (op 7) while the sound carries on, and when it cannot, the call is made again from the start; DAVE starts over after five invalid MLS messages in a row
 - [x] Input sensitivity and who is talking, measured as the web client measures them (its spectrum analyser for the microphone, its level worklet for everyone else)
 - [ ] Noise suppression in the new voice engine
 - [x] Call audio diagnostics: every ten seconds WebRTC's own counts (packets received and lost, concealed sound, jitter, the jitter buffer, round trip) go to the log and to `~/.cache/discofast/call.log`; `cargo test -- --ignored libwebrtc_takes the_microphone_test` checks the session descriptions against libwebrtc and the microphone test on this machine
