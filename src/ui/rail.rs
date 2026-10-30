@@ -179,7 +179,6 @@ enum Slot {
 
 /// The servers, alone and in folders, and dragging them around.
 fn servers(app: &mut App, ui: &mut Ui) {
-    let palette = app.palette;
     let mut out: Vec<Action> = Vec::new();
     let mut slots: Vec<(Rect, Slot)> = Vec::new();
     let folders = app.model.folders.clone();
@@ -255,15 +254,17 @@ fn servers(app: &mut App, ui: &mut Ui) {
                 let response = guild_item(app, ui, *guild, &mut out);
                 slots.push((response.rect, Slot::Inside(key, *guild)));
             }
-            // An open folder sits on a band of its own, as Discord's.
+            // An open folder sits on a band of its own, tinted with the
+            // folder's colour, as Discord's: the sidebar's grey is the
+            // rail's own in the 2025 theme and would not show.
             let center = head.rect.center().x;
             let band = Rect::from_min_max(
                 pos2(center - ICON / 2.0, top),
-                pos2(center + ICON / 2.0, ui.cursor().top()),
+                pos2(center + ICON / 2.0, ui.cursor().top() + 4.0),
             );
             ui.painter().set(
                 background,
-                Shape::rect_filled(band, CornerRadius::same(16), palette.sidebar),
+                Shape::rect_filled(band, CornerRadius::same(16), color.gamma_multiply(0.22)),
             );
         }
         ui.add_space(GAP);
