@@ -1,6 +1,5 @@
-//! The share's voice connection: the voice gateway (version 4, as
-//! songbird speaks it), IP discovery and the UDP packets, with DAVE kept in
-//! step the way songbird's driver keeps it for the call.
+//! The share's voice connection: the voice gateway (version 4), IP
+//! discovery and the UDP packets, with DAVE kept in step with the server.
 //!
 //! Not yet tried against Discord. The parts most likely to need a change
 //! are marked UNVERIFIED.
@@ -338,7 +337,7 @@ fn parse_discovery(response: &[u8]) -> Option<(IpAddr, u16)> {
     Some((address, u16::from_be_bytes([response[72], response[73]])))
 }
 
-/// DAVE, kept in step with the voice server as songbird's driver does.
+/// DAVE, kept in step with the voice server.
 struct Dave {
     session: Option<davey::DaveSession>,
     version: u16,

@@ -1,5 +1,5 @@
 //! Watching a screen share. Discord gives each Go Live its own voice
-//! server, apart from the call's, so this does not touch songbird: a voice
+//! server, apart from the call's, so this does not touch the call: a voice
 //! gateway of its own, the UDP stream, its transport and DAVE encryption,
 //! the video packets put back into frames, and `ffmpeg` turning them into
 //! pictures. Only built with the `video` feature; without it, `watch`

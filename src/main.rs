@@ -130,7 +130,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("discofast=info,songbird=warn"),
+        env_logger::Env::default().default_filter_or("discofast=info"),
     )
     .init();
     let slot = fastframe_instance::Slot::new(SLOT);

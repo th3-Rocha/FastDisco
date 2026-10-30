@@ -67,13 +67,6 @@ pub struct Settings {
     pub spellcheck: bool,
     /// Words the user added to the dictionary, lowercased.
     pub dictionary: Vec<String>,
-    /// The call's voice filter: noise suppression 0 off, 1 standard
-    /// (WebRTC's), 2 and up "Inteligente" (DeepFilterNet's neural network).
-    pub noise_suppression: u8,
-    /// How far the "Inteligente" suppression may lower the noise, in dB:
-    /// 100 takes it all out, lower leaves some of the room in. Only in
-    /// settings.json, for comparing.
-    pub noise_limit_db: u8,
     pub echo_cancellation: bool,
     pub auto_gain: bool,
     /// The microphone sends only while the user talks.
@@ -128,8 +121,6 @@ impl Default for Settings {
             deafened: false,
             spellcheck: true,
             dictionary: Vec::new(),
-            noise_suppression: 2,
-            noise_limit_db: 100,
             echo_cancellation: true,
             auto_gain: true,
             auto_sensitivity: true,
@@ -153,7 +144,6 @@ impl Default for Settings {
 /// The voice filter the input profile makes of the settings.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VoiceFilter {
-    pub noise: u8,
     pub echo: bool,
     pub gain: bool,
     /// Automatic input sensitivity; otherwise `threshold`.
@@ -166,7 +156,6 @@ impl Settings {
         match self.input_profile {
             // Voice isolation: everything that cleans the voice.
             0 => VoiceFilter {
-                noise: 2,
                 echo: true,
                 gain: true,
                 auto: true,
@@ -174,14 +163,12 @@ impl Settings {
             },
             // Studio: the microphone as it is, always open.
             1 => VoiceFilter {
-                noise: 0,
                 echo: false,
                 gain: false,
                 auto: false,
                 threshold: -100.0,
             },
             _ => VoiceFilter {
-                noise: self.noise_suppression,
                 echo: self.echo_cancellation,
                 gain: self.auto_gain,
                 auto: self.auto_sensitivity,

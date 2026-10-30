@@ -1830,8 +1830,7 @@ fn voice(app: &mut App, ui: &mut Ui) {
     let (input, output) = (s.input_device.clone(), s.output_device.clone());
     let (input_volume, output_volume) = (s.input_volume, s.output_volume);
     let (profile, sensitivity, auto) = (s.input_profile, s.sensitivity, s.auto_sensitivity);
-    let (noise, echo, gain, sounds) = (
-        s.noise_suppression,
+    let (echo, gain, sounds) = (
         s.echo_cancellation,
         s.auto_gain,
         s.sounds,
@@ -1965,43 +1964,6 @@ fn voice(app: &mut App, ui: &mut Ui) {
         app.actions.push(Action::SetSensitivity(db));
     }
     ui.add_space(20.0);
-    // Supressão de ruído, with its choice on the right.
-    let row_width = ui.available_width();
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(row_width - 150.0);
-            ui.label(
-                RichText::new("Supressão de ruído")
-                    .font(font(Weight::Medium, 16.0))
-                    .color(palette.strong),
-            );
-            ui.label(
-                RichText::new("Reduz o ruído de fundo do seu microfone.")
-                    .font(font(Weight::Regular, 14.0))
-                    .color(palette.muted),
-            );
-        });
-        // As Discord's Krisp, Standard and None: the neural one first.
-        let names = ["Nenhuma", "Padrão", "Inteligente"];
-        let (rect, response) = ui.allocate_exact_size(vec2(130.0, 40.0), Sense::click());
-        picker_box(
-            ui,
-            &palette,
-            rect,
-            &response,
-            None,
-            names[usize::from(noise.min(2))],
-        );
-        egui::Popup::menu(&response).width(130.0).show(|ui| {
-            ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
-            for (level, name) in names.iter().enumerate().rev() {
-                if super::call::menu_item(ui, &palette, name, palette.text).clicked() {
-                    app.actions.push(Action::SetNoiseSuppression(level as u8));
-                    ui.close();
-                }
-            }
-        });
-    });
     divider(ui, &palette);
     switch_row(
         app,

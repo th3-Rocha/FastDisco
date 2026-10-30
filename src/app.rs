@@ -132,8 +132,6 @@ pub enum Action {
     /// Opens or closes the theme editor; opening it closes the settings.
     Customize(bool),
     SetZoom(f32),
-    /// The voice filter's noise suppression, 0 off to 3 very high.
-    SetNoiseSuppression(u8),
     /// The microphone or speakers by system name; None for the default.
     SetInputDevice(Option<String>),
     SetOutputDevice(Option<String>),
@@ -1131,10 +1129,6 @@ impl App {
                 Action::Soundboard(action) => self.apply_soundboard(action),
                 Action::Nav(action) => self.apply_nav(action),
                 Action::Interact(action) => self.apply_interact(action),
-                Action::SetNoiseSuppression(level) => {
-                    self.settings.noise_suppression = level.min(3);
-                    self.apply_voice();
-                }
                 Action::SetInputDevice(device) => {
                     self.settings.input_device = device;
                     self.apply_voice();

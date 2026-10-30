@@ -690,32 +690,20 @@ pub fn section(app: &mut App, ui: &mut Ui, rect: Rect) {
     if response.clicked() {
         app.actions.push(Action::ShowCall(true));
     }
-    // Noise suppression and hang up, at the right.
+    // Hang up, at the right.
     let y = badge.center().y;
-    let suppressing = app.settings.noise_suppression > 0;
-    let noise = Rect::from_center_size(pos2(rect.right() - 58.0, y), Vec2::splat(32.0));
-    let noise = ui.interact(noise, ui.id().with("noise"), Sense::click());
     let hang = Rect::from_center_size(pos2(rect.right() - 22.0, y), Vec2::splat(32.0));
     let hang = ui.interact(hang, ui.id().with("hang-up"), Sense::click());
-    let noise_icon = if suppressing {
-        Icon::NoiseSuppression
-    } else {
-        Icon::NoiseSuppressionOff
-    };
-    for (button, icon) in [(&noise, noise_icon), (&hang, Icon::HangUp)] {
-        if button.hovered() {
-            ui.painter()
-                .rect_filled(button.rect, CornerRadius::same(6), palette.hover);
-        }
-        let tint = if button.hovered() {
-            palette.strong
-        } else {
-            palette.icon
-        };
-        paint_icon(ui, icon, button.rect.center(), 20.0, tint);
+    if hang.hovered() {
+        ui.painter()
+            .rect_filled(hang.rect, CornerRadius::same(6), palette.hover);
     }
-    let noise = noise.on_hover_text("Supressão de ruído");
-    noise_popup(app, &noise, suppressing);
+    let tint = if hang.hovered() {
+        palette.strong
+    } else {
+        palette.icon
+    };
+    paint_icon(ui, Icon::HangUp, hang.rect.center(), 20.0, tint);
     if hang.on_hover_text("Desconectar").clicked() {
         app.actions.push(Action::LeaveVoice);
     }
@@ -1125,18 +1113,8 @@ fn controls(app: &mut App, ui: &mut Ui, center: egui::Pos2) {
     let more = Rect::from_min_size(pos2(x + PAD + 2.0 * BUTTON, top + PAD), Vec2::splat(BUTTON));
     let more = button(ui, more, "more", Icon::More, Color32::WHITE, None);
     let mut chosen = None;
-    let suppressing = app.settings.noise_suppression > 0;
     egui::Popup::menu(&more).show(|ui| {
         ui.set_min_width(220.0);
-        let label = if suppressing {
-            "Desativar supressão de ruído"
-        } else {
-            "Ativar supressão de ruído"
-        };
-        if ui.button(label).clicked() {
-            chosen = Some(Action::SetNoiseSuppression(if suppressing { 0 } else { 2 }));
-            ui.close();
-        }
         if ui.button("Configurações de voz").clicked() {
             chosen = Some(Action::OpenSettings(crate::app::SettingsPage::Voice));
             ui.close();
@@ -1159,115 +1137,6 @@ fn controls(app: &mut App, ui: &mut Ui, center: egui::Pos2) {
     paint_icon(ui, Icon::HangUp, at.center(), 24.0, Color32::WHITE);
     if response.on_hover_text("Desconectar").clicked() {
         app.actions.push(Action::LeaveVoice);
-    }
-}
-
-/// Discord's card on the call panel's noise button: the switch, what it
-/// does, the microphone's level to try it on, and who makes it.
-fn noise_popup(app: &mut App, button: &egui::Response, suppressing: bool) {
-    let palette = app.palette;
-    let level = app.call.as_ref().map(|c| c.shared.level());
-    let mut chosen = None;
-    egui::Popup::menu(button)
-        .align(egui::RectAlign::TOP_START)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .frame(
-            egui::Frame::new()
-                .fill(Color32::from_rgb(0x1a, 0x1a, 0x1e))
-                .corner_radius(CornerRadius::same(8))
-                .stroke(Stroke::new(1.0, palette.selected))
-                .inner_margin(egui::Margin::same(16)),
-        )
-        .show(|ui| {
-            ui.set_width(268.0);
-            ui.spacing_mut().item_spacing.y = 8.0;
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Supressão de ruído")
-                        .font(font(Weight::SemiBold, 17.0))
-                        .color(palette.strong),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let (rect, response) = ui.allocate_exact_size(vec2(44.0, 26.0), Sense::click());
-                    let t = ui.ctx().animate_bool(response.id, suppressing);
-                    let fill = crate::theme::mix(palette.offline, palette.accent, t);
-                    ui.painter().rect_filled(rect, CornerRadius::same(13), fill);
-                    let knob = pos2(rect.left() + 13.0 + t * 18.0, rect.center().y);
-                    ui.painter().circle_filled(knob, 10.0, Color32::WHITE);
-                    if response.clicked() {
-                        chosen = Some(Action::SetNoiseSuppression(if suppressing { 0 } else { 2 }));
-                    }
-                });
-            });
-            ui.label(
-                egui::RichText::new(
-                    "Ative a supressão de ruído! Tente fazer barulho, como bater palmas, enquanto você fala. Seus amigos só ouvirão a sua linda voz.",
-                )
-                .font(font(Weight::Regular, 15.0))
-                .color(palette.text),
-            );
-            ui.label(
-                egui::RichText::new("Teste do microfone")
-                    .font(font(Weight::SemiBold, 16.0))
-                    .color(palette.strong),
-            );
-            let testing_id = egui::Id::new("noise-popup-testing");
-            let testing = ui.data(|d| d.get_temp::<bool>(testing_id).unwrap_or(false));
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                let label = if testing { "Parar" } else { "Testar" };
-                let test = egui::Button::new(
-                    egui::RichText::new(label)
-                        .font(font(Weight::Medium, 15.0))
-                        .color(palette.strong),
-                )
-                .fill(palette.hover)
-                .corner_radius(CornerRadius::same(8))
-                .min_size(vec2(68.0, 34.0));
-                if ui
-                    .add_enabled(level.is_some(), test)
-                    .on_disabled_hover_text("Entre em uma chamada para testar.")
-                    .clicked()
-                {
-                    ui.data_mut(|d| d.insert_temp(testing_id, !testing));
-                }
-                let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
-                super::settings::meter(ui, &palette, rect, level.filter(|_| testing));
-            });
-            if testing {
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_millis(33));
-            }
-            ui.label(
-                egui::RichText::new("Fornecido por")
-                    .font(font(Weight::SemiBold, 16.0))
-                    .color(palette.strong),
-            );
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("DeepFilterNet")
-                        .font(font(Weight::Bold, 17.0))
-                        .color(palette.strong),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let more = ui.add(
-                        egui::Label::new(
-                            egui::RichText::new("Saiba mais")
-                                .font(font(Weight::Medium, 14.0))
-                                .color(Color32::from_rgb(0x00, 0xa8, 0xfc)),
-                        )
-                        .sense(Sense::click()),
-                    );
-                    if more.clicked() {
-                        chosen = Some(Action::Chat(crate::chat::ChatAction::OpenUrl(
-                            "https://github.com/Rikorose/DeepFilterNet".into(),
-                        )));
-                    }
-                });
-            });
-        });
-    if let Some(action) = chosen {
-        app.actions.push(action);
     }
 }
 

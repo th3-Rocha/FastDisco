@@ -174,7 +174,7 @@ pub enum Command {
     },
     /// Connects to the voice server the gateway named.
     ConnectVoice {
-        server: discord::call::Server,
+        server: discord::voice::Server,
         shared: std::sync::Arc<crate::call::Shared>,
     },
     /// Stops or starts sending the microphone.
@@ -352,8 +352,8 @@ struct Worker {
     gateway_events: mpsc::UnboundedSender<Incoming>,
     /// A downloaded update waiting for the user.
     update: std::sync::Arc<crate::updates::Pending>,
-    /// The voice call's driver, once connected.
-    call: std::sync::Arc<tokio::sync::Mutex<Option<songbird::Driver>>>,
+    /// The voice call, once connected; dropping it leaves.
+    call: std::sync::Arc<tokio::sync::Mutex<Option<discord::voice::Handle>>>,
     /// The connection of the screen share being watched.
     stream: Option<JoinHandle<()>>,
     /// The room on the user's own video server, and what to ask of it.
@@ -883,12 +883,12 @@ impl Worker {
                 let events = self.events.clone();
                 let ctx = self.ctx.clone();
                 tokio::spawn(async move {
-                    if let Some(mut old) = call.lock().await.take() {
+                    if let Some(old) = call.lock().await.take() {
                         old.leave();
                     }
                     let (wake_ctx, gone_events, gone_ctx) =
                         (ctx.clone(), events.clone(), ctx.clone());
-                    let result = discord::call::connect(
+                    let result = discord::voice::connect(
                         server,
                         shared,
                         move || wake_ctx.wake(),
@@ -899,8 +899,8 @@ impl Worker {
                     )
                     .await;
                     let event = match result {
-                        Ok(driver) => {
-                            *call.lock().await = Some(driver);
+                        Ok(handle) => {
+                            *call.lock().await = Some(handle);
                             Event::VoiceConnected
                         }
                         Err(error) => Event::VoiceFailed(error),
@@ -912,8 +912,8 @@ impl Worker {
             Command::VoiceMute(mute) => {
                 let call = std::sync::Arc::clone(&self.call);
                 tokio::spawn(async move {
-                    if let Some(driver) = call.lock().await.as_mut() {
-                        driver.mute(mute);
+                    if let Some(handle) = call.lock().await.as_ref() {
+                        handle.mute(mute);
                     }
                 });
             }
@@ -923,8 +923,8 @@ impl Worker {
                 }
                 let call = std::sync::Arc::clone(&self.call);
                 tokio::spawn(async move {
-                    if let Some(mut driver) = call.lock().await.take() {
-                        driver.leave();
+                    if let Some(handle) = call.lock().await.take() {
+                        handle.leave();
                     }
                 });
             }

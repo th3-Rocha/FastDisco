@@ -162,11 +162,11 @@ everything Discord's desktop app does.
 - [x] Forum and media channels: posts as cards or a picture grid, tags to filter by, new posts with tags
 - [x] Stage channels: speakers and audience, raising a hand, bringing people up and down, starting and ending the stage with its topic
 - [x] Voice channels: joining, speaking and hearing, mute and deafen, who is talking, with Discord's DAVE end-to-end encryption
-- [x] Voice filter: DeepFilterNet3 neural noise suppression (or WebRTC's), echo cancellation, automatic gain and input sensitivity
-- [x] Received voice as Discord's own client recovers it: a lost packet is rebuilt from the next packet's Opus FEC, and a talker whose stream runs dry is filled in for a moment instead of cut
-- [x] Call audio without clicks or drift: lock-free rings, a playback buffer that deepens after sound comes late (60 to 180 ms), clock drift correction both ways, exact packet loss concealment, Opus at 64 kbps mono, filter in WebRTC's order (echo, noise, gain)
-- [x] Call audio diagnostics: `DISCOFAST_AUDIO_DEBUG=<folder>` records the raw microphone, the filtered sound and what was received as WAVs, and every ten seconds the packet loss, how late the sound arrived and the buffers' health go to the log and to `~/.cache/discofast/call.log`, with where received packets went missing (late, too far ahead, playout running dry, DAVE failing); `cargo test --release realtime -- --ignored --nocapture` runs the send and receive paths in real time and counts the breaks
-- [x] Voice settings: microphone and speaker choice, their volumes, microphone test (heard through the voice filter, so the noise suppression can be switched while listening), input profiles and manual sensitivity
+- [x] Voice engine as Discord's web client: libwebrtc (the browser's engine) connects to Discord's voice servers over WebRTC, with the client's own voice gateway messages and session descriptions, DAVE on the encoded frames, the platform audio device, WebRTC's echo cancellation and automatic gain, NetEq's jitter buffer and loss concealment, and Opus with FEC and DTX
+- [x] Input sensitivity and who is talking, measured as the web client measures them (its spectrum analyser for the microphone, its level worklet for everyone else)
+- [ ] Noise suppression in the new voice engine
+- [x] Call audio diagnostics: every ten seconds WebRTC's own counts (packets received and lost, concealed sound, jitter, the jitter buffer, round trip) go to the log and to `~/.cache/discofast/call.log`; `cargo test -- --ignored libwebrtc_takes the_microphone_test` checks the session descriptions against libwebrtc and the microphone test on this machine
+- [x] Voice settings: microphone and speaker choice, their volumes, microphone test (the web client's: the microphone through the voice engine and back), input profiles, echo cancellation, automatic gain and manual sensitivity
 - [x] Age-restricted channels show Discord's notice when the account has not confirmed its age
 - [x] Right-click on someone in a voice channel, as Discord's: profile, mention, message, call, note, friend nickname, their volume (the menu stays open while it is dragged), Ouvir no Spotify, a local mute, inviting them to a server, unfriending or adding, ignoring, blocking, their roles, and for moderators timeout, kick, ban, server mute and deafen, move and disconnect; menus in Discord's floating grey
 - [x] Voice channel rows as Discord's: chat, invite and settings buttons, the channel status (and setting it), "Convidar para voz", and the voice channel's text chat
@@ -174,7 +174,7 @@ everything Discord's desktop app does.
 - [x] A call taken over by another device: the call ends here and Discord's "Reconectar" bar shows
 - [x] Server events: the "Eventos" row and the calendar badge on the rail; rounded-square server icons with the call badge at the top
 - [x] Discord's call bar: microphone and its menu, camera, activities, soundboard, more, the red hang-up
-- [x] The soundboard: Discord's sounds and every server's, searchable, with a preview for yourself; a sound is mixed into your voice after the filter, so everyone hears any of them without Nitro, and sounds others play from Discord's own board play here too
+- [x] The soundboard: Discord's sounds and every server's, searchable, with a preview for yourself; a sound is mixed into your microphone before the voice engine, so everyone hears any of them without Nitro, and sounds others play from Discord's own board play here too
 - [x] Your own profile card: "No que você está pensando?" (custom status), the call you are in, Editar perfil, status (Disponível, Ausente, Não perturbar, Invisível), Mudar de conta
 - [x] Discord's invite dialog: search friends, send the invite to each, copy the link
 - [x] Groups show their own picture
@@ -186,7 +186,6 @@ everything Discord's desktop app does.
 - [x] Account settings as Discord's: account info, password and security (multi-factor, connected devices with sign-out), account status (age group), Family Center, disable and delete the account
 - [x] Data and privacy (data consents, requesting your data, activity sharing), message permissions (age-restricted DM commands and iOS servers, DMs from server members, who can send friend requests, blocked accounts with unblock), notifications (sounds, Discord's e-mails, mobile push delay, /tts); each page lists its parts in the side menu
 - [x] On a big screen the settings open in a window over the dimmed app, with the page's name and the close button in a bar, as Discord's
-- [x] The call panel's noise button: its icon follows the setting, and it opens Discord's card with the switch and a microphone test
 - [ ] Video calls and screen sharing
 - [x] Who has their camera on and who is live, in the channel list and the call
 - [ ] Watching a screen share: written behind the `video` feature (`cargo run --features video`), not yet tried against Discord
