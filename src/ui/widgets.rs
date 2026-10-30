@@ -74,19 +74,22 @@ pub fn paint_icon_state(ui: &Ui, icon: Icon, center: Pos2, size: f32, tint: Colo
     let pressed = hovered && ctx.input(|i| i.pointer.primary_down());
     let press = ctx.animate_bool_with_time(id.with("press"), pressed, 0.1);
     // A different icon in the same place (muted, unmuted): pop in.
+    // The clock is read before egui's memory is locked: reading it from
+    // inside would wait on the lock this very call holds.
+    let now = ctx.input(|i| i.time);
     let last: Option<Icon> = ctx.data(|d| d.get_temp(id.with("icon")));
     if last != Some(icon) {
         ctx.data_mut(|d| {
             d.insert_temp(id.with("icon"), icon);
             if last.is_some() {
-                d.insert_temp(id.with("changed"), ctx.input(|i| i.time));
+                d.insert_temp(id.with("changed"), now);
             }
         });
     }
     let pop = ctx
         .data(|d| d.get_temp::<f64>(id.with("changed")))
         .map_or(1.0, |at| {
-            let p = ((ctx.input(|i| i.time) - at) / 0.26).clamp(0.0, 1.0) as f32;
+            let p = ((now - at) / 0.26).clamp(0.0, 1.0) as f32;
             if p < 1.0 {
                 ctx.request_repaint();
             }
@@ -379,5 +382,21 @@ pub fn channel_icon(kind: crate::model::ChannelKind) -> Icon {
         ChannelKind::Thread | ChannelKind::Other => Icon::Threads,
         ChannelKind::Group => Icon::Users,
         _ => Icon::Hash,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// An icon replaced by another in the same place (a microphone muted)
+    /// draws without locking egui up, frame after frame.
+    #[test]
+    fn an_icon_changing_in_place_does_not_hang() {
+        let ctx = egui::Context::default();
+        for icon in [super::Icon::Mic, super::Icon::MicOff, super::Icon::Mic] {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                super::paint_icon(ui, icon, egui::pos2(20.0, 20.0), 20.0, egui::Color32::WHITE);
+            });
+            out.textures_delta.clear();
+        }
     }
 }
