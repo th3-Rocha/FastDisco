@@ -461,7 +461,7 @@ fn channel_row(app: &mut App, ui: &mut Ui, id: Id, movable: bool) -> Rect {
     } else {
         palette.muted
     };
-    let icon = super::widgets::channel_icon(channel.kind);
+    let icon = super::widgets::channel_icon_of(&app.model, channel);
     paint_icon(
         ui,
         icon,

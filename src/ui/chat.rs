@@ -161,7 +161,7 @@ fn header(app: &mut App, ui: &mut Ui, id: Id) {
                 kind => {
                     paint_icon(
                         ui,
-                        super::widgets::channel_icon(kind),
+                        super::widgets::channel_icon_of(&app.model, channel),
                         pos2(x + 12.0, y),
                         if kind.is_voice() { 22.0 } else { 24.0 },
                         palette.muted,

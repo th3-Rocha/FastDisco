@@ -84,6 +84,11 @@ fastframe_icons::icons! {
         Tag => "rc-tag",
         Phone => "rc-phone",
         Code => "rc-code",
+        Lock => "rc-lock",
+        StageLock => "rc-stage-lock",
+        ForumLock => "rc-forum-lock",
+        SpeakerLock => "rc-speaker-lock",
+        HashLock => "rc-hashtag-lock",
         ShieldLock => "rc-shield-lock",
         AddGroup => "rc-add-group",
     }

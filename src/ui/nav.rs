@@ -247,9 +247,11 @@ pub fn switcher(app: &mut App, ui: &mut Ui) {
                                             18.0,
                                             palette.muted,
                                         ),
-                                        Some(kind) => paint_icon(
+                                        Some(_) => paint_icon(
                                             ui,
-                                            super::widgets::channel_icon(kind),
+                                            channel.map_or(Icon::Hash, |c| {
+                                                super::widgets::channel_icon_of(&app.model, c)
+                                            }),
                                             icon_at,
                                             18.0,
                                             palette.muted,

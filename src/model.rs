@@ -858,6 +858,7 @@ pub mod permission {
     pub const MANAGE_CHANNELS: u64 = 1 << 4;
     pub const MANAGE_GUILD: u64 = 1 << 5;
     pub const VIEW_AUDIT_LOG: u64 = 1 << 7;
+    pub const CONNECT: u64 = 1 << 20;
     pub const MUTE_MEMBERS: u64 = 1 << 22;
     pub const DEAFEN_MEMBERS: u64 = 1 << 23;
     pub const MOVE_MEMBERS: u64 = 1 << 24;
@@ -1058,6 +1059,19 @@ impl Model {
 
     pub fn can(&self, guild: Id, bit: u64) -> bool {
         self.guild_permissions(guild) & bit != 0
+    }
+
+    /// A private channel, which Discord draws with a lock: @everyone may
+    /// not see it, or for a voice channel or stage, the user may not join.
+    pub fn is_locked(&self, channel: &Channel) -> bool {
+        let Some(guild) = channel.guild else { return false };
+        let hidden = channel
+            .overwrites
+            .iter()
+            .any(|o| o.id == guild && o.deny & VIEW_CHANNEL != 0);
+        let shut = channel.kind.is_voice()
+            && self.channel_permissions(channel) & permission::CONNECT == 0;
+        hidden || shut
     }
 
     /// Whether the user may see a channel.

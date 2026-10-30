@@ -138,6 +138,10 @@ fn motion(icon: Icon, t: f32) -> (f32, Shape) {
     let turn = |degrees: f32| Shape { angle: degrees * t, ..still };
     let shift = |x: f32, y: f32| Shape { offset: vec2(x, y) * t, ..still };
     match icon {
+        // The padlock swings, as the pack's shackle lifts and rocks.
+        Icon::Lock | Icon::HashLock | Icon::SpeakerLock | Icon::ForumLock | Icon::StageLock => {
+            (slow, Shape { angle: swing(10.0, 3.0), offset: vec2(0.0, -1.0) * (t * PI).sin(), ..still })
+        }
         // Channels and the rail's corner badges stay still.
         Icon::Hash | Icon::Stage | Icon::Forum => (med, still),
         Icon::Settings => (slow, turn(90.0)),
@@ -383,6 +387,21 @@ pub fn group_icon(ui: &Ui, app: &App, channel: &crate::model::Channel, center: P
     let color = COLORS[((channel.id >> 22) % COLORS.len() as u64) as usize];
     ui.painter().circle_filled(center, radius, color);
     paint_icon(ui, Icon::Users, center, radius * 1.1, Color32::WHITE);
+}
+
+/// A channel's icon, with the lock when it is private.
+pub fn channel_icon_of(model: &crate::model::Model, channel: &crate::model::Channel) -> Icon {
+    use crate::model::ChannelKind;
+    if !model.is_locked(channel) {
+        return channel_icon(channel.kind);
+    }
+    match channel.kind {
+        ChannelKind::Voice => Icon::SpeakerLock,
+        ChannelKind::Stage => Icon::StageLock,
+        ChannelKind::Forum | ChannelKind::Media => Icon::ForumLock,
+        ChannelKind::Text => Icon::HashLock,
+        kind => channel_icon(kind),
+    }
 }
 
 /// The icon Discord draws before a channel of each kind.
