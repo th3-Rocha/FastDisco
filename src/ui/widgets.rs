@@ -105,6 +105,20 @@ pub fn paint_icon_state(ui: &Ui, icon: Icon, center: Pos2, size: f32, tint: Colo
         .paint_at(ui, rect);
 }
 
+/// The arrow beside a button that opens a menu: it turns to point up
+/// while the menu is open, as the pack's chevron (170 ms).
+pub fn paint_chevron(ui: &Ui, opener: &Response, center: Pos2, size: f32, tint: Color32) {
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(opener));
+    let t = ui
+        .ctx()
+        .animate_bool_with_time_and_easing(opener.id.with("chevron"), open, 0.17, ease_out);
+    let rect = Rect::from_center_size(center, Vec2::splat(size));
+    Icon::ChevronDown
+        .image(tint, size)
+        .rotate(t * std::f32::consts::PI, Vec2::splat(0.5))
+        .paint_at(ui, rect);
+}
+
 /// Where an icon is at `t` of its hover motion.
 struct Shape {
     angle: f32,

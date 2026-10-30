@@ -20,6 +20,7 @@ mod profile;
 mod rail;
 mod settings;
 mod sidebar;
+mod soundboard;
 mod threads;
 mod titlebar;
 mod widgets;
@@ -106,6 +107,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             bots::forward_dialog(app, ui);
             bots::poll_dialog(app, ui);
             call::incoming(app, ui);
+            soundboard::panel(app, ui);
             discovery::dialogs(app, ui);
             let wanted: Vec<crate::model::Id> =
                 ui.data_mut(|d| {

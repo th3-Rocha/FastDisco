@@ -927,7 +927,7 @@ fn split_button(
         }
     };
     paint_icon(ui, icon, main.rect.center(), 20.0, tint(&main));
-    paint_icon(ui, Icon::ChevronDown, more.rect.center(), 14.0, tint(&more));
+    super::widgets::paint_chevron(ui, &more, more.rect.center(), 14.0, tint(&more));
     (main.on_hover_text(hint), more)
 }
 

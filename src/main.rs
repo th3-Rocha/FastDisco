@@ -26,6 +26,7 @@ mod resident;
 mod room;
 mod session;
 mod settings;
+mod soundboard;
 mod sounds;
 mod spell;
 mod stats;

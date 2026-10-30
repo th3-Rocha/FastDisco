@@ -367,6 +367,11 @@ pub struct Shared {
     /// Frames in the last microphone and speaker callback, for the log.
     pub mic_frames: AtomicU32,
     pub speaker_frames: AtomicU32,
+    /// Soundboard sounds to send, mixed into the voice after the filter.
+    pub effect_out: Mutex<VecDeque<f32>>,
+    /// Soundboard sounds for the user to hear, mixed into what the call
+    /// plays, so the echo canceller knows them.
+    pub effect_in: Mutex<VecDeque<f32>>,
 }
 
 impl Default for Shared {
@@ -394,6 +399,8 @@ impl Default for Shared {
             level: AtomicU32::new((-100f32).to_bits()),
             mic_frames: AtomicU32::new(0),
             speaker_frames: AtomicU32::new(0),
+            effect_out: Mutex::new(VecDeque::new()),
+            effect_in: Mutex::new(VecDeque::new()),
         }
     }
 }
@@ -699,6 +706,15 @@ impl MicSource {
             }
         }
         drop(filtering);
+        // Soundboard sounds go in after the filter, which would take them
+        // for noise, and past the gate: everyone hears them.
+        {
+            let mut effect = shared.effect_out.lock().unwrap_or_else(|e| e.into_inner());
+            let n = BLOCK.min(effect.len());
+            for (sample, add) in mono.iter_mut().zip(effect.drain(..n)) {
+                *sample = (*sample + add).clamp(-1.0, 1.0);
+            }
+        }
         shared.talking.store(talking, Ordering::Relaxed);
         if let Some(tap) = &self.tap {
             tap.push(&mono);

@@ -24,6 +24,7 @@ pub enum Tag {
     Events(crate::events::Tag),
     Manage(crate::manage::Tag),
     Discovery(crate::discovery::Tag),
+    Soundboard(crate::soundboard::Tag),
 }
 
 #[derive(Debug)]
@@ -153,6 +154,8 @@ pub enum Command {
         channel: u64,
     },
     FetchImage(String),
+    /// A soundboard sound, downloaded and decoded to 48 kHz mono.
+    FetchSound(u64),
     /// The spell checker's dictionaries, downloaded the first time.
     LoadSpeller,
     /// Looks for a newer Discofast and downloads it.
@@ -295,6 +298,11 @@ pub enum Event {
         color: Option<[u8; 3]>,
     },
     ImageFailed(String),
+    /// A soundboard sound decoded, or not readable.
+    Sound {
+        id: u64,
+        samples: Option<Vec<f32>>,
+    },
 }
 
 pub struct Backend {
@@ -790,6 +798,25 @@ impl Worker {
                 }
             }
             Command::FetchImage(url) => self.fetch_image(url),
+            Command::FetchSound(id) => {
+                let (client, events, ctx) = (self.client.clone(), self.events.clone(), self.ctx.clone());
+                tokio::spawn(async move {
+                    let url = format!("{}/soundboard-sounds/{id}", discord::CDN);
+                    let bytes = match client.get(&url).send().await {
+                        Ok(r) if r.status().is_success() => r.bytes().await.ok().map(|b| b.to_vec()),
+                        _ => None,
+                    };
+                    let samples = match bytes {
+                        Some(bytes) => tokio::task::spawn_blocking(move || crate::soundboard::decode(bytes))
+                            .await
+                            .ok()
+                            .flatten(),
+                        None => None,
+                    };
+                    let _ = events.send(Event::Sound { id, samples });
+                    ctx.wake();
+                });
+            }
             Command::CheckUpdate => {
                 let ctx = self.ctx.clone();
                 crate::updates::check(

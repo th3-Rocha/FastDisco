@@ -285,6 +285,15 @@ impl EventHandler for Tick {
         }
         drop(decoders);
         drop(filling);
+        // Soundboard sounds for the user's ears, on both sides.
+        {
+            let mut effect = self.shared.effect_in.lock().unwrap_or_else(|e| e.into_inner());
+            let n = (mixed.len() / 2).min(effect.len());
+            for (frame, add) in mixed.chunks_exact_mut(2).zip(effect.drain(..n)) {
+                frame[0] += add;
+                frame[1] += add;
+            }
+        }
         for sample in &mut mixed {
             *sample = sample.clamp(-1.0, 1.0);
         }

@@ -189,6 +189,17 @@ impl fastframe_theme::Palette for Palette {
         if !given.contains("mention_bar") && given.contains("warning") {
             self.mention_bar = self.idle;
         }
+        // A palette's "dim" is meant for what is switched off; channel
+        // names, timestamps and hints need to be read. Brought toward the
+        // text until they stand out enough on the conversation and the
+        // channel list.
+        for _ in 0..10 {
+            let worst = contrast(self.muted, self.chat).min(contrast(self.muted, self.sidebar));
+            if worst >= 3.6 {
+                break;
+            }
+            self.muted = mix(self.muted, self.text, 0.15);
+        }
         self.dnd = self.danger;
         self.mention = Color32::from_rgba_unmultiplied(
             self.mention_bar.r(),
@@ -197,6 +208,19 @@ impl fastframe_theme::Palette for Palette {
             26,
         );
     }
+}
+
+/// WCAG's contrast ratio between two colours, from 1 to 21.
+pub fn contrast(a: Color32, b: Color32) -> f32 {
+    let luminance = |c: Color32| {
+        let f = |v: u8| {
+            let s = f32::from(v) / 255.0;
+            if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * f(c.r()) + 0.7152 * f(c.g()) + 0.0722 * f(c.b())
+    };
+    let (x, y) = (luminance(a), luminance(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
 }
 
 static CURRENT: std::sync::RwLock<Palette> = std::sync::RwLock::new(Palette::dark());
@@ -487,5 +511,95 @@ pub fn paint_backdrop(painter: &egui::Painter, rect: egui::Rect, fill: Color32) 
     } else {
         paint_gradient(painter, rect, &colors, 0.0);
         painter.rect_filled(rect, 0.0, region(fill, Region::Frame));
+    }
+}
+
+#[cfg(test)]
+mod contrast {
+    use super::*;
+
+    fn luminance(c: Color32) -> f32 {
+        let f = |v: u8| {
+            let s = f32::from(v) / 255.0;
+            if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * f(c.r()) + 0.7152 * f(c.g()) + 0.0722 * f(c.b())
+    }
+
+    fn ratio(a: Color32, b: Color32) -> f32 {
+        let (x, y) = (luminance(a), luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    /// A see-through `top` over `under`.
+    fn over(top: Color32, under: Color32) -> Color32 {
+        let [r, g, b, a] = top.to_srgba_unmultiplied();
+        mix(under, Color32::from_rgb(r, g, b), f32::from(a) / 255.0)
+    }
+
+    fn report(name: &str, p: &Palette, backs: &[(&str, Color32)]) -> Vec<String> {
+        let mut out = Vec::new();
+        for (where_, back) in backs {
+            for (what, fg, need) in [
+                ("text", p.text, 4.5),
+                ("muted", p.muted, if *where_ == "selected" { 0.0 } else { 3.0 }),
+                ("strong", p.strong, 4.5),
+                ("accent", p.accent, 2.0),
+            ] {
+                let r = ratio(fg, *back);
+                if r < need {
+                    out.push(format!("{name}: {what} on {where_} {r:.2} (needs {need})"));
+                }
+            }
+        }
+        out
+    }
+
+    /// Every palette and colour theme keeps text readable: run with
+    /// `cargo test palettes_are_readable -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads the installed themes"]
+    fn palettes_are_readable() {
+        let mut problems = Vec::new();
+        let mut palettes = vec![("Escuro".to_owned(), Palette::dark()), ("Claro".to_owned(), Palette::light())];
+        if let Some(dir) = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config/discofast/themes")) {
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "json") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    match fastframe_theme::parse_palette::<Palette>(&text) {
+                        Ok(p) => palettes.push((path.file_stem().unwrap().to_string_lossy().into_owned(), p)),
+                        Err(e) => problems.push(format!("{}: {e}", path.display())),
+                    }
+                }
+            }
+        }
+        for (name, p) in &palettes {
+            problems.extend(report(name, p, &[("chat", p.chat), ("sidebar", p.sidebar), ("composer", p.composer), ("selected", p.selected)]));
+        }
+        for i in 0..PRESETS.len() {
+            let theme = preset(i).unwrap();
+            let p = tinted(&theme);
+            let colors = backdrop(&theme);
+            let t = f32::from(theme.intensity) / 100.0;
+            let see = |fill: Color32, clear: f32| {
+                let [r, g, b, _] = fill.to_srgba_unmultiplied();
+                Color32::from_rgba_unmultiplied(r, g, b, ((1.0 - clear * t) * 255.0) as u8)
+            };
+            let mut backs = Vec::new();
+            for k in 0..=4 {
+                let under = sample(&colors, k as f32 / 4.0);
+                backs.push(("chat", over(see(p.chat, 0.6), under)));
+                backs.push(("sidebar", over(see(p.sidebar, 0.65), under)));
+            }
+            let name = PRESETS[i].0;
+            problems.extend(report(name, &p, &backs));
+        }
+        problems.sort();
+        problems.dedup();
+        for p in &problems {
+            println!("{p}");
+        }
+        println!("{} palettes, {} colour themes, {} problems", palettes.len(), PRESETS.len(), problems.len());
     }
 }

@@ -118,6 +118,39 @@ pub struct Sounds {
 }
 
 impl Sounds {
+    /// Any 48 kHz mono samples, as a soundboard preview.
+    pub fn play_samples(&mut self, ctx: &egui::Context, samples: Vec<f32>) {
+        self.close_if_lost();
+        if self.stream.is_none() {
+            let lost = Arc::clone(&self.lost);
+            let ctx = ctx.clone();
+            let opened = rodio::OutputStreamBuilder::from_default_device()
+                .map(|b| {
+                    b.with_error_callback(move |error| {
+                        if !lost.swap(true, Ordering::Relaxed) {
+                            log::warn!("sounds: {error}");
+                            ctx.request_repaint();
+                        }
+                    })
+                })
+                .and_then(|b| b.open_stream_or_fallback());
+            match opened {
+                Ok(mut stream) => {
+                    stream.log_on_drop(false);
+                    self.stream = Some(stream);
+                }
+                Err(error) => {
+                    log::warn!("sounds: {error}");
+                    return;
+                }
+            }
+        }
+        if let Some(stream) = &self.stream {
+            let samples = rodio::buffer::SamplesBuffer::new(1, RATE, samples);
+            stream.mixer().add(samples);
+        }
+    }
+
     pub fn play(&mut self, ctx: &egui::Context, sound: Sound) {
         self.close_if_lost();
         if self.stream.is_none() {

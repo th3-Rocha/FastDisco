@@ -767,7 +767,9 @@ pub fn section(app: &mut App, ui: &mut Ui, rect: Rect) {
             Icon::ScreenShare => Some(crate::room::Kind::Screen),
             _ => None,
         };
-        let usable = kind.is_some() && ready;
+        let board = icon == Icon::Soundboard;
+        let usable = (kind.is_some() && ready) || board;
+        let on = on || (board && app.soundboard.open);
         let sense = if usable {
             Sense::click()
         } else {
@@ -788,6 +790,13 @@ pub fn section(app: &mut App, ui: &mut Ui, rect: Rect) {
             (false, false) => palette.icon.gamma_multiply(0.5),
         };
         paint_icon(ui, icon, at.center(), 20.0, tint);
+        if board {
+            super::soundboard::remember(ui, at);
+            if response.on_hover_text(hint).clicked() {
+                app.actions.push(Action::Soundboard(crate::soundboard::SoundboardAction::Toggle));
+            }
+            continue;
+        }
         let response = match (&kind, usable, &room_error) {
             (Some(_), true, _) => response.on_hover_text(hint),
             (Some(_), false, Some(error)) => {
@@ -1036,9 +1045,10 @@ fn controls(app: &mut App, ui: &mut Ui, center: egui::Pos2) {
         chevron,
         "mic-more",
         Icon::ChevronDown,
-        palette.icon,
+        Color32::TRANSPARENT,
         None,
     );
+    super::widgets::paint_chevron(ui, &more_mic, chevron.center(), 16.0, palette.icon);
     let mut chosen = None;
     let deaf = app.settings.deafened;
     egui::Popup::menu(&more_mic).show(|ui| {
@@ -1100,6 +1110,15 @@ fn controls(app: &mut App, ui: &mut Ui, center: egui::Pos2) {
             pos2(x + PAD + i as f32 * BUTTON, top + PAD),
             Vec2::splat(BUTTON),
         );
+        if icon == Icon::Soundboard {
+            super::soundboard::remember(ui, at);
+            let open = app.soundboard.open;
+            let fill = open.then_some(Color32::from_rgb(0x2e, 0x2f, 0x35));
+            if button(ui, at, hint, icon, Color32::WHITE, fill).on_hover_text(hint).clicked() {
+                app.actions.push(Action::Soundboard(crate::soundboard::SoundboardAction::Toggle));
+            }
+            continue;
+        }
         button(ui, at, hint, icon, unavailable, None)
             .on_hover_text(format!("{hint} (ainda não disponível no Discofast)"));
     }

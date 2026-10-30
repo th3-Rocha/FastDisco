@@ -173,6 +173,7 @@ everything Discord's desktop app does.
 - [x] A call taken over by another device: the call ends here and Discord's "Reconectar" bar shows
 - [x] Server events: the "Eventos" row and the calendar badge on the rail; rounded-square server icons with the call badge at the top
 - [x] Discord's call bar: microphone and its menu, camera, activities, soundboard, more, the red hang-up
+- [x] The soundboard: Discord's sounds and every server's, searchable, with a preview for yourself; a sound is mixed into your voice after the filter, so everyone hears any of them without Nitro, and sounds others play from Discord's own board play here too
 - [x] Your own profile card: "No que você está pensando?" (custom status), the call you are in, Editar perfil, status (Disponível, Ausente, Não perturbar, Invisível), Mudar de conta
 - [x] Discord's invite dialog: search friends, send the invite to each, copy the link
 - [x] Groups show their own picture
@@ -209,6 +210,7 @@ everything Discord's desktop app does.
 - [x] User settings, as Discord's
 - [x] Profiles, notes, mutual servers and friends
 - [x] Editing display name and bio
+- [x] Every theme keeps channel names and hints readable: a palette's dim colour is lifted until it stands out on the conversation and the channel list
 - [x] Light and dark themes, following the Omarchy theme; the dark one is Discord's grey theme from its 2025 redesign, with its server icons as large and its rail as narrow as Discord's, the Discofast snout (white and blurple) on the direct messages tile, and folders without the call or event corner
 - [x] Colour themes, free: 22 gradients behind see-through surfaces, and "Personalize o seu tema" (dark or light, up to five colours on a saturation square and hue bar, intensity, "Surpreenda-me!"), kept in settings.json
 - [x] Discord's redesigned message box: "+" (file, poll, voice message, apps), gift, emoji (with the GIF and sticker tabs) and apps; today's messages show only the time

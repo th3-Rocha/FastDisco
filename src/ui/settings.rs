@@ -1186,7 +1186,9 @@ fn appearance(app: &mut App, ui: &mut Ui) {
         ui.spacing_mut().item_spacing = vec2(16.0, 16.0);
         for (theme, name, swatch) in choices {
             let selected = app.settings.theme == theme;
-            ui.vertical(|ui| {
+            // A cell of a known size, so the row wraps before the edge
+            // instead of stretching the page past it.
+            ui.allocate_ui_with_layout(vec2(72.0, 100.0), egui::Layout::top_down(egui::Align::Center), |ui| {
                 ui.set_width(72.0);
                 let (rect, response) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::click());
                 let center = rect.center();

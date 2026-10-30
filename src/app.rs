@@ -167,6 +167,8 @@ pub enum Action {
     Manage(crate::manage::ManageAction),
     /// Exploring servers, and a new server's rules and questions.
     Discovery(crate::discovery::DiscoveryAction),
+    /// The soundboard's panel and its sounds.
+    Soundboard(crate::soundboard::SoundboardAction),
     /// Looks for a newer Discofast now.
     CheckUpdate,
     /// Restarts into the downloaded update.
@@ -251,6 +253,7 @@ pub struct App {
     pub events: crate::events::Events,
     pub manage: crate::manage::Manage,
     pub discovery: crate::discovery::Discovery,
+    pub soundboard: crate::soundboard::Soundboard,
     /// The spell checker, once its dictionaries are loaded.
     pub speller: Option<std::sync::Arc<crate::spell::Speller>>,
     /// The voice call the user is in.
@@ -341,6 +344,7 @@ impl App {
             events: crate::events::Events::default(),
             manage: crate::manage::Manage::default(),
             discovery: crate::discovery::Discovery::default(),
+            soundboard: crate::soundboard::Soundboard::default(),
             speller: None,
             call: None,
             mic_test: None,
@@ -556,6 +560,11 @@ impl App {
         self.notifier.show(&title, &body, picture.as_deref(), channel, false);
     }
 
+    /// A sound outside a call (a soundboard preview), on the app's output.
+    pub fn play_samples(&mut self, samples: Vec<f32>) {
+        self.sounds.play_samples(&self.ctx, samples);
+    }
+
     /// One of the app's sounds, unless the user turned them off.
     pub fn sound(&mut self, sound: crate::sounds::Sound) {
         if self.settings.sounds {
@@ -751,6 +760,7 @@ impl App {
                     crate::backend::Tag::Events(tag) => self.events_result(tag, result),
                     crate::backend::Tag::Manage(tag) => self.manage_result(tag, result),
                     crate::backend::Tag::Discovery(tag) => self.discovery_result(tag, result),
+                    crate::backend::Tag::Soundboard(tag) => self.soundboard_result(tag, result),
                 },
                 Event::Profile { user, profile } => {
                     self.chat.profiles.insert(
@@ -803,6 +813,7 @@ impl App {
                 }
                 Event::FilesPicked(paths) => self.apply_chat(ChatAction::AddFiles(paths)),
                 Event::IconPicked(path) => self.picture_picked(&path),
+                Event::Sound { id, samples } => self.sound_ready(id, samples),
                 Event::Image {
                     url,
                     bytes,
@@ -1090,6 +1101,7 @@ impl App {
                 Action::Events(action) => self.apply_events(action),
                 Action::Manage(action) => self.apply_manage(action),
                 Action::Discovery(action) => self.apply_discovery(action),
+                Action::Soundboard(action) => self.apply_soundboard(action),
                 Action::Nav(action) => self.apply_nav(action),
                 Action::Interact(action) => self.apply_interact(action),
                 Action::SetNoiseSuppression(level) => {
@@ -1879,6 +1891,7 @@ impl App {
             | "MESSAGE_REACTION_REMOVE_ALL"
             | "TYPING_START" => self.chat_dispatch(kind, &data),
             "CALL_CREATE" | "CALL_UPDATE" | "CALL_DELETE" => self.call_event(kind, &data),
+            "VOICE_CHANNEL_EFFECT_SEND" => self.voice_effect(&data),
             "USER_GUILD_SETTINGS_UPDATE" => {
                 let (guild, notify) = parse::notify(&data);
                 self.model.notify.insert(guild, notify);
