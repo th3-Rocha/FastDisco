@@ -213,7 +213,7 @@ everything Discord's desktop app does.
 - [x] Colour themes, free: 22 gradients behind see-through surfaces, and "Personalize o seu tema" (dark or light, up to five colours on a saturation square and hue bar, intensity, "Surpreenda-me!"), kept in settings.json
 - [x] Discord's redesigned message box: "+" (file, poll, voice message, apps), gift, emoji (with the GIF and sticker tabs) and apps; today's messages show only the time
 - [x] Zoom and accessibility switches
-- [x] The rcord icon pack (`assets/icons/rc-*.svg`): microphone, headphones, settings, channels, friends, the settings pages and the rail
+- [x] The rcord icon pack (`assets/icons/rc-*.svg`) everywhere: 80 icons, the rail, channels, messages, calls, media and settings; only a picture, music and Discord's logo keep the old ones
 - [x] Changing your status: online, idle, do not disturb, invisible
 - [x] Setting a custom status
 - [x] Avatar, banner and profile colour upload
