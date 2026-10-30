@@ -53,7 +53,20 @@ pub fn user(value: &Value) -> Option<User> {
         activity: None,
         activities: Vec::new(),
         bot: value["bot"].as_bool().unwrap_or(false),
+        tag: guild_tag(&value["primary_guild"]),
     })
+}
+
+/// The server tag a user wears, when they chose to show one.
+fn guild_tag(value: &Value) -> Option<crate::model::GuildTag> {
+    if value["identity_enabled"].as_bool() != Some(true) {
+        return None;
+    }
+    let text = text(&value["tag"])?;
+    let badge = id(&value["identity_guild_id"]).zip(value["badge"].as_str()).map(|(guild, hash)| {
+        format!("{CDN}/guild-tag-badges/{guild}/{hash}.png?size=32")
+    });
+    Some(crate::model::GuildTag { text, badge })
 }
 
 /// Status and activities from a presence.
@@ -371,6 +384,8 @@ pub fn event(value: &Value) -> Option<crate::model::Event> {
         id: id(&value["id"])?,
         name: label(&value["name"]).unwrap_or_default(),
         live: status == 2,
+        channel: id(&value["channel_id"]),
+        location: text(&value["entity_metadata"]["location"]),
     })
 }
 
@@ -908,6 +923,11 @@ pub fn relationship(value: &Value, model: &mut Model) {
     let kind = value["type"].as_u64().unwrap_or(0) as u8;
     if let Some(id) = id(&value["id"]).or_else(|| id(&value["user"]["id"])) {
         model.relationships.insert(id, kind);
+        // RELATIONSHIP_UPDATE carries the nickname too, null once cleared.
+        match value["nickname"].as_str().filter(|n| !n.is_empty()) {
+            Some(nick) => model.nicknames.insert(id, nick.to_owned()),
+            None => model.nicknames.remove(&id),
+        };
     }
 }
 

@@ -23,7 +23,7 @@ use crate::model::{
 };
 
 pub const GUTTER: f32 = 72.0;
-const LINK: Color32 = Color32::from_rgb(0x00, 0xa8, 0xfc);
+pub const LINK: Color32 = Color32::from_rgb(0x00, 0xa8, 0xfc);
 const MEDIA_W: f32 = 400.0;
 const MEDIA_H: f32 = 300.0;
 
@@ -782,7 +782,7 @@ pub fn blocks(
                     Color32::from_rgb(0x4e, 0x50, 0x58),
                 );
             }
-            Block::Code { text: code, .. } => {
+            Block::Code { text: code, language } => {
                 ui.add_space(4.0);
                 Frame::new()
                     .fill(crate::theme::current().sidebar)
@@ -791,13 +791,14 @@ pub fn blocks(
                     .inner_margin(Margin::same(8))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width().min(560.0));
-                        let mut job = LayoutJob::single_section(
-                            code.trim_end().to_owned(),
-                            TextFormat {
-                                font_id: FontId::monospace(14.0),
-                                color: Color32::from_rgb(0xdb, 0xde, 0xe1),
-                                ..Default::default()
-                            },
+                        // ```sql and the like are coloured, as Discord's.
+                        let palette = crate::theme::current();
+                        let mut job = crate::highlight::job(
+                            code.trim_end(),
+                            crate::highlight::language(&format!(".{language}")),
+                            FontId::monospace(14.0),
+                            palette.text,
+                            palette.is_dark(),
                         );
                         job.wrap.max_width = ui.available_width();
                         let galley = ui.painter().layout_job(job);
@@ -1230,6 +1231,9 @@ pub(super) fn media(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
             }
             MediaKind::Audio if message.voice => player::voice(row, ui, attachment),
             MediaKind::Audio => player::audio(row, ui, attachment),
+            _ if crate::highlight::is_text(&attachment.name, attachment.content_type.as_deref()) => {
+                text_card(row, ui, attachment);
+            }
             _ => file_card(row, ui, attachment, false),
         }
     }
@@ -1245,12 +1249,24 @@ pub(super) fn media(row: &mut Row<'_>, ui: &mut Ui, message: &Message) {
     }
     for sticker in &message.stickers {
         ui.add_space(4.0);
-        let (rect, _) = ui.allocate_exact_size(Vec2::splat(160.0), Sense::hover());
-        match sticker.url().and_then(|u| row.app.picture(Some(&u))) {
-            Some(uri) => {
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(160.0), Sense::hover());
+        // Discord's own stickers are Lottie: drawn here, moving unless
+        // autoplay is off and the pointer is elsewhere.
+        let lottie = sticker.lottie_url().filter(|_| ui.is_rect_visible(rect)).and_then(|url| {
+            if row.app.settings.animate || response.hovered() {
+                row.app.animation(&url)
+            } else {
+                row.app.animation_still(&url)
+            }
+        });
+        match (lottie, sticker.url().and_then(|u| row.app.picture(Some(&u)))) {
+            (Some(texture), _) => {
+                egui::Image::new((texture.id(), rect.size())).paint_at(ui, rect);
+            }
+            (None, Some(uri)) => {
                 egui::Image::new(uri).paint_at(ui, rect);
             }
-            None => {
+            (None, None) => {
                 ui.painter().rect_filled(
                     rect,
                     CornerRadius::same(8),
@@ -1631,6 +1647,174 @@ pub fn size_text(bytes: u64) -> String {
 }
 
 /// A file Discord cannot preview: its name, size and a download button.
+/// Lines a collapsed text preview shows before it scrolls, and the most an
+/// open one shows.
+const TEXT_LINES: f32 = 6.0;
+const TEXT_LINES_OPEN: f32 = 30.0;
+
+/// A text or code file as Discord previews it: its first lines coloured
+/// for the language, and a bar with the button that shows more, the name
+/// and size, plain text or colours, the whole file large, and a menu.
+fn text_card(row: &mut Row<'_>, ui: &mut Ui, file: &Attachment) {
+    let app = row.app;
+    let palette = app.palette;
+    let Some(text) = app.text_file(&file.url) else {
+        // Still downloading: the card as it will be, with nothing in it yet.
+        let (rect, _) = ui.allocate_exact_size(vec2(432.0_f32.min(ui.available_width()), 120.0), Sense::hover());
+        ui.painter().rect(
+            rect,
+            CornerRadius::same(8),
+            crate::theme::current().sidebar,
+            Stroke::new(1.0, crate::theme::current().divider),
+            StrokeKind::Inside,
+        );
+        return;
+    };
+    if text.is_empty() {
+        file_card(row, ui, file, false);
+        return;
+    }
+    let state = egui::Id::new(("text-file", &file.url));
+    let (open, plain) = ui.data(|d| d.get_temp::<(bool, bool)>(state)).unwrap_or_default();
+    let language = (!plain).then(|| crate::highlight::language(&file.name)).flatten();
+    let width = 432.0_f32.min(ui.available_width());
+    let line = 18.0;
+    let mono = FontId::monospace(14.0);
+    let mut toggle_open = false;
+    let mut toggle_plain = false;
+    let mut large = false;
+    Frame::new()
+        .fill(crate::theme::current().sidebar)
+        .stroke(Stroke::new(1.0, crate::theme::current().divider))
+        .corner_radius(CornerRadius::same(8))
+        .show(ui, |ui| {
+            ui.set_width(width);
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            let lines = if open { TEXT_LINES_OPEN } else { TEXT_LINES };
+            Frame::new().inner_margin(Margin::same(12)).show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt(("text-file-scroll", &file.url, open))
+                    .max_height(lines * line)
+                    .show(ui, |ui| {
+                        ui.set_width(width - 24.0);
+                        let mut job = crate::highlight::job(
+                            text.trim_end(),
+                            language,
+                            mono.clone(),
+                            palette.text,
+                            palette.is_dark(),
+                        );
+                        job.wrap.max_width = width - 24.0 - 12.0;
+                        let galley = ui.painter().layout_job(job);
+                        let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+                        ui.painter().galley(rect.min, galley, palette.text);
+                    });
+            });
+            // The bar under the text.
+            let (bar, _) = ui.allocate_exact_size(vec2(width, 56.0), Sense::hover());
+            let y = bar.center().y;
+            let chevron = Rect::from_center_size(pos2(bar.left() + 12.0 + 18.0, y), Vec2::splat(36.0));
+            let response = ui
+                .interact(chevron, state.with("open"), Sense::click())
+                .on_hover_text(if open { "Recolher" } else { "Expandir" });
+            ui.painter().rect_filled(
+                chevron,
+                CornerRadius::same(8),
+                palette.text.gamma_multiply(if response.hovered() { 0.16 } else { 0.08 }),
+            );
+            // The chevron turns to point up while the file is open.
+            let turn = ui.ctx().animate_bool_with_time(state.with("turn"), open, 0.17);
+            Icon::ChevronDown
+                .image(palette.text, 18.0)
+                .rotate(turn * std::f32::consts::PI, Vec2::splat(0.5))
+                .paint_at(ui, Rect::from_center_size(chevron.center(), Vec2::splat(18.0)));
+            if response.clicked() {
+                toggle_open = true;
+            }
+            let buttons_left = bar.right() - 12.0 - 3.0 * 32.0;
+            let name_left = chevron.right() + 12.0;
+            super::widgets::Elide::new(ui, buttons_left - 8.0).text(
+                pos2(name_left, y - 9.0),
+                Align2::LEFT_CENTER,
+                hyphens(&file.name),
+                font(Weight::Medium, 15.0),
+                palette.strong,
+            );
+            ui.painter().text(
+                pos2(name_left, y + 10.0),
+                Align2::LEFT_CENTER,
+                size_text(file.size),
+                font(Weight::Regular, 12.0),
+                palette.muted,
+            );
+            let button = |ui: &Ui, i: f32, icon: Icon, tip: &str, lit: bool| {
+                let rect = Rect::from_center_size(pos2(buttons_left + 16.0 + i * 32.0, y), Vec2::splat(28.0));
+                let response = ui
+                    .interact(rect, state.with(tip), Sense::click())
+                    .on_hover_text(tip);
+                let color = if response.hovered() || lit { palette.strong } else { palette.text };
+                paint_icon(ui, icon, rect.center(), 20.0, color);
+                response
+            };
+            let tip = if plain { "Ver com cores" } else { "Ver como texto puro" };
+            if button(ui, 0.0, Icon::Code, tip, plain).clicked() {
+                toggle_plain = true;
+            }
+            if button(ui, 1.0, Icon::Maximize, "Ver arquivo inteiro", false).clicked() {
+                large = true;
+            }
+            let more = button(ui, 2.0, Icon::More, "Mais", false);
+            egui::Popup::menu(&more).show(|ui| {
+                ui.set_min_width(180.0);
+                if ui.button("Baixar").clicked() {
+                    row.out.push(Action::Chat(ChatAction::OpenUrl(file.url.clone())));
+                }
+                if ui.button("Copiar texto").clicked() {
+                    row.out.push(Action::Chat(ChatAction::Copy(text.to_string())));
+                }
+                if ui.button("Copiar link").clicked() {
+                    row.out.push(Action::Chat(ChatAction::Copy(file.url.clone())));
+                }
+            });
+        });
+    if toggle_open || toggle_plain {
+        ui.data_mut(|d| d.insert_temp(state, (open ^ toggle_open, plain ^ toggle_plain)));
+    }
+    let viewer = state.with("large");
+    if large {
+        ui.data_mut(|d| d.insert_temp(viewer, true));
+    }
+    if ui.data(|d| d.get_temp::<bool>(viewer)).unwrap_or(false) {
+        let screen = ui.ctx().content_rect();
+        let response = egui::Modal::new(viewer.with("modal")).show(ui.ctx(), |ui| {
+            ui.set_width((screen.width() * 0.7).min(1000.0));
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(hyphens(&file.name)).size(16.0).strong().color(palette.strong));
+                ui.label(egui::RichText::new(size_text(file.size)).size(12.0).color(palette.muted));
+            });
+            ui.add_space(8.0);
+            egui::ScrollArea::both()
+                .id_salt(viewer.with("scroll"))
+                .max_height(screen.height() * 0.7)
+                .show(ui, |ui| {
+                    let job = crate::highlight::job(
+                        &text,
+                        language,
+                        mono.clone(),
+                        palette.text,
+                        palette.is_dark(),
+                    );
+                    let galley = ui.painter().layout_job(job);
+                    let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+                    ui.painter().galley(rect.min, galley, palette.text);
+                });
+        });
+        if response.should_close() {
+            ui.data_mut(|d| d.remove::<bool>(viewer));
+        }
+    }
+}
+
 fn file_card(row: &mut Row<'_>, ui: &mut Ui, file: &Attachment, sending: bool) {
     let app = row.app;
     let palette = app.palette;

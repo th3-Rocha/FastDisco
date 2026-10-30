@@ -156,6 +156,8 @@ pub enum Command {
     FetchImage(String),
     /// A soundboard sound, downloaded and decoded to 48 kHz mono.
     FetchSound(u64),
+    /// A text file's start, for its preview in the chat.
+    FetchText(String),
     /// The spell checker's dictionaries, downloaded the first time.
     LoadSpeller,
     /// Looks for a newer Discofast and downloads it.
@@ -302,6 +304,11 @@ pub enum Event {
     Sound {
         id: u64,
         samples: Option<Vec<f32>>,
+    },
+    /// A text file's start, or nothing when it is not text.
+    Text {
+        url: String,
+        text: Option<String>,
     },
 }
 
@@ -814,6 +821,14 @@ impl Worker {
                         None => None,
                     };
                     let _ = events.send(Event::Sound { id, samples });
+                    ctx.wake();
+                });
+            }
+            Command::FetchText(url) => {
+                let (client, events, ctx) = (self.client.clone(), self.events.clone(), self.ctx.clone());
+                tokio::spawn(async move {
+                    let text = fetch_text(&client, &url).await;
+                    let _ = events.send(Event::Text { url, text });
                     ctx.wake();
                 });
             }
@@ -1354,4 +1369,26 @@ fn autostart_on(autostart: &fastframe_autostart::Autostart) -> Option<bool> {
         fastframe_autostart::State::Off => Some(false),
         _ => Some(true),
     }
+}
+
+/// The most of a text file a preview downloads.
+const TEXT_LIMIT: usize = 256 * 1024;
+
+/// The start of the text file at `url`; `None` when it is not text.
+async fn fetch_text(client: &reqwest::Client, url: &str) -> Option<String> {
+    use futures_util::StreamExt;
+    let response = client.get(url).send().await.ok()?.error_for_status().ok()?;
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        bytes.extend_from_slice(&chunk.ok()?);
+        if bytes.len() >= TEXT_LIMIT {
+            bytes.truncate(TEXT_LIMIT);
+            break;
+        }
+    }
+    if bytes.contains(&0) {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&bytes).replace("\r\n", "\n").replace('\t', "    "))
 }

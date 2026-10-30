@@ -91,6 +91,8 @@ fastframe_icons::icons! {
         HashLock => "rc-hashtag-lock",
         ShieldLock => "rc-shield-lock",
         AddGroup => "rc-add-group",
+        Maximize => "rc-maximize",
+        MapPin => "rc-map-pin",
     }
 }
 

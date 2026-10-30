@@ -132,7 +132,7 @@ everything Discord's desktop app does.
 - [x] History, live messages, edits and deletions, older history on scroll
 - [x] Sending with optimistic display
 - [x] Direct messages and groups
-- [x] Markdown: bold, italic, underline, strikethrough, code, code blocks, quotes, headings, lists, subtext, spoilers, masked links, mentions, timestamps
+- [x] Markdown: bold, italic, underline, strikethrough, code, code blocks (coloured for SQL, Rust, Python, JavaScript and other common languages), quotes, headings, lists, subtext, spoilers, masked links, mentions, timestamps
 - [x] Custom and Unicode emoji, jumbo emoji, emoji picker, `:shortcode:` on send
 - [x] Replies, edits, deletion, reactions, typing indicator
 - [x] Discord's limits: character counter, "message too long" (send as file), upload size by plan
@@ -145,7 +145,8 @@ everything Discord's desktop app does.
 
 ### Media
 
-- [x] Images, animated GIFs (Tenor and Giphy too), stickers, picture viewer
+- [x] Images, animated GIFs (Tenor and Giphy too), stickers (Discord's own Lottie ones too, Wumpus waving and the rest, drawn by the app), picture viewer
+- [x] Text and code files previewed as Discord's: the first lines coloured for the language, more on the chevron, plain text, the whole file large, copy and download
 - [x] Video, audio and voice messages played in the app
 - [x] YouTube inline through yt-dlp
 - [x] Link previews and bot embeds with fields, images, thumbnails and footers
@@ -192,7 +193,7 @@ everything Discord's desktop app does.
 - [x] Camera and screen sharing between friends on your own LiveKit server, beside the Discord call (the `selfhosted` feature, in the released builds; see `contrib/livekit`)
 - [ ] Video calls and screen sharing through Discord itself: cameras in the call and sending your own camera or screen
 - [x] Direct message calls: calling from the header, the ring, answering or turning it down
-- [x] Scheduled events: the list with when and where, "Tenho interesse", creating them in a voice channel or elsewhere, starting, ending and cancelling
+- [x] Scheduled events: the list with when and where, "Tenho interesse", creating them in a voice channel or elsewhere, starting, ending and cancelling; the "Acontecendo agora" card over the channels with "Detalhes do evento"; the details with their "Têm interesse" tab, who made the event, and a series' coming dates
 
 ### Servers
 
@@ -209,9 +210,10 @@ everything Discord's desktop app does.
 
 - [x] User settings, as Discord's
 - [x] Profiles, notes, mutual servers and friends
+- [x] Friend nicknames in place of names in direct messages and the friends list, and the server tag people wear ("⚡ DEV") beside their name
 - [x] Editing display name and bio
 - [x] Every theme keeps channel names and hints readable: a palette's dim colour is lifted until it stands out on the conversation and the channel list
-- [x] Light and dark themes, following the Omarchy theme; the dark one is Discord's grey theme from its 2025 redesign, with its server icons as large and its rail as narrow as Discord's, the Discofast snout (white and blurple) on the direct messages tile, and folders without the call or event corner
+- [x] Light and dark themes, following the Omarchy theme; the dark one is Discord's grey theme from its 2025 redesign, with its server icons as large and its rail as narrow as Discord's, the Discofast snout (white and blurple) on the direct messages tile and beside "Mensagens diretas" at the top, and folders without the call or event corner
 - [x] Colour themes, free: 22 gradients behind see-through surfaces, and "Personalize o seu tema" (dark or light, up to five colours on a saturation square and hue bar, intensity, "Surpreenda-me!"), kept in settings.json
 - [x] Discord's redesigned message box: "+" (file, poll, voice message, apps), gift, emoji (with the GIF and sticker tabs) and apps; today's messages show only the time
 - [x] Zoom and accessibility switches

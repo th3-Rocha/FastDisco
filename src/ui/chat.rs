@@ -491,7 +491,17 @@ fn messages(app: &mut App, ui: &mut Ui, id: Id) {
     if let Some(first) = first {
         ui.data_mut(|d| d.insert_temp(anchor_id, (first, height)));
     }
-    if offset < 400.0 && channel.more && !channel.loading && channel.messages.len() >= 50 {
+    // Not while the scroll bar is held: the bar decides the offset then, so
+    // older history put in front would shove the view down under the
+    // pointer, the bar would pull it back up to the top, and the next page
+    // would load, over and over. It loads once the bar is let go.
+    let held = ui.input(|i| i.pointer.primary_down());
+    if offset < 400.0
+        && !held
+        && channel.more
+        && !channel.loading
+        && channel.messages.len() >= 50
+    {
         out.push(Action::Chat(crate::chat::ChatAction::LoadOlder(id)));
     }
     app.actions.extend(out);

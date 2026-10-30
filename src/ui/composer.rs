@@ -51,6 +51,7 @@ pub fn show(app: &mut App, ui: &mut Ui, channel: Id) -> Rect {
             bottom: 0,
         }))
         .show(ui, |ui| {
+            let top = ui.cursor().top();
             let replying = app.chat.reply.get(&channel).copied();
             if let Some(message) = replying {
                 reply_bar(app, ui, channel, message);
@@ -84,7 +85,7 @@ pub fn show(app: &mut App, ui: &mut Ui, channel: Id) -> Rect {
             field = frame.response.rect;
             autocomplete(app, ui, channel, field);
             counter(app, ui, channel, field);
-            typing(app, ui, channel);
+            typing(app, ui, channel, top);
         });
     field
 }
@@ -320,7 +321,7 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
         ui.spacing_mut().item_spacing = vec2(16.0, 0.0);
         ui.add_space(0.0);
         ui.vertical(|ui| {
-            ui.add_space(10.0);
+            ui.add_space(16.0);
             // Discord's "+": a file, a poll, or the apps' commands.
             let plus = icon_button(ui, &palette, Icon::Plus, 24.0, false, "Mais opções");
             let mut chosen = None;
@@ -371,7 +372,7 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
         let draft = app.drafts.entry(channel).or_default();
         let changed = ui
             .vertical(|ui| {
-                ui.add_space(11.0);
+                ui.add_space(18.0);
                 let response = egui::ScrollArea::vertical()
                     .id_salt(("composer-scroll", channel))
                     .max_height(ui.ctx().content_rect().height() * 0.4)
@@ -394,7 +395,7 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
                         output.response
                     })
                     .inner;
-                ui.add_space(11.0);
+                ui.add_space(18.0);
                 if focus {
                     response.request_focus();
                 }
@@ -421,7 +422,7 @@ fn input(app: &mut App, ui: &mut Ui, channel: Id, placeholder: &str) {
             act(app, ChatAction::Typed);
         }
         ui.vertical(|ui| {
-            ui.add_space(10.0);
+            ui.add_space(16.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 16.0;
                 if icon_button(
@@ -679,13 +680,19 @@ fn counter(app: &App, ui: &Ui, channel: Id, field: Rect) {
     );
 }
 
-fn typing(app: &App, ui: &mut Ui, channel: Id) {
+fn typing(app: &App, ui: &mut Ui, channel: Id, top: f32) {
     let palette = app.palette;
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
+    // The field's foot lines up with the user card's, as Discord's: a
+    // margin as the card's below it, and who is typing over the foot of
+    // the messages, just above the field.
+    let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.0), Sense::hover());
     let who = app.chat.typing_in(channel);
     if who.is_empty() {
         return;
     }
+    let rect = Rect::from_min_max(pos2(strip.left(), top - 22.0), pos2(strip.right(), top));
+    ui.painter()
+        .rect_filled(rect, CornerRadius::ZERO, crate::theme::region(palette.chat, crate::theme::Region::Chat));
     let guild = app.server();
     let names: Vec<String> = who.iter().map(|u| app.model.name_in(guild, *u)).collect();
     let mut job = egui::text::LayoutJob::default();

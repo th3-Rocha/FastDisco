@@ -1,7 +1,8 @@
 //! GIFs that arrive as videos (`gifv` embeds from Imgur, Klipy, Discord's
 //! own picker...) play the way Discord plays them: at once, silent and in
 //! a loop. ffmpeg decodes each one a single time into small frames that
-//! loop from memory; an animation unseen for a while is dropped.
+//! loop from memory; an animation unseen for a while is dropped. Lottie
+//! stickers (a `.json` URL) are drawn the same way, without ffmpeg.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -77,12 +78,16 @@ impl Animations {
         Some(entry.frames[index].clone())
     }
 
+    /// The first frame of `url`, for an animation that should stand still.
+    pub fn still(&mut self, ctx: &egui::Context, url: &str) -> Option<TextureHandle> {
+        let _ = self.frame(ctx, url)?;
+        self.list.get(url).and_then(|a| a.frames.first().cloned())
+    }
+
     /// Starts waiting decoders, takes decoded frames and drops idle
     /// animations. Call once per frame.
     pub fn update(&mut self, ctx: &egui::Context) {
-        if !crate::media::available() {
-            return;
-        }
+        let ffmpeg = crate::media::available();
         self.list.retain(|_, a| a.seen.elapsed() < IDLE);
         let running = self
             .list
@@ -92,8 +97,13 @@ impl Animations {
         let mut free = DECODERS.saturating_sub(running);
         for (url, animation) in &mut self.list {
             if free > 0 && matches!(animation.load, Load::Waiting) {
-                animation.load = Load::Decoding(decode(ctx, url.clone()));
-                free -= 1;
+                if is_lottie(url) {
+                    animation.load = Load::Decoding(decode_lottie(ctx, url.clone()));
+                    free -= 1;
+                } else if ffmpeg {
+                    animation.load = Load::Decoding(decode(ctx, url.clone()));
+                    free -= 1;
+                }
             }
             let Load::Decoding(receiver) = &animation.load else {
                 continue;
@@ -136,6 +146,51 @@ impl Animations {
             .get(url)
             .is_some_and(|a| matches!(a.load, Load::Failed))
     }
+}
+
+fn is_lottie(url: &str) -> bool {
+    url.split(['?', '#']).next().is_some_and(|path| path.ends_with(".json"))
+}
+
+/// A sticker's frames are drawn this many pixels square: the 160 the chat
+/// shows it at, twice over for sharp screens.
+const STICKER_SIZE: u16 = 320;
+
+/// Downloads a Lottie sticker and draws its frames, off the interface
+/// thread.
+fn decode_lottie(ctx: &egui::Context, url: String) -> Receiver<Decoded> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(8);
+    let ctx = ctx.clone();
+    std::thread::Builder::new()
+        .name("lottie".into())
+        .spawn(move || {
+            let json = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(20))
+                .build()
+                .and_then(|client| client.get(&url).send())
+                .and_then(reqwest::blocking::Response::error_for_status)
+                .and_then(|response| response.bytes());
+            let animation = match json {
+                Ok(json) => crate::lottie::parse(&json),
+                Err(error) => {
+                    log::warn!("lottie download: {error}");
+                    None
+                }
+            };
+            if let Some(animation) = animation {
+                let fps = crate::lottie::fps(&animation, MAX_FPS);
+                let _ = sender.send(Decoded::Fps(fps));
+                crate::lottie::render(&animation, STICKER_SIZE, fps, MAX_FRAMES, |image| {
+                    let sent = sender.send(Decoded::Frame(image)).is_ok();
+                    ctx.request_repaint();
+                    sent
+                });
+            }
+            let _ = sender.send(Decoded::Done);
+            ctx.request_repaint();
+        })
+        .expect("the lottie thread starts");
+    receiver
 }
 
 fn decode(ctx: &egui::Context, url: String) -> Receiver<Decoded> {

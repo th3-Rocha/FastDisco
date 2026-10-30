@@ -52,6 +52,15 @@ pub struct User {
     /// Everything the user is doing, for the profile.
     pub activities: Vec<Activity>,
     pub bot: bool,
+    /// The server tag they wear beside their name, as "DEV" with its badge.
+    pub tag: Option<GuildTag>,
+}
+
+/// A server tag: its few letters and the badge's picture.
+#[derive(Clone, Debug)]
+pub struct GuildTag {
+    pub text: String,
+    pub badge: Option<String>,
 }
 
 /// What the profile endpoint adds to a user.
@@ -617,6 +626,11 @@ impl Sticker {
             _ => None,
         }
     }
+
+    /// A Lottie sticker's animation, which the app draws itself.
+    pub fn lottie_url(&self) -> Option<String> {
+        (self.format == 3).then(|| format!("https://discord.com/stickers/{}.json", self.id))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -719,6 +733,9 @@ pub struct Event {
     pub name: String,
     /// Happening now, rather than still to come.
     pub live: bool,
+    /// A voice or stage channel, or a place outside Discord.
+    pub channel: Option<Id>,
+    pub location: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -736,6 +753,10 @@ pub struct Model {
     /// Friends, blocked people and requests, by Discord's type
     /// (`nav::relationship`).
     pub relationships: HashMap<Id, u8>,
+    /// The nicknames the user gave friends, which only they see: Discord
+    /// shows them in place of the friend's name outside servers that give
+    /// the friend a nickname of their own.
+    pub nicknames: HashMap<Id, String>,
     /// The rail: servers alone and in folders, in the user's order.
     pub folders: Vec<Folder>,
     /// The gateway session, which interactions name.
@@ -998,7 +1019,8 @@ impl Model {
             .and_then(|g| self.guild(g))
             .and_then(|g| g.members.get(&user))
             .and_then(|m| m.nick.clone());
-        nick.or_else(|| self.user(user).map(|u| u.name.clone()))
+        nick.or_else(|| self.nicknames.get(&user).cloned())
+            .or_else(|| self.user(user).map(|u| u.name.clone()))
             .unwrap_or_else(|| "Desconhecido".into())
     }
 
@@ -1021,7 +1043,12 @@ impl Model {
         let names: Vec<String> = channel
             .recipients
             .iter()
-            .filter_map(|id| self.user(*id).map(|u| u.name.clone()))
+            .filter_map(|id| {
+                self.nicknames
+                    .get(id)
+                    .cloned()
+                    .or_else(|| self.user(*id).map(|u| u.name.clone()))
+            })
             .collect();
         if names.is_empty() {
             "Grupo sem nome".into()

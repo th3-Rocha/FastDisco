@@ -289,6 +289,9 @@ pub struct App {
     files: fastframe_file::Writer,
     pub themes: fastframe_theme::Catalog<Palette>,
     pictures: RefCell<HashMap<String, Picture>>,
+    /// Text files' contents for their previews, by URL: `None` while
+    /// asked for, and empty when the file is not text after all.
+    texts: RefCell<HashMap<String, Option<std::sync::Arc<str>>>>,
     /// Avatars' main colours, by picture URL.
     colors: HashMap<String, egui::Color32>,
     animations: RefCell<crate::animation::Animations>,
@@ -368,6 +371,7 @@ impl App {
             // Replaced by each window's context in `attach`.
             ctx: egui::Context::default(),
             pictures: RefCell::new(HashMap::new()),
+            texts: RefCell::new(HashMap::new()),
             colors: HashMap::new(),
             animations: RefCell::new(crate::animation::Animations::default()),
             loaded: 0,
@@ -642,6 +646,25 @@ impl App {
         self.animations.borrow_mut().frame(&self.ctx, url)
     }
 
+    /// A text file's contents for its preview; the first ask downloads it.
+    /// `Some("")` when it turned out not to be text.
+    pub fn text_file(&self, url: &str) -> Option<std::sync::Arc<str>> {
+        let mut texts = self.texts.borrow_mut();
+        match texts.get(url) {
+            Some(text) => text.clone(),
+            None => {
+                texts.insert(url.to_owned(), None);
+                self.backend.send(Command::FetchText(url.to_owned()));
+                None
+            }
+        }
+    }
+
+    /// The first frame of an animation, for one that stands still.
+    pub fn animation_still(&self, url: &str) -> Option<egui::TextureHandle> {
+        self.animations.borrow_mut().still(&self.ctx, url)
+    }
+
     pub fn animation_failed(&self, url: &str) -> bool {
         self.animations.borrow().failed(url)
     }
@@ -814,6 +837,10 @@ impl App {
                 Event::FilesPicked(paths) => self.apply_chat(ChatAction::AddFiles(paths)),
                 Event::IconPicked(path) => self.picture_picked(&path),
                 Event::Sound { id, samples } => self.sound_ready(id, samples),
+                Event::Text { url, text } => {
+                    let text = text.unwrap_or_default();
+                    self.texts.borrow_mut().insert(url, Some(text.into()));
+                }
                 Event::Image {
                     url,
                     bytes,
@@ -1666,6 +1693,7 @@ impl App {
             "RELATIONSHIP_REMOVE" => {
                 if let Some(id) = parse::id(&data["id"]) {
                     self.model.relationships.remove(&id);
+                    self.model.nicknames.remove(&id);
                 }
             }
             "MESSAGE_CREATE" => {

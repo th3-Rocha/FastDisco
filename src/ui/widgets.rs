@@ -433,3 +433,32 @@ mod tests {
         }
     }
 }
+
+/// A server tag beside a name, as Discord's: the badge and the letters on
+/// a small grey chip, its left edge at `left`. Returns how wide it is.
+pub fn guild_tag(ui: &Ui, app: &App, tag: &crate::model::GuildTag, left: f32, y: f32) -> f32 {
+    let palette = app.palette;
+    let galley = ui.painter().layout_no_wrap(
+        tag.text.clone(),
+        font(Weight::SemiBold, 12.0),
+        palette.strong,
+    );
+    let badge = tag.badge.as_deref().and_then(|u| app.picture(Some(u)));
+    let icon = if tag.badge.is_some() { 14.0 + 3.0 } else { 0.0 };
+    let width = 4.0 + icon + galley.size().x + 4.0;
+    let rect = Rect::from_min_size(Pos2::new(left, y - 9.0), vec2(width, 18.0));
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(4), palette.text.gamma_multiply(0.12));
+    if let Some(uri) = badge {
+        egui::Image::new(uri).paint_at(
+            ui,
+            Rect::from_center_size(Pos2::new(left + 4.0 + 7.0, y), Vec2::splat(14.0)),
+        );
+    }
+    ui.painter().galley(
+        Pos2::new(left + 4.0 + icon, y - galley.size().y / 2.0),
+        galley,
+        palette.strong,
+    );
+    width
+}

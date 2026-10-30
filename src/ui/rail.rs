@@ -146,7 +146,7 @@ const FOLDER_NAMES: usize = 5;
 
 /// The Discofast snout, drawn: a face and two nostrils tilted outwards,
 /// `width` wide, as assets/icon.svg.
-fn paint_snout(ui: &Ui, center: egui::Pos2, width: f32, face: Color32, nostril: Color32) {
+pub(super) fn paint_snout(ui: &Ui, center: egui::Pos2, width: f32, face: Color32, nostril: Color32) {
     let unit = width / (2.0 * 236.0);
     let ellipse = |cx: f32, rx: f32, ry: f32, tilt: f32| -> Vec<egui::Pos2> {
         let (sin, cos) = tilt.to_radians().sin_cos();

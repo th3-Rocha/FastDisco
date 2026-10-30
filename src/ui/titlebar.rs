@@ -101,8 +101,8 @@ fn arrows(app: &mut App, ui: &mut Ui, left_center: egui::Pos2) {
     }
 }
 
-/// Where the user is, centred: the server's icon and name, or Discord's
-/// logo and the home page's name.
+/// Where the user is, centred: the server's icon and name, or
+/// the snout and the home page's name.
 fn place(app: &App, ui: &mut Ui, rect: Rect) {
     let palette = app.palette;
     let y = rect.center().y;
@@ -128,11 +128,14 @@ fn place(app: &App, ui: &mut Ui, rect: Rect) {
     let icon_rect = Rect::from_center_size(pos2(left + icon / 2.0, y), Vec2::splat(icon));
     match guild {
         Some(guild) => super::rail::paint_guild(ui, app, guild, icon_rect, false),
-        None => {
-            ui.painter()
-                .rect_filled(icon_rect, CornerRadius::same(5), palette.accent);
-            paint_icon(ui, Icon::Discord, icon_rect.center(), 13.0, egui::Color32::WHITE);
-        }
+        // The Discofast snout alone where Discord puts its logo.
+        None => super::rail::paint_snout(
+            ui,
+            icon_rect.center(),
+            icon,
+            egui::Color32::WHITE,
+            palette.accent,
+        ),
     }
     Elide::new(ui, left + icon + 8.0 + width).text(
         pos2(left + icon + 8.0, y),

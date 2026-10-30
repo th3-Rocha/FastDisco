@@ -318,8 +318,10 @@ fn row(app: &App, ui: &mut Ui, user: Id, kind: u8, out: &mut Vec<Action>) {
         )],
     };
     let text_right = rect.right() - 16.0 - 46.0 * buttons.len() as f32;
+    // The nickname the user gave this friend, when there is one.
+    let shown = app.model.name_in(None, person.id);
     let name_galley = ui.painter().layout_no_wrap(
-        person.name.clone(),
+        shown.clone(),
         font(Weight::SemiBold, 16.0),
         palette.strong,
     );
@@ -327,7 +329,7 @@ fn row(app: &App, ui: &mut Ui, user: Id, kind: u8, out: &mut Vec<Action>) {
     Elide::new(ui, text_right).text(
         pos2(rect.left() + 44.0, cy - 9.0),
         Align2::LEFT_CENTER,
-        person.name.clone(),
+        shown,
         font(Weight::SemiBold, 16.0),
         palette.strong,
     );

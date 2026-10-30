@@ -201,6 +201,7 @@ fn channels(app: &mut App, ui: &mut Ui, guild: Id) {
     // Where a dragged channel can go: each row, and each category's name.
     let mut rows: Vec<Row> = Vec::new();
     ui.add_space(8.0);
+    live_event(app, ui, guild);
     events_row(app, ui, guild);
     for id in loose {
         let rect = channel_row(app, ui, id, movable);
@@ -340,6 +341,112 @@ fn drag_channel(app: &mut App, ui: &mut Ui, rows: &[Row]) {
                     before,
                 }));
         }
+    }
+}
+
+/// Discord's card over the channel list while an event is on: "Acontecendo
+/// agora", its name and place, and the green "Detalhes do evento". Its ✕
+/// hides it until the app restarts.
+fn live_event(app: &mut App, ui: &mut Ui, guild: Id) {
+    let palette = app.palette;
+    let Some(event) = app.model.guild(guild).and_then(|g| {
+        g.events
+            .iter()
+            .find(|e| e.live && !app.events.dismissed.contains(&e.id))
+            .cloned()
+    }) else {
+        return;
+    };
+    let place = match event.channel.and_then(|c| app.model.channel(c)) {
+        Some(channel) => Some((Icon::Speaker, channel.name.clone())),
+        None => event.location.clone().map(|l| (Icon::MapPin, l)),
+    };
+    let width = ui.available_width();
+    let height = if place.is_some() { 124.0 } else { 100.0 };
+    let (slot, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let rect = Rect::from_min_max(
+        pos2(slot.left() + 8.0, slot.top()),
+        pos2(slot.right() - 8.0, slot.bottom() - 8.0),
+    );
+    let left = rect.left() + 8.0;
+    let mut y = rect.top() + 14.0;
+    ui.painter()
+        .circle_filled(pos2(left + 4.0, y), 4.0, palette.online);
+    ui.painter().text(
+        pos2(left + 14.0, y),
+        Align2::LEFT_CENTER,
+        "Acontecendo agora",
+        font(Weight::SemiBold, 13.0),
+        palette.online,
+    );
+    let close = Rect::from_center_size(pos2(rect.right() - 12.0, y), Vec2::splat(20.0));
+    let closing = ui.interact(close, ui.id().with(("live-event-close", event.id)), Sense::click());
+    paint_icon(
+        ui,
+        Icon::Close,
+        close.center(),
+        16.0,
+        if closing.hovered() { palette.strong } else { palette.muted },
+    );
+    if closing.clicked() {
+        app.actions
+            .push(Action::Events(crate::events::EventAction::Dismiss(event.id)));
+    }
+    y += 24.0;
+    Elide::new(ui, rect.right()).text(
+        pos2(left, y),
+        Align2::LEFT_CENTER,
+        &event.name,
+        font(Weight::Bold, 17.0),
+        palette.strong,
+    );
+    if let Some((icon, place)) = &place {
+        y += 24.0;
+        paint_icon(ui, *icon, pos2(left + 8.0, y), 16.0, palette.muted);
+        let link = place.starts_with("http://") || place.starts_with("https://");
+        let shown = Elide::new(ui, rect.right()).text(
+            pos2(left + 22.0, y),
+            Align2::LEFT_CENTER,
+            place,
+            font(Weight::Regular, 14.0),
+            if link { super::message::LINK } else { palette.text },
+        );
+        if link {
+            let response = ui
+                .interact(shown, ui.id().with(("live-event-link", event.id)), Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() {
+                app.actions
+                    .push(Action::Chat(crate::chat::ChatAction::OpenUrl(place.clone())));
+            }
+        }
+    }
+    let button = Rect::from_min_max(
+        pos2(left, rect.bottom() - 40.0),
+        pos2(rect.right() - 8.0, rect.bottom() - 4.0),
+    );
+    let response = ui
+        .interact(button, ui.id().with(("live-event", event.id)), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let green = Color32::from_rgb(0x24, 0x80, 0x46);
+    let fill = if response.hovered() {
+        Color32::from_rgb(0x1a, 0x63, 0x34)
+    } else {
+        green
+    };
+    ui.painter().rect_filled(button, CornerRadius::same(8), fill);
+    ui.painter().text(
+        button.center(),
+        Align2::CENTER_CENTER,
+        "Detalhes do evento",
+        font(Weight::Medium, 14.0),
+        Color32::WHITE,
+    );
+    if response.clicked() {
+        app.actions.push(Action::Events(crate::events::EventAction::Details {
+            guild,
+            event: event.id,
+        }));
     }
 }
 
@@ -745,14 +852,16 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
                 .rect_filled(rect, CornerRadius::same(4), behind);
         }
         let center = pos2(rect.left() + 24.0, rect.center().y);
+        let mut tag = None;
         let (name, activity) = match channel.kind {
             ChannelKind::Direct => {
                 let user = channel.recipients.first().and_then(|u| app.model.user(*u));
                 if let Some(user) = user {
                     avatar(ui, app, user, center, 16.0, Some(behind));
                 }
+                tag = user.and_then(|u| u.tag.clone());
                 (
-                    user.map_or_else(|| "Desconhecido".into(), |u| u.name.clone()),
+                    user.map_or_else(|| "Desconhecido".into(), |u| app.model.name_in(None, u.id)),
                     user.and_then(|u| u.activity.clone()),
                 )
             }
@@ -780,13 +889,18 @@ fn direct_messages(app: &mut App, ui: &mut Ui) {
         } else {
             rect.center().y
         };
-        painter.text(
+        let shown = painter.text(
             pos2(rect.left() + 50.0, name_y),
             Align2::LEFT_CENTER,
             name,
             font(Weight::Medium, 15.0),
             tint,
         );
+        if let Some(tag) = &tag
+            && shown.right() + 60.0 < clip.right()
+        {
+            super::widgets::guild_tag(ui, app, tag, shown.right() + 6.0, name_y);
+        }
         if let Some(activity) = activity {
             painter.text(
                 pos2(rect.left() + 50.0, rect.center().y + 9.0),
