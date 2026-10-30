@@ -58,8 +58,8 @@ cargo run
 Two optional features: `video` watches Discord screen shares (not yet
 tried against Discord), and `selfhosted` sends camera and screen between
 friends through a LiveKit server of your own; `contrib/livekit` has the
-server and how to set it up. The released builds have `selfhosted`;
-`cargo run --features selfhosted` builds it from source.
+server and how to set it up. `selfhosted` is on by default, so every
+build has it; `--no-default-features` leaves it out.
 
 `scripts/install.sh` builds a release and installs it for the current
 user, with the launcher entry and icons.

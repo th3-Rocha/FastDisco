@@ -1,6 +1,6 @@
 [package]
 name = "discofast"
-version = "0.49.1"
+version = "0.49.2"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -126,6 +126,8 @@ livekit = { version = "0.10", default-features = false, features = ["native", "r
 livekit-api = { version = "0.10", default-features = false, features = ["access-token"], optional = true }
 
 [features]
+# Every build has the self-hosted camera and screen sharing.
+default = ["selfhosted"]
 # Watching someone's screen share in a call. Written without a chance to
 # try it against Discord, so off until it is.
 video = ["dep:davey", "dep:aes-gcm", "dep:chacha20poly1305", "tokio/net"]
